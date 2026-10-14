@@ -23,10 +23,13 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dsc_constants import (
+    DEFAULT_LAMBDA_RANGE,
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
+    DEFAULT_TIKHONOV_PENALTY_P,
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
+    LCURVE_N_LAMBDAS,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
 
@@ -417,15 +420,15 @@ class ComputeDSCMaps(BaseInterface):
     deconvolution methods.
 
     Supported deconvolution methods:
-    - sSVD: Standard SVD (Østergaard method)
+    - sSVD: Standard SVD
     - oSVD: Oscillation-index limited SVD (adaptive regularization, delay-insensitive)
-    - tikhonov: Morozov-selected first-order Tikhonov regularization
+    - tikhonov: L-curve-selected first-order Tikhonov regularization
     - cpi: Control Point Interpolation model
 
     Output maps:
     - CBF: Cerebral blood flow (max of residue function)
-    - CBV: Cerebral blood volume (integral of residue function)
-    - MTT: Mean transit time (CBV/CBF, central volume theorem)
+    - CBV: Separate residue-integral and concentration-AUC blood-volume maps
+    - MTT: AUC-CBV/CBF for SVD methods; fitted-residue MTT for CPI
     - Tmax: Time to maximum of residue function
     - PSR: Percent signal recovery (BBB integrity indicator)
 
@@ -1578,6 +1581,7 @@ class ComputeDSCMaps(BaseInterface):
     ]:
         """Run SVD-based deconvolution methods."""
         from pmriprep.utils.dsc_deconvolution import (
+            TikhonovSelection,
             svd_deconvolve_standard_batch,
             svd_deconvolve_oscillation_batch,
             tikhonov_deconvolve_batch,
@@ -1598,6 +1602,7 @@ class ComputeDSCMaps(BaseInterface):
             )
             # Extract tmax from residues
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
+            tmax[~np.all(np.isfinite(res), axis=-1)] = np.nan
 
         elif method == "oSVD":
             res, cbf, cbv, mtt, oi_values, thresholds_used, delay = svd_deconvolve_oscillation_batch(  # type: ignore[assignment]
@@ -1608,11 +1613,27 @@ class ComputeDSCMaps(BaseInterface):
                 mask=mask_bool,
             )
             tmax = delay.copy()
-            qc_metrics["oi_mean"] = float(np.mean(oi_values[mask_bool]))
-            qc_metrics["threshold_mean"] = float(np.mean(thresholds_used[mask_bool]))
+            n_mask = int(np.sum(mask_bool))
+            finite_oi = mask_bool & np.isfinite(oi_values)
+            n_evaluated = int(np.sum(finite_oi))
+            target_met = oi_values[finite_oi] <= oi_threshold
+            n_met = int(np.sum(target_met))
+            qc_metrics["oi_mean"] = float(np.mean(oi_values[finite_oi])) if n_evaluated else None
+            qc_metrics["threshold_mean"] = (
+                float(np.mean(thresholds_used[finite_oi])) if n_evaluated else None
+            )
+            qc_metrics["oscillation_target"] = {
+                "target": float(oi_threshold),
+                "met_voxels": n_met,
+                "unmet_voxels": n_evaluated - n_met,
+                "nonfinite_oi_voxels": n_mask - n_evaluated,
+                "unmet_fraction": (n_evaluated - n_met) / n_evaluated if n_evaluated else None,
+                "fraction_denominator": "finite OI in-mask voxels",
+                "unmet_policy": "retain_and_flag",
+            }
 
         elif method == "tikhonov":
-            res, cbf, cbv, mtt, lambda_opt, data_driven_lambda = (
+            res, cbf, cbv, mtt, lambda_opt, selection_status = (
                 tikhonov_deconvolve_batch(  # type: ignore[assignment]
                     concentration_data,
                     aif,
@@ -1621,23 +1642,63 @@ class ComputeDSCMaps(BaseInterface):
                 )
             )
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
-            qc_metrics["lambda_mean"] = float(np.mean(lambda_opt[mask_bool]))
-            # Fraction of voxels where the Morozov discrepancy selector chose a
-            # data-driven λ from the measured noise floor, vs the degenerate
-            # near-noise-free fallback. A high fallback fraction on real data
-            # would be unexpected (real acquisitions have measurable noise).
-            n_mask = int(np.sum(mask_bool))
-            if n_mask > 0:
-                qc_metrics["data_driven_lambda_fraction"] = float(
-                    np.sum(data_driven_lambda[mask_bool]) / n_mask
-                )
-                qc_metrics["degenerate_fallback_fraction"] = float(
-                    1.0 - qc_metrics["data_driven_lambda_fraction"]
-                )
+            invalid = selection_status == TikhonovSelection.INVALID_INPUT
+            tmax[invalid] = np.nan
+            active = mask_bool & ~invalid & (selection_status != TikhonovSelection.INACTIVE)
+            qc_metrics["lambda_mean"] = (
+                float(np.mean(lambda_opt[active])) if np.any(active) else None
+            )
+            qc_metrics["regularization_selection"] = "lcurve_upper_extremum"
+            qc_metrics["regularization_penalty"] = "modified_first_difference"
+            qc_metrics["penalty_leading_samples"] = DEFAULT_TIKHONOV_PENALTY_P
+            qc_metrics["lambda_grid_size"] = LCURVE_N_LAMBDAS
+            qc_metrics["lambda_search_bounds_relative"] = list(DEFAULT_LAMBDA_RANGE)
+            qc_metrics["lambda_continuous_refinement"] = False
+            counts = {
+                state.name.lower(): int(np.sum(mask_bool & (selection_status == state)))
+                for state in TikhonovSelection
+            }
+            qc_metrics["lcurve_selection_counts"] = counts
+            n_active = int(np.sum(active))
+            qc_metrics["lcurve_corner_fraction"] = (
+                (counts["positive_corner"] + counts["nonpositive_corner"]) / n_active
+                if n_active else None
+            )
+            qc_metrics["lcurve_upper_endpoint_fraction"] = (
+                counts["upper_endpoint"] / n_active if n_active else None
+            )
 
         else:
             raise ValueError(f"Unknown SVD method: {method}")
 
+        qc_metrics["residue_post_fit_clipping"] = False
+        qc_metrics["residue_cbv_integration"] = (
+            "full_period_signed_sum" if method == "oSVD"
+            else "full_length_signed_trapezoid"
+        )
+        residue_values = res[mask_bool]
+        signed_area = cbv[mask_bool]
+        negative = np.minimum(residue_values, 0.0)
+        negative_area = (
+            -dt * np.sum(negative, axis=-1) if method == "oSVD"
+            else -np.trapezoid(negative, dx=dt, axis=-1)
+        )
+        absolute_area = signed_area + 2 * negative_area
+        valid_area = np.isfinite(absolute_area) & (absolute_area > 0)
+        qc_metrics["residue_diagnostics"] = {
+            "in_mask_voxels": int(np.sum(mask_bool)),
+            "negative_sample_fraction": (
+                float(np.mean(residue_values < 0)) if residue_values.size else np.nan
+            ),
+            "negative_area_fraction_mean": (
+                float(np.mean(negative_area[valid_area] / absolute_area[valid_area]))
+                if np.any(valid_area) else np.nan
+            ),
+            "negative_cbv_voxels": int(np.sum(np.isfinite(signed_area) & (signed_area < 0))),
+            "zero_cbv_voxels": int(np.sum(signed_area == 0)),
+            "nonfinite_cbv_voxels": int(np.sum(~np.isfinite(signed_area))),
+            "invalid_residue_mtt_voxels": int(np.sum(~np.isfinite(mtt[mask_bool]))),
+        }
         return cbf, cbv, mtt, tmax, qc_metrics
 
 

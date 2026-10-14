@@ -442,6 +442,20 @@ def _enrich_dsc(
             "cpi_selection_stage",
             "cpi_gamma_fraction",
             "spatial_sweeps",
+            "regularization_selection",
+            "regularization_penalty",
+            "penalty_leading_samples",
+            "lambda_grid_size",
+            "lambda_search_bounds_relative",
+            "lambda_continuous_refinement",
+            "lcurve_selection_counts",
+            "residue_cbv_integration",
+            "residue_post_fit_clipping",
+            "residue_diagnostics",
+            "lcurve_corner_fraction",
+            "lcurve_upper_endpoint_fraction",
+            "oscillation_target",
+            "fallback_oscillation_target",
         ):
             if key in deconv:
                 deconv_block[key] = deconv[key]

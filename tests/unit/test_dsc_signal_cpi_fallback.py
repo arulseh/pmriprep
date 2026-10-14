@@ -66,6 +66,7 @@ def test_none_uses_raw_not_corrected_curve_and_real_osvd(prepared: Any) -> None:
     result = resolve(a, raw, [rejected()], corrected=raw*100)[0]
     assert result.source == "osvd" and result.fallback_attempted
     assert result.fallback_reason is None
+    assert result.osvd_oi_target_met == expected.converged
     for name in ("cbf", "cbv", "mtt"):
         assert getattr(result, name) == getattr(expected, name)
     assert np.isnan(result.delay)
@@ -79,12 +80,28 @@ def test_bsw_uses_exact_corrected_curve(prepared: Any, monkeypatch: pytest.Monke
 
     def fit(tissue: np.ndarray, aif: np.ndarray, dt: float, **kwargs: Any) -> Any:
         np.testing.assert_array_equal(tissue, corrected[0, 0, 0])
-        return SimpleNamespace(cbf=.01, cbv=.04, mtt=4., delay=3.)
+        return SimpleNamespace(cbf=.01, cbv=.04, mtt=4., delay=3., converged=True)
 
     monkeypatch.setattr(fallback, "svd_deconvolve_oscillation", fit)
     assert resolve(a, raw, [rejected()], corrected)[0].source == "osvd"
     with pytest.raises(ValueError, match="leakage policy"):
         resolve(a, raw, [rejected()])
+
+
+def test_unmet_osvd_target_keeps_valid_replacement(prepared: Any) -> None:
+    """Target failure is a qualification, not a failed replacement."""
+    a, raw = prepared
+    fit = svd_deconvolve_oscillation(raw[0, 0, 0], a.branches[0].aif, 3., oi_target=1e-10)
+    assert not fit.converged
+    result = list(fallback.resolve_fallbacks(
+        a, iter([rejected()]), raw_concentration=raw,
+        corrected_concentration=None, oi_target=1e-10,
+    ))[0]
+    assert result.source == "osvd" and result.fallback_attempted
+    assert result.osvd_oi_target_met is False and result.fallback_reason is None
+    for name in ("cbf", "cbv", "mtt"):
+        assert np.isfinite(getattr(result, name))
+        assert getattr(result, name) == getattr(fit, name)
 
 
 @pytest.mark.parametrize("bad", [np.nan, np.inf, 0.])

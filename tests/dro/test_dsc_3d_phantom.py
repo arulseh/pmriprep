@@ -13,6 +13,8 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER
+
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
@@ -312,14 +314,9 @@ class TestK2CorrectionInChain:
 class TestCrossMethodAgreement3D:
     """Compare sSVD, oSVD, and Tikhonov on the same noiseless 3D phantom.
 
-    All three methods are non-parametric deconvolution approaches that should
-    agree on CBF/CBV/MTT within regularization differences when applied to
-    noiseless data. With threshold=0.001 for sSVD (matching zero-noise
-    convention from test_dsc_recovery.py), all singular values carry signal
-    and cross-method agreement improves to 15% for CBF/CBV and 25% for MTT.
-
-    Physics justification: Ostergaard et al. (MRM 1996) — SVD threshold
-    should match noise level; zero noise implies near-zero threshold.
+    Different penalties, regularization strengths and residue integration
+    rules need not give the same CBF, CBV or MTT even without added noise.
+    These tests retain explicit agreement targets alongside tissue ordering.
     """
 
     METHODS = {
@@ -336,9 +333,8 @@ class TestCrossMethodAgreement3D:
     ) -> dict:
         """Run all 3 methods on per-tissue median curves.
 
-        For sSVD, passes threshold=0.001 to match the zero-noise convention
-        (Liu et al., MRM 1999). For oSVD, threshold_min defaults to a low
-        value and the oscillation index selects the appropriate threshold.
+        sSVD uses threshold=0.001. oSVD uses its default threshold search
+        and oscillation-index target.
 
         Returns dict of {method_name: {tissue: result}}.
         """
@@ -358,24 +354,17 @@ class TestCrossMethodAgreement3D:
                     )
         return results
 
+    @P2_NO_CORNER
     def test_cbf_agreement_across_methods(self) -> None:
-        """CBF should agree within 30% pairwise for Toeplitz methods.
-
-        oSVD excluded: it uses a block-circulant matrix (different
-        integration scheme), so exact agreement with Toeplitz methods
-        is not expected. Tolerance widened to 30% because the production
-        modified-penalty Tikhonov, an L-curve-regularised dispersed-regime
-        operator, biases CBF below the sSVD threshold-truncated estimate on
-        this non-dispersed exponential phantom.
-        """
+        """Evaluate the 30% CBF agreement target for causal Volterra methods."""
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
         import itertools
-        toeplitz_methods = ["ssvd", "tikhonov"]
+        causal_methods = ["ssvd", "tikhonov"]
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(toeplitz_methods, 2):
+            for m1, m2 in itertools.combinations(causal_methods, 2):
                 cbf1 = results[m1][tissue_key].cbf
                 cbf2 = results[m2][tissue_key].cbf
                 mean_cbf = (cbf1 + cbf2) / 2.0
@@ -386,20 +375,17 @@ class TestCrossMethodAgreement3D:
                         f"{m2}={cbf2:.1f}, rel_diff={rel_diff:.3f} >= 0.30"
                     )
 
+    @P2_NO_CORNER
     def test_cbv_agreement_across_methods(self) -> None:
-        """CBV should agree within 15% pairwise for Toeplitz methods.
-
-        oSVD excluded: it uses a block-circulant matrix (different integration
-        scheme), so exact agreement with Toeplitz methods is not expected.
-        """
+        """Evaluate the 15% residue-CBV agreement target for causal methods."""
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
         import itertools
-        toeplitz_methods = ["ssvd", "tikhonov"]
+        causal_methods = ["ssvd", "tikhonov"]
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(toeplitz_methods, 2):
+            for m1, m2 in itertools.combinations(causal_methods, 2):
                 cbv1 = results[m1][tissue_key].cbv
                 cbv2 = results[m2][tissue_key].cbv
                 mean_cbv = (cbv1 + cbv2) / 2.0
@@ -410,16 +396,9 @@ class TestCrossMethodAgreement3D:
                         f"{m2}={cbv2:.2f}, rel_diff={rel_diff:.3f} >= 0.15"
                     )
 
+    @OSVD_RESIDUE_MTT
     def test_mtt_agreement_across_methods(self) -> None:
-        """SVD-family MTT should agree within 25% pairwise (MTT compounds CBV/CBF).
-
-        Tikhonov is excluded from this MTT comparison: its production modified
-        penalty is a dispersed-regime operator and biases MTT up on this
-        non-dispersed exponential phantom (the documented non-dispersed cost;
-        CBV, being dispersion-invariant, still agrees — see the CBV test
-        above). Tikhonov's MTT is validated on the dispersed regime it is built
-        for in TestTikhonovRecovery (tests/dro/test_dsc_recovery.py).
-        """
+        """Evaluate the 25% sSVD/oSVD residue-MTT agreement target."""
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)

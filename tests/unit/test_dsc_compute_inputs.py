@@ -23,6 +23,43 @@ def _write_image(path: Path, data: np.ndarray) -> str:
     return str(path)
 
 
+@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+def test_compute_maps_keeps_nonfinite_tissue_local(tmp_path: Path, method: str) -> None:
+    """A bad in-brain curve yields missing maps without stopping valid neighbours."""
+    from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+
+    time = np.arange(40) * 1.5
+    u = np.maximum(time - 9, 0)
+    aif = u ** 3 * np.exp(-u / 2)
+    aif /= aif.max()
+    tissue = build_volterra_matrix(aif, 1.5) @ (0.01 * np.exp(-time / 5))
+    curves = np.tile(tissue, (2, 1, 1, 1))
+    mask_file = _write_image(tmp_path / "mask.nii.gz", np.ones((2, 1, 1)))
+    aif_file = tmp_path / "aif.txt"
+    np.savetxt(aif_file, aif)
+    results = []
+    for name in ("clean", "nonfinite"):
+        if name == "nonfinite":
+            curves[1, 0, 0, 15] = np.nan
+        concentration_file = _write_image(tmp_path / f"{name}.nii.gz", curves)
+        destination = tmp_path / name
+        destination.mkdir()
+        result = ComputeDSCMaps(
+            concentration_file=concentration_file,
+            raw_concentration_file=concentration_file,
+            brain_mask_file=mask_file, aif_file=str(aif_file),
+            measured_aif_file=str(aif_file), method=method, tr=1.5, te=0.04,
+            baseline_frames=6, leakage_method="none", aif_detection_level="external",
+        ).run(cwd=str(destination))
+        results.append(result.outputs)
+    for output in ("out_rel_cbf", "out_rel_cbv", "out_rel_cbv_auc", "out_mtt", "out_tmax"):
+        clean = nib.load(getattr(results[0], output)).get_fdata()
+        bad = nib.load(getattr(results[1], output)).get_fdata()
+        assert np.isfinite(bad[0]).all()
+        np.testing.assert_allclose(bad[0], clean[0])
+        assert np.isnan(bad[1]).all()
+
+
 def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> None:
     """Loaded arrays, geometry, optional signal, and traits remain coherent."""
     concentration = np.arange(3 * 4 * 2 * 6, dtype=np.float32).reshape(3, 4, 2, 6)

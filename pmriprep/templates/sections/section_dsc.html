@@ -455,19 +455,19 @@
                 <div class="metric-value">{{ "{:,}".format(dsc.qc_metrics.deconvolution.n_voxels) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.oi_mean is defined %}
+            {% if dsc.qc_metrics.deconvolution.oi_mean is defined and dsc.qc_metrics.deconvolution.oi_mean is not none %}
             <div class="metric">
                 <div class="metric-label">OI Mean (oSVD)</div>
                 <div class="metric-value">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.oi_mean) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.threshold_mean is defined %}
+            {% if dsc.qc_metrics.deconvolution.threshold_mean is defined and dsc.qc_metrics.deconvolution.threshold_mean is not none %}
             <div class="metric">
                 <div class="metric-label">Threshold Mean (oSVD)</div>
                 <div class="metric-value">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.threshold_mean) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.lambda_mean is defined %}
+            {% if dsc.qc_metrics.deconvolution.lambda_mean is defined and dsc.qc_metrics.deconvolution.lambda_mean is not none %}
             <div class="metric">
                 <div class="metric-label">Lambda Mean (Tikhonov)</div>
                 <div class="metric-value">{{ "%.4f"|format(dsc.qc_metrics.deconvolution.lambda_mean) }}</div>

@@ -207,6 +207,21 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
             assert reference["n_valid"] == int(np.count_nonzero(np.isfinite(image[nawm])))
 
 
+@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+@pytest.mark.parametrize("detection,source", [("atlas_strict", "measured"), ("synthetic", "synthetic")])
+def test_svd_mtt_label_and_aif_source(method: str, detection: str, source: str) -> None:
+    """The AUC formula applies to both measured and synthetic AIF sources."""
+    sidecar = build_dsc_map_sidecar(
+        base={}, description="Mean transit time", map_key="mtt", units="s",
+        qc_metrics={
+            "deconvolution": {"method": method},
+            "aif_detection": {"detection_method": detection, "quality_score": 0.8},
+        },
+    )
+    assert sidecar["MTTMethod"] == "full_bolus_auc_cbv_over_deconvolution_cbf"
+    assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == source
+
+
 def test_cpi_mtt_sidecar_reports_residue_integral() -> None:
     """CPI MTT provenance describes its fitted residue integral."""
     cpi_sidecar = build_dsc_map_sidecar(
@@ -775,7 +790,7 @@ class TestWriterAifBlockPresentOnAllMaps:
 
         mtt_meta = _load_sidecar(derivatives, "dscMtt_stat")
         assert mtt_meta["PostFitClipping"] == "none"
-        assert mtt_meta["MTTMethod"].startswith("measured_aif_full_bolus")
+        assert mtt_meta["MTTMethod"] == "full_bolus_auc_cbv_over_deconvolution_cbf"
         assert "approaches zero" in mtt_meta["LowFlowCaution"]
         for suffix in ("dscRelCbf_stat", "dscRelCbv_stat", "dscRelAUCCbv_stat"):
             meta = _load_sidecar(derivatives, suffix)

@@ -7,12 +7,13 @@ limited SVD (oSVD), and Tikhonov regularization.
 The deconvolution problem is:
     C_tissue(t) = CBF × [R(t) ⊗ AIF(t)]
 
-where R(t) is the residue function (impulse response), which encodes
-the tissue microvascular transit time distribution.
+where R(t) is the fraction of tracer remaining in tissue at time t.
+The solvers return the flow-scaled residue h(t) = CBF × R(t).
 """
 
 import logging
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Optional
 
 import numpy as np
@@ -27,9 +28,6 @@ from pmriprep.utils.dsc_constants import (
     DEFAULT_TIKHONOV_PENALTY_P,
     EPSILON_CONCENTRATION,
     LCURVE_N_LAMBDAS,
-    TIKHONOV_FALLBACK_LAMBDA_FRACTION,
-    TIKHONOV_MOROZOV_DEGENERATE_FRAC,
-    TIKHONOV_MOROZOV_TAU,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,13 +39,17 @@ class DeconvolutionResultBase:
 
     Attributes
     ----------
-        residue: Residue function R(t).
-        cbf: Cerebral blood flow, the maximum of R(t).
-        cbv: Residue-integral CBV (integral of R(t)); feeds the deconvolution
-            rel_cbv map and the parametric oSVD fallback. The primary reported
-            CBV is the AUC ratio (cbv_auc / rel_cbv_auc) computed in the interface.
-        mtt: Residue transit time, CBV/CBF. The reported SVD MTT is computed in
-            the interface as AUC-CBV / CBF.
+    residue : np.ndarray
+        Flow-scaled residue h(t) = CBF * R(t).
+    cbf : float
+        Cerebral blood flow, the maximum of h(t).
+    cbv : float
+        Residue-integral CBV (integral of h(t)); feeds the deconvolution
+        rel_cbv map and the parametric oSVD fallback. The primary reported
+        CBV is the AUC ratio computed in the interface.
+    mtt : float
+        Residue transit time, CBV/CBF. The reported SVD MTT is computed in
+        the interface as AUC-CBV / CBF.
     """
 
     residue: npt.NDArray[np.floating]
@@ -77,9 +79,12 @@ class DeconvolutionResult(DeconvolutionResultBase):
 
     Attributes
     ----------
-        threshold_used: SVD truncation threshold that was applied.
-        n_singular_values: Number of singular values retained after truncation.
-        condition_number: Condition number of the truncated matrix.
+    threshold_used : float
+        SVD truncation threshold as a fraction of the largest singular value.
+    n_singular_values : int
+        Number of singular values retained after truncation.
+    condition_number : float
+        Condition number of the retained singular spectrum.
     """
 
     threshold_used: float
@@ -94,11 +99,11 @@ def build_toeplitz_matrix(
     """Build the (1, 4, 1)/6 convolution matrix from the AIF.
 
     Creates the lower-triangular Toeplitz matrix A such that
-    ``C_tissue = A @ R``. The convolution integral is discretized by
+    ``C_tissue = A @ h``, where h is the flow-scaled residue. The integral is discretized by
     pre-smoothing the AIF on its interior with the (1, 4, 1)/6 three-point
     stencil (endpoints left unsmoothed), then forming the lower-triangular
-    Toeplitz of the smoothed AIF scaled by ``dt``. This (1, 4, 1)/6 Simpson-like
-    quadrature is used by the SVD/Tikhonov deconvolution paths.
+    Toeplitz of the smoothed AIF scaled by ``dt``. This quadrature leaves the
+    first column and diagonal distinct from the Volterra operator.
 
     Parameters
     ----------
@@ -136,13 +141,15 @@ def build_volterra_matrix(
 ) -> npt.NDArray[np.floating]:
     """Build the Volterra (1, 4, 1)/6 convolution matrix from the AIF.
 
-    Creates the lower-triangular matrix A such that ``C_tissue = A @ R``,
+    Creates the lower-triangular matrix A such that ``C_tissue = A @ h``,
+    where h is the flow-scaled residue,
     discretizing the convolution integral with the product-integration Volterra
     quadrature: the interior uses the (1, 4, 1)/6 stencil centred on the lag,
     the first column uses the two-point rule ``(2*aif[i] + aif[i-1])/6``, and
-    the main diagonal (including the ``[0, 0]`` corner) is the constant
-    ``(2*aif[0] + aif[1])/6``. The whole matrix is scaled by ``dt``. This is the
-    operator used by the CPI parametric model.
+    the main diagonal after row zero is the constant
+    ``(2*aif[0] + aif[1])/6``. Row zero is zero, as the integral has zero
+    duration there. The whole matrix is scaled by ``dt``. Standard SVD and
+    Tikhonov use this operator.
 
     Parameters
     ----------
@@ -180,11 +187,73 @@ def build_volterra_matrix(
     aif_prev[1:] = aif64[:-1]
     matrix[:, 0] = (2.0 * aif64 + aif_prev) / 6.0
 
-    # Corner [0, 0]: the convolution at t=0 is zero (empty integral), so row 0
-    # is all-zero; the first-column write above put a spurious value here.
+    # The convolution at t=0 has zero duration, so the first row is zero.
     matrix[0, 0] = 0.0
 
     return matrix * dt  # type: ignore[no-any-return]
+
+
+def _validate_svd_inputs(
+    tissue: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float,
+) -> None:
+    """Require finite selected curves, a usable AIF and positive sampling."""
+    if tissue.ndim == 0 or tissue.shape[-1] == 0:
+        raise ValueError("Arrays cannot be empty")
+    if aif.ndim != 1 or tissue.shape[-1] != aif.size:
+        raise ValueError("tissue curves and aif must have the same length")
+    if aif.size < 2:
+        raise ValueError("At least two time samples are required")
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be finite and positive")
+    if not np.all(np.isfinite(aif)) or not np.all(np.isfinite(tissue)):
+        raise ValueError("Tissue curves and aif must contain only finite values")
+    if np.max(np.abs(aif)) < EPSILON_CONCENTRATION:
+        raise ValueError("AIF is near-zero. Check AIF detection.")
+
+
+def _prepare_svd_batch_inputs(
+    tissue: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float,
+    mask: Optional[npt.NDArray[np.bool_]],
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
+    """Validate shared inputs and separate finite from nonfinite selected curves."""
+    if tissue.ndim < 2:
+        raise ValueError("tissue_curves must have spatial and time dimensions")
+    spatial_shape = tissue.shape[:-1]
+    if mask is not None and mask.shape != spatial_shape:
+        raise ValueError("mask shape must match the tissue spatial dimensions")
+    mask_flat = (
+        np.ones(int(np.prod(spatial_shape)), dtype=bool)
+        if mask is None else np.asarray(mask, dtype=bool).ravel()
+    )
+    curves = tissue.reshape((mask_flat.size, tissue.shape[-1]))
+    finite = np.all(np.isfinite(curves), axis=-1)
+    valid = mask_flat & finite
+    invalid = mask_flat & ~finite
+    _validate_svd_inputs(curves[valid], aif, dt)
+    return curves, valid, invalid
+
+
+def _validate_svd_threshold(threshold: float) -> None:
+    """Require a finite fractional singular-value cutoff."""
+    if not 0 < threshold < 1:
+        raise ValueError(f"threshold must be in (0, 1), got {threshold}")
+
+
+def _validate_osvd_settings(
+    oi_target: float, threshold_min: float, threshold_max: float, max_iterations: int,
+) -> None:
+    """Require a positive OI target and a nonempty ordered threshold grid."""
+    if not np.isfinite(oi_target) or oi_target <= 0:
+        raise ValueError("oi_target must be finite and positive")
+    if not 0 < threshold_min <= threshold_max < 1:
+        raise ValueError("threshold bounds must satisfy 0 < threshold_min <= threshold_max < 1")
+    if (isinstance(max_iterations, (bool, np.bool_))
+            or not isinstance(max_iterations, (int, np.integer)) or max_iterations < 1):
+        raise ValueError("max_iterations must be a positive integer")
 
 
 def svd_deconvolve_standard(
@@ -192,19 +261,18 @@ def svd_deconvolve_standard(
     aif: npt.NDArray[np.floating],
     dt: float = 1.0,
     threshold: float = DEFAULT_SVD_THRESHOLD,
-    apply_non_negativity: bool = True,
 ) -> DeconvolutionResult:
-    """Perform standard SVD deconvolution (sSVD) using the Østergaard method.
+    """Perform standard SVD deconvolution (sSVD).
 
     Performs deconvolution by constructing the Volterra (product-integration)
     convolution matrix from the AIF and solving via truncated SVD. Singular
-    values below a fraction of the maximum are set to zero for regularization.
+    values at or below a fraction of the maximum are discarded.
 
     The deconvolution equation is:
         C_tissue(t) = CBF × ∫_0^t R(t-τ) × AIF(τ) dτ
 
-    In matrix form:
-        C = A @ R
+    In matrix form, with flow-scaled residue h = CBF × R:
+        C = A @ h
 
     where A is the Volterra (product-integration) matrix built from AIF.
 
@@ -220,45 +288,36 @@ def svd_deconvolve_standard(
         Provide actual TR for timing parameters (MTT, Tmax) in seconds.
     threshold : float, optional
         SVD truncation threshold as fraction of maximum singular
-        value. Singular values below threshold × max(s) are set to zero.
+        value. Singular values at or below threshold × max(s) are discarded.
         Default is 0.2 (20% of max). Higher values = more regularization.
-    apply_non_negativity : bool, optional
-        If True, apply non-negativity constraint to
-        residue function by clipping negative values to zero.
-        Default is True.
 
     Returns
     -------
     DeconvolutionResult
-        DeconvolutionResult containing residue function and perfusion parameters.
+        Signed full-N residue and its finite trapezoidal CBV integral.
+        Residue MTT is CBV/CBF, or NaN for nonpositive area or a peak at or
+        below the concentration tolerance. The interface reports AUC-CBV/CBF
+        as primary MTT.
 
     Raises
     ------
-        ValueError: If tissue_curve and aif have different lengths.
-        ValueError: If arrays are empty.
-        ValueError: If threshold is not in (0, 1).
+    ValueError
+        If the curves are not finite one-dimensional arrays of equal length
+        with at least two samples, the AIF is near-zero, dt is not finite and
+        positive, or threshold is outside (0, 1).
 
     Notes
     -----
-        - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
-        - MTT = CBV / CBF (central volume theorem)
-        - This method is NOT delay-insensitive; delays cause CBF underestimation
-        - For delay-insensitive deconvolution, use svd_deconvolve_circulant()
+    CBF is the maximum of the flow-scaled residue. This method is sensitive
+    to bolus delay, which can underestimate CBF.
 
     """
-    # Validate inputs
-    if len(tissue_curve) != len(aif):
-        raise ValueError(
-            f"tissue_curve and aif must have same length, "
-            f"got {len(tissue_curve)} and {len(aif)}"
-        )
-
-    if len(tissue_curve) == 0:
-        raise ValueError("Arrays cannot be empty")
-
-    if not 0 < threshold < 1:
-        raise ValueError(f"threshold must be in (0, 1), got {threshold}")
+    tissue_curve = np.asarray(tissue_curve, dtype=np.float64)
+    aif = np.asarray(aif, dtype=np.float64)
+    if tissue_curve.ndim != 1:
+        raise ValueError("tissue_curve must be one-dimensional")
+    _validate_svd_inputs(tissue_curve, aif, dt)
+    _validate_svd_threshold(threshold)
 
     # Build Volterra (product-integration) convolution matrix
     matrix = build_volterra_matrix(aif, dt)
@@ -266,14 +325,14 @@ def svd_deconvolve_standard(
     # Perform SVD
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Truncate singular values below threshold
+    # Retain singular values strictly above the cutoff.
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
 
     # Count retained singular values
     n_retained = int(np.sum(s > truncation_threshold))
     if n_retained == 0:
-        n_retained = 1  # Keep at least one singular value
+        n_retained = 1
 
     # Create truncated inverse singular values
     s_inv = np.zeros_like(s)
@@ -287,13 +346,8 @@ def svd_deconvolve_standard(
     else:
         condition_number = float("inf")
 
-    # Solve for residue function: R = V @ S_inv @ U^T @ C
-    # More numerically stable: R = vh.T @ (s_inv * (u.T @ tissue_curve))
+    # Apply the truncated inverse through its SVD factors.
     residue = vh.T @ (s_inv * (u.T @ tissue_curve))
-
-    # Apply non-negativity constraint
-    if apply_non_negativity:
-        residue = np.maximum(residue, 0.0)
 
     # Extract perfusion parameters
     cbf = float(np.max(residue))
@@ -302,10 +356,10 @@ def svd_deconvolve_standard(
     cbv = float(np.trapezoid(residue, dx=dt))
 
     # MTT from central volume theorem: MTT = CBV / CBF
-    if cbf > EPSILON_CONCENTRATION:
+    if cbf > EPSILON_CONCENTRATION and cbv > 0:
         mtt = cbv / cbf
     else:
-        mtt = 0.0
+        mtt = np.nan
 
     return DeconvolutionResult(
         residue=residue,
@@ -323,7 +377,6 @@ def svd_deconvolve_standard_batch(
     aif: npt.NDArray[np.floating],
     dt: float = 1.0,
     threshold: float = DEFAULT_SVD_THRESHOLD,
-    apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
     npt.NDArray[np.floating],  # residues
@@ -347,8 +400,6 @@ def svd_deconvolve_standard_batch(
         Time step in seconds.
     threshold : float, optional
         SVD truncation threshold (default 0.2).
-    apply_non_negativity : bool, optional
-        Apply non-negativity constraint on residue.
     mask : np.ndarray, optional
         Optional boolean mask of voxels to process. If None, process all.
         Shape must match spatial dimensions of tissue_curves.
@@ -356,28 +407,26 @@ def svd_deconvolve_standard_batch(
     Returns
     -------
     tuple
-        Tuple of (residues, cbf, cbv, mtt) arrays with same spatial shape as input.
+        Signed full-N residues and spatial cbf, cbv and mtt arrays. CBV uses
+        finite trapezoidal integration. Residue MTT is NaN for nonpositive
+        area or a peak at or below the concentration tolerance; excluded
+        voxels remain zero. Nonfinite selected tissue curves receive NaN
+        outputs without affecting other voxels.
+
+    Raises
+    ------
+    ValueError
+        If spatial/time dimensions, mask shape or AIF are invalid, dt is not
+        finite and positive, or threshold is outside (0, 1).
     """
-    # Store original shape for reshaping output
+    tissue_curves = np.asarray(tissue_curves, dtype=np.float64)
+    aif = np.asarray(aif, dtype=np.float64)
+    tissue_2d, mask_flat, invalid = _prepare_svd_batch_inputs(tissue_curves, aif, dt, mask)
+    _validate_svd_threshold(threshold)
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
-    tissue_2d: npt.NDArray[np.floating]
-
-    # Reshape to 2D (n_voxels, n_timepoints)
-    if tissue_curves.ndim > 2:
-        spatial_shape = original_shape[:-1]
-        n_voxels = int(np.prod(spatial_shape))
-        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints)
-    else:
-        spatial_shape = (original_shape[0],)
-        n_voxels = original_shape[0]
-        tissue_2d = tissue_curves
-
-    # Flatten mask if provided
-    if mask is not None:
-        mask_flat = mask.flatten()
-    else:
-        mask_flat = np.ones(n_voxels, dtype=bool)
+    spatial_shape = original_shape[:-1]
+    n_voxels = mask_flat.size
 
     # Build Volterra (product-integration) matrix and compute SVD once
     matrix = build_volterra_matrix(aif, dt)
@@ -399,6 +448,8 @@ def svd_deconvolve_standard_batch(
     cbf = np.zeros(n_voxels, dtype=np.float64)
     cbv = np.zeros(n_voxels, dtype=np.float64)
     mtt = np.zeros(n_voxels, dtype=np.float64)
+    for values in (residues, cbf, cbv, mtt):
+        values[invalid] = np.nan
 
     # Process masked voxels
     # Vectorized computation: R = vh.T @ (s_inv[:, None] * (u.T @ C.T))
@@ -413,10 +464,6 @@ def svd_deconvolve_standard_batch(
         scaled = s_inv[:, None] * ut_tissue  # (n_time, n_vox)
         residues_masked = (vh.T @ scaled).T  # (n_vox, n_time)
 
-        # Apply non-negativity
-        if apply_non_negativity:
-            residues_masked = np.maximum(residues_masked, 0.0)
-
         # Extract parameters
         cbf_masked = np.max(residues_masked, axis=1)
 
@@ -426,9 +473,9 @@ def svd_deconvolve_standard_batch(
         # MTT = CBV / CBF
         with np.errstate(divide="ignore", invalid="ignore"):
             mtt_masked = np.where(
-                cbf_masked > EPSILON_CONCENTRATION,
+                (cbf_masked > EPSILON_CONCENTRATION) & (cbv_masked > 0),
                 cbv_masked / cbf_masked,
-                0.0,
+                np.nan,
             )
 
         # Store results
@@ -458,13 +505,16 @@ class CirculantDeconvolutionResult(DeconvolutionResultBase):
 
     Attributes
     ----------
-        delay: Estimated delay between AIF and tissue in seconds.
-            Positive = tissue delayed relative to AIF.
-            Negative = tissue arrives before AIF.
-        delay_frames: Delay in frame units (before multiplication by dt).
-        threshold_used: SVD truncation threshold that was applied.
-        n_singular_values: Number of singular values retained after truncation.
-        condition_number: Condition number of the truncated matrix.
+    delay : float
+        Signed residue-peak lag in seconds relative to the AIF.
+    delay_frames : int
+        Residue-peak lag in frames, with indices N through 2N-1 wrapped negative.
+    threshold_used : float
+        SVD truncation threshold as a fraction of the largest singular value.
+    n_singular_values : int
+        Number of singular values retained after truncation.
+    condition_number : float
+        Condition number of the retained singular spectrum.
     """
 
     delay: float
@@ -474,11 +524,7 @@ class CirculantDeconvolutionResult(DeconvolutionResultBase):
     condition_number: float
 
     def get_tmax(self, dt: float = 1.0) -> float:
-        """Get Tmax for cSVD (= delay).
-
-        For cSVD, Tmax represents the time delay of the tissue residue
-        function relative to the AIF. This is
-        the standard definition used in DEFUSE-3 and DAWN trials.
+        """Convert the signed residue-peak lag to time units.
 
         Parameters
         ----------
@@ -501,13 +547,13 @@ def build_block_circulant_matrix(
 
     Constructs a 2N x 2N circulant (periodic) convolution matrix whose
     generating column is the AIF pre-smoothed with the (1, 4, 1)/6 stencil
-    and zero-padded to length 2N. Treating the convolution as circular lets
-    the deconvolution estimate arbitrary positive or negative delays between
-    the AIF and tissue curve without boundary artifacts.
+    and zero-padded to length 2N. The residue peak can occur anywhere in this
+    period; indices N through 2N-1 represent negative lags.
 
-    The generating column applies the (1, 4, 1)/6 stencil on the interior, a
-    one-sided stencil at the last AIF sample, and carries the trailing stencil
-    mass one sample into the zero-pad region (index N).
+    The generating column applies the (1, 4, 1)/6 stencil on the interior,
+    one-sided stencils consistent with zero extension at both AIF endpoints,
+    and carries the trailing stencil mass one sample into the zero-pad region
+    (index N).
 
     Parameters
     ----------
@@ -530,10 +576,10 @@ def build_block_circulant_matrix(
 
     # (1, 4, 1)/6 pre-smoothed AIF as the circulant generating column,
     # zero-padded to length 2N. The trailing stencil mass leaks one sample
-    # into the pad region (index N), and the last AIF sample uses a one-sided
-    # stencil.
+    # into the pad region (index N). Both AIF endpoints use one-sided stencils
+    # consistent with zero extension.
     col = np.zeros(m, dtype=np.float64)
-    col[0] = aif64[0]
+    col[0] = (4.0 * aif64[0] + aif64[1]) / 6.0
     col[1 : n - 1] = (aif64[: n - 2] + 4.0 * aif64[1 : n - 1] + aif64[2:n]) / 6.0
     col[n - 1] = (aif64[n - 2] + 4.0 * aif64[n - 1]) / 6.0
     col[n] = aif64[n - 1] / 6.0
@@ -548,25 +594,13 @@ def svd_deconvolve_circulant(
     aif: npt.NDArray[np.floating],
     dt: float = 1.0,
     threshold: float = DEFAULT_SVD_THRESHOLD,
-    apply_non_negativity: bool = True,
 ) -> CirculantDeconvolutionResult:
     """Circulant SVD deconvolution (cSVD) for delay-insensitive estimation.
 
-    Performs deconvolution using a block-circulant matrix approach that is
-    insensitive to delays between the AIF and tissue curve. The method
-    zero-pads both the AIF and tissue curve to length 2N and constructs
-    a circulant convolution matrix, allowing the residue function to peak
-    at any time point (positive or negative delay).
-
-    The deconvolution equation is:
-        C_tissue(t) = CBF × ∫_{-∞}^{∞} R(t-τ) × AIF(τ) dτ
-
-    The delay is extracted from the position of the residue maximum:
-        if argmax(R) < N:  delay = argmax(R)          (positive delay)
-        else:              delay = argmax(R) - 2N      (negative / wrap-around)
-
-    where N is the original curve length and 2N is the padded length.
-    Index 0 in the block-circulant residue corresponds to zero delay.
+    Solve for a signed flow-scaled residue using a block-circulant matrix
+    and a fixed singular-value cutoff. Both curves are zero-padded to 2N.
+    The residue peak defines the lag: indices below N give nonnegative lags,
+    and indices N through 2N-1 wrap to negative lags.
 
     Parameters
     ----------
@@ -577,37 +611,25 @@ def svd_deconvolve_circulant(
         Must have same length as tissue_curve.
     dt : float, optional
         Time step in seconds. Default 1.0 gives delay in frame units.
-        For absolute timing, provide actual TR.
+        Use the acquisition frame interval for timing in seconds.
     threshold : float, optional
         SVD truncation threshold as fraction of maximum singular
-        value. Singular values below threshold × max(s) are set to zero.
+        value. Singular values at or below threshold × max(s) are discarded.
         Default is 0.2 (20% of max). Higher values = more regularization.
-    apply_non_negativity : bool, optional
-        If True, apply non-negativity constraint to
-        residue function by clipping negative values to zero.
-        Default is True.
 
     Returns
     -------
     CirculantDeconvolutionResult
-        CirculantDeconvolutionResult containing residue function, perfusion
-        parameters, and estimated delay.
+        Signed residue of length 2N, CBF from its maximum, and CBV from the
+        trapezoidal integral of N samples starting at the peak and wrapping
+        around the period. MTT is CBV/CBF when CBF exceeds the concentration
+        tolerance, otherwise zero. Delay is the signed residue-peak lag.
 
     Raises
     ------
-        ValueError: If tissue_curve and aif have different lengths.
-        ValueError: If arrays are empty.
-        ValueError: If threshold is not in (0, 1).
-
-    Notes
-    -----
-        - The residue function has length 2N, allowing delays from -N to +(N-1)
-        - CBF is extracted as max(R(t))
-        - CBV is computed as integral of R(t) using trapezoidal rule
-        - MTT = CBV / CBF (central volume theorem)
-        - Delay is estimated from the position of max(R(t))
-        - For large delays, consider if the delay is physiologically reasonable
-
+    ValueError
+        If curves differ in length, contain fewer than two samples, or
+        threshold is outside (0, 1).
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):
@@ -635,14 +657,14 @@ def svd_deconvolve_circulant(
     # Perform SVD
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Truncate singular values below threshold
+    # Retain singular values strictly above the cutoff.
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
 
     # Count retained singular values
     n_retained = int(np.sum(s > truncation_threshold))
     if n_retained == 0:
-        n_retained = 1  # Keep at least one singular value
+        n_retained = 1
 
     # Create truncated inverse singular values
     s_inv = np.zeros_like(s)
@@ -659,10 +681,6 @@ def svd_deconvolve_circulant(
     # Solve for residue function: R = V @ S_inv @ U^T @ C
     residue = vh.T @ (s_inv * (u.T @ tissue_padded))
 
-    # Apply non-negativity constraint
-    if apply_non_negativity:
-        residue = np.maximum(residue, 0.0)
-
     # Extract delay from position of maximum
     # Zero-delay is at index 0; indices >= n wrap to negative delays.
     peak_position = int(np.argmax(residue))
@@ -672,16 +690,12 @@ def svd_deconvolve_circulant(
         delay_frames = peak_position - m
     delay_seconds = float(delay_frames) * dt
 
-    # Extract N causal points starting at the residue peak (the delay),
-    # wrapping the 2N circulant residue.
+    # Integrate an N-sample window starting at the peak and wrapping at 2N.
     causal_indices = (peak_position + np.arange(n)) % m
     causal_residue = residue[causal_indices]
 
-    # Extract perfusion parameters from causal portion
     cbf = float(np.max(causal_residue))
 
-    # Residue-integral CBV diagnostic (feeds the deconvolution rel_cbv map);
-    # the primary reported CBV is the interface AUC ratio.
     cbv = float(np.trapezoid(causal_residue, dx=dt))
 
     # MTT from central volume theorem: MTT = CBV / CBF
@@ -708,7 +722,6 @@ def svd_deconvolve_circulant_batch(
     aif: npt.NDArray[np.floating],
     dt: float = 1.0,
     threshold: float = DEFAULT_SVD_THRESHOLD,
-    apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
     npt.NDArray[np.floating],  # residues
@@ -733,8 +746,6 @@ def svd_deconvolve_circulant_batch(
         Time step in seconds.
     threshold : float, optional
         SVD truncation threshold (default 0.2).
-    apply_non_negativity : bool, optional
-        Apply non-negativity constraint on residue.
     mask : np.ndarray, optional
         Optional boolean mask of voxels to process. If None, process all.
         Shape must match spatial dimensions of tissue_curves.
@@ -742,9 +753,11 @@ def svd_deconvolve_circulant_batch(
     Returns
     -------
     tuple
-        Tuple of (residues, cbf, cbv, mtt, delay) arrays.
-        - residues has shape (..., 2N) where N is the number of timepoints
-        - cbf, cbv, mtt, delay have the same spatial shape as input
+        Signed residues have shape (..., 2N); cbf, cbv, mtt and delay match
+        the input spatial shape. CBV integrates N samples from each residue
+        peak with periodic wrapping, as in the scalar cSVD function. MTT is
+        CBV/CBF when CBF exceeds the concentration tolerance, otherwise zero.
+        Excluded voxels remain zero.
     """
     # Store original shape for reshaping output
     original_shape = tissue_curves.shape
@@ -804,10 +817,6 @@ def svd_deconvolve_circulant_batch(
         scaled = s_inv[:, None] * ut_tissue  # (m, n_vox)
         residues_masked = (vh.T @ scaled).T  # (n_vox, m)
 
-        # Apply non-negativity
-        if apply_non_negativity:
-            residues_masked = np.maximum(residues_masked, 0.0)
-
         # Extract delays from peak positions (zero-delay at index 0)
         peak_positions = np.argmax(residues_masked, axis=1)
         delay_frames = np.where(
@@ -817,17 +826,13 @@ def svd_deconvolve_circulant_batch(
         )
         delay_masked = delay_frames.astype(np.float64) * dt
 
-        # Extract N causal points from each voxel's 2N residue, starting at
-        # the per-voxel residue peak (the delay), wrapping the circulant.
+        # Each integration window starts at its voxel's peak and wraps at 2N.
         vox_idx = np.arange(len(masked_indices))[:, None]
         time_idx = (peak_positions[:, None] + np.arange(n_timepoints)[None, :]) % m
         causal_residues = residues_masked[vox_idx, time_idx]  # (n_vox, N)
 
-        # Extract parameters from causal portion
         cbf_masked = np.max(causal_residues, axis=1)
 
-        # Residue-integral CBV diagnostic (feeds the deconvolution rel_cbv
-        # map); the primary reported CBV is the interface AUC ratio.
         cbv_masked = np.trapezoid(causal_residues, dx=dt, axis=1)
 
         # MTT = CBV / CBF
@@ -868,14 +873,23 @@ class OscillationDeconvolutionResult(DeconvolutionResultBase):
 
     Attributes
     ----------
-        delay: Tracer arrival delay in seconds.
-        delay_frames: Tracer arrival delay in frame units.
-        oscillation_index: OI = (1/L) * sum|R(k) - 2R(k-1) + R(k-2)| / max(R).
-        threshold_used: The optimal SVD truncation threshold.
-        n_singular_values: Number of singular values retained after truncation.
-        condition_number: Condition number of the truncated matrix.
-        oi_target: The target oscillation index threshold that was used.
-        converged: Whether the search converged to find a valid threshold.
+    delay : float
+        Signed residue-peak lag in seconds relative to the AIF.
+    delay_frames : int
+        Residue-peak lag in frames, with indices N through 2N-1 wrapped negative.
+    oscillation_index : float
+        Sum of absolute interior second differences divided by L * max(residue),
+        where L = 2N is the residue length.
+    threshold_used : float
+        Selected singular-value cutoff as a fraction of the largest value.
+    n_singular_values : int
+        Number of singular values retained after truncation.
+    condition_number : float
+        Condition number of the retained singular spectrum.
+    oi_target : float
+        Target oscillation index.
+    converged : bool
+        Whether the threshold search found a residue meeting the target.
     """
 
     delay: float
@@ -888,7 +902,7 @@ class OscillationDeconvolutionResult(DeconvolutionResultBase):
     converged: bool
 
     def get_tmax(self, dt: float = 1.0) -> float:
-        """Get time to maximum of residue function (delay-based).
+        """Convert the signed residue-peak lag to time units.
 
         Parameters
         ----------
@@ -912,9 +926,8 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
 
         OI = (1/L) × Σ|R(k) − 2R(k−1) + R(k−2)| / max(R)
 
-    where L is the number of points. The second difference targets oscillation
-    (sign changes in the slope) while tolerating a smooth monotonic rise; a
-    lower OI indicates a smoother residue.
+    where L is the number of points. Differences use interior samples only,
+    without a periodic closure term.
 
     Parameters
     ----------
@@ -924,8 +937,8 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
     Returns
     -------
     float
-        Oscillation index (dimensionless). Returns 0.0 if the residue is all
-        zeros or has fewer than 3 points.
+        Oscillation index (dimensionless). Returns 0.0 if the peak is at or
+        below the concentration tolerance or there are fewer than three points.
 
     """
     # Handle edge cases (the second difference needs >= 3 points)
@@ -946,31 +959,24 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
 
 def _deconvolve_with_threshold(
     tissue_padded: npt.NDArray[np.floating],
-    n_original: int,
     threshold: float,
     u: npt.NDArray[np.floating],
     s: npt.NDArray[np.floating],
     vh: npt.NDArray[np.floating],
-    apply_non_negativity: bool,
 ) -> tuple[npt.NDArray[np.floating], float, int, float, int]:
     """Deconvolve with a given threshold using block-circulant SVD (helper).
 
-    OI is computed on the raw (unclipped) causal residue. The returned
-    residue is clipped when
-    apply_non_negativity is True, for downstream parameter extraction.
+    OI is computed on the full signed 2N residue, which is also returned
+    unchanged for parameter extraction.
 
     Parameters
     ----------
     tissue_padded : np.ndarray
         Zero-padded tissue curve, length 2N.
-    n_original : int
-        Original (unpadded) number of timepoints N.
     threshold : float
         SVD truncation threshold (fraction of max singular value).
     u, s, vh : np.ndarray
         Pre-computed SVD of block-circulant matrix.
-    apply_non_negativity : bool
-        Whether to clip negative values.
 
     Returns
     -------
@@ -978,7 +984,7 @@ def _deconvolve_with_threshold(
         Tuple of (residue, oscillation_index, n_retained,
         condition_number, peak_position).
     """
-    # Truncate singular values below threshold
+    # Retain singular values strictly above the cutoff.
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max
 
@@ -1000,22 +1006,13 @@ def _deconvolve_with_threshold(
         condition_number = float("inf")
 
     # Solve: R = Vh^T @ (S_inv * (U^T @ C_padded))
-    residue_raw = vh.T @ (s_inv * (u.T @ tissue_padded))
-
-    # Non-negativity for peak detection and parameter extraction
-    if apply_non_negativity:
-        residue = np.maximum(residue_raw, 0.0)
-    else:
-        residue = residue_raw
+    residue = vh.T @ (s_inv * (u.T @ tissue_padded))
 
     # Peak (for the delay) is the global maximum of the residue.
     peak_position = int(np.argmax(residue))
 
-    # OI on the FULL residue: the gate must detect oscillation anywhere in the
-    # residue, so an under-regularized solution with a spurious wrap-boundary
-    # lobe is correctly rejected. Computed on the raw (unclipped) residue so
-    # negative oscillations — the signal the OI targets — are not hidden.
-    oi = compute_oscillation_index(residue_raw)
+    # Evaluate oscillation over the full signed residue, including its tail.
+    oi = compute_oscillation_index(residue)
 
     return residue, oi, n_retained, condition_number, peak_position
 
@@ -1028,7 +1025,6 @@ def svd_deconvolve_oscillation(
     threshold_min: float = 0.01,
     threshold_max: float = 0.50,
     max_iterations: int = DEFAULT_OSVD_GRID_STEPS,
-    apply_non_negativity: bool = True,
 ) -> OscillationDeconvolutionResult:
     """Oscillation-index limited SVD deconvolution (oSVD).
 
@@ -1039,10 +1035,12 @@ def svd_deconvolve_oscillation(
 
         OI = (1/L) * sum|R(k) - 2R(k-1) + R(k-2)| / max(R)
 
-    computed on the N causal points extracted from the 2N circulant residue.
+    computed on the full signed residue, with L = 2N and interior second
+    differences. The area integral includes the circular closure interval.
 
     A linear search from low to high threshold finds the first (lowest)
-    threshold that achieves OI <= oi_target.
+    threshold that achieves OI <= oi_target. If none does, the upper-threshold
+    result is retained with converged=False.
 
     Parameters
     ----------
@@ -1061,43 +1059,34 @@ def svd_deconvolve_oscillation(
         Maximum SVD threshold to consider. Default 0.50.
     max_iterations : int, optional
         Number of evenly-spaced thresholds. Default :data:`DEFAULT_OSVD_GRID_STEPS`.
-    apply_non_negativity : bool, optional
-        If True, clip negative residue values to zero.
 
     Returns
     -------
     OscillationDeconvolutionResult
         OscillationDeconvolutionResult with 2N residue, delay, and
-        perfusion parameters derived from the N causal points.
+        signed full-period CBV from dt * sum(residue). Residue MTT is this
+        area divided by CBF, or NaN for a nonpositive area or a peak at or
+        below the concentration tolerance.
 
     Raises
     ------
-        ValueError: If tissue_curve and aif have different lengths.
-        ValueError: If arrays are empty.
-        ValueError: If oi_target is not positive.
+    ValueError
+        If the curves are not finite one-dimensional arrays of equal length
+        with at least two samples, the AIF is near-zero, dt or oi_target is
+        not finite and positive, the bounds do not satisfy
+        0 < threshold_min <= threshold_max < 1, or max_iterations is not a
+        positive integer.
 
     """
-    # Validate inputs
-    if len(tissue_curve) != len(aif):
-        raise ValueError(
-            f"tissue_curve and aif must have same length, "
-            f"got {len(tissue_curve)} and {len(aif)}"
-        )
-
-    if len(tissue_curve) == 0:
-        raise ValueError("Arrays cannot be empty")
-
-    if oi_target <= 0:
-        raise ValueError(f"oi_target must be positive, got {oi_target}")
+    tissue_curve = np.asarray(tissue_curve, dtype=np.float64)
+    aif = np.asarray(aif, dtype=np.float64)
+    if tissue_curve.ndim != 1:
+        raise ValueError("tissue_curve must be one-dimensional")
+    _validate_svd_inputs(tissue_curve, aif, dt)
+    _validate_osvd_settings(oi_target, threshold_min, threshold_max, max_iterations)
 
     n = len(tissue_curve)
     m = 2 * n
-
-    if np.max(np.abs(aif)) < EPSILON_CONCENTRATION:
-        raise ValueError(
-            f"AIF is near-zero (max={np.max(np.abs(aif)):.2e}). "
-            "Check AIF detection."
-        )
 
     # Zero-pad tissue curve to 2N
     tissue_padded = np.zeros(m, dtype=np.float64)
@@ -1107,7 +1096,7 @@ def svd_deconvolve_oscillation(
     matrix = build_block_circulant_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
-    # Linear search for optimal threshold (LOW→HIGH, first acceptable)
+    # Search increasing thresholds for the first OI at or below target.
     thresholds = np.linspace(threshold_min, threshold_max, max_iterations)
 
     best_residue: Optional[npt.NDArray[np.floating]] = None
@@ -1120,7 +1109,7 @@ def svd_deconvolve_oscillation(
 
     for thresh in thresholds:
         residue, oi, n_ret, cond, peak = _deconvolve_with_threshold(
-            tissue_padded, n, thresh, u, s, vh, apply_non_negativity,
+            tissue_padded, thresh, u, s, vh,
         )
 
         if oi <= oi_target:
@@ -1137,8 +1126,7 @@ def svd_deconvolve_oscillation(
     if best_residue is None:
         best_residue, best_oi, best_n_ret, best_cond, best_peak = (
             _deconvolve_with_threshold(
-                tissue_padded, n, threshold_max, u, s, vh,
-                apply_non_negativity,
+                tissue_padded, threshold_max, u, s, vh,
             )
         )
         best_threshold = threshold_max
@@ -1151,13 +1139,9 @@ def svd_deconvolve_oscillation(
         delay_frames = best_peak - m
     delay = float(delay_frames) * dt
 
-    # Extract N causal points for perfusion parameters
-    causal_indices = (best_peak + np.arange(n)) % m
-    causal_residue = best_residue[causal_indices]
-
-    cbf = float(np.max(causal_residue))
-    cbv = float(np.trapezoid(causal_residue, dx=dt))
-    mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
+    cbf = float(np.max(best_residue))
+    cbv = float(dt * np.sum(best_residue))
+    mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION and cbv > 0 else np.nan
 
     return OscillationDeconvolutionResult(
         residue=best_residue,
@@ -1183,7 +1167,6 @@ def svd_deconvolve_oscillation_batch(
     threshold_min: float = 0.01,
     threshold_max: float = 0.50,
     max_iterations: int = DEFAULT_OSVD_GRID_STEPS,
-    apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
     npt.NDArray[np.floating],  # residues (2N per voxel)
@@ -1216,8 +1199,6 @@ def svd_deconvolve_oscillation_batch(
         Maximum SVD threshold. Default 0.50.
     max_iterations : int, optional
         Number of linear search steps per voxel. Default :data:`DEFAULT_OSVD_GRID_STEPS`.
-    apply_non_negativity : bool, optional
-        Apply non-negativity constraint on residue.
     mask : np.ndarray, optional
         Optional boolean mask of voxels to process.
 
@@ -1226,34 +1207,29 @@ def svd_deconvolve_oscillation_batch(
     tuple
         Tuple of (residues, cbf, cbv, mtt, oscillation_index, threshold_used,
         delay) arrays. Residues have time dimension 2N. All spatial arrays
-        match the input spatial shape.
+        match the input spatial shape. CBV is the signed full-period area,
+        dt * sum(residue); residue MTT is NaN for a nonpositive area or a peak
+        at or below the concentration tolerance. Excluded voxels remain zero.
+        Nonfinite selected tissue curves receive NaN outputs without affecting
+        other voxels. For finite in-mask OI values, oscillation_index <= oi_target
+        indicates that the target was met. Results above target retain the
+        upper-threshold fit.
+
+    Raises
+    ------
+    ValueError
+        If spatial/time dimensions or mask shape are invalid, or the AIF,
+        sampling or search settings fail scalar validation.
     """
+    tissue_curves = np.asarray(tissue_curves, dtype=np.float64)
+    aif = np.asarray(aif, dtype=np.float64)
+    tissue_2d, mask_flat, invalid = _prepare_svd_batch_inputs(tissue_curves, aif, dt, mask)
+    _validate_osvd_settings(oi_target, threshold_min, threshold_max, max_iterations)
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
     m = 2 * n_timepoints
-    tissue_2d: npt.NDArray[np.floating]
-
-    # Reshape to 2D (n_voxels, n_timepoints)
-    if tissue_curves.ndim > 2:
-        spatial_shape = original_shape[:-1]
-        n_voxels = int(np.prod(spatial_shape))
-        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints)
-    else:
-        spatial_shape = (original_shape[0],)
-        n_voxels = original_shape[0]
-        tissue_2d = tissue_curves
-
-    # Flatten mask if provided
-    if mask is not None:
-        mask_flat = mask.flatten()
-    else:
-        mask_flat = np.ones(n_voxels, dtype=bool)
-
-    if np.max(np.abs(aif)) < EPSILON_CONCENTRATION:
-        raise ValueError(
-            f"AIF is near-zero (max={np.max(np.abs(aif)):.2e}). "
-            "Check AIF detection."
-        )
+    spatial_shape = original_shape[:-1]
+    n_voxels = mask_flat.size
 
     # Build block-circulant matrix and compute SVD once
     matrix = build_block_circulant_matrix(aif, dt)
@@ -1267,6 +1243,8 @@ def svd_deconvolve_oscillation_batch(
     oscillation_index = np.zeros(n_voxels, dtype=np.float64)
     threshold_used = np.zeros(n_voxels, dtype=np.float64)
     delay = np.zeros(n_voxels, dtype=np.float64)
+    for values in (residues, cbf, cbv, mtt, oscillation_index, threshold_used, delay):
+        values[invalid] = np.nan
 
     masked_indices = np.where(mask_flat)[0]
     thresholds = np.linspace(threshold_min, threshold_max, max_iterations)
@@ -1276,7 +1254,7 @@ def svd_deconvolve_oscillation_batch(
         tissue_padded = np.zeros(m, dtype=np.float64)
         tissue_padded[:n_timepoints] = tissue_2d[idx, :]
 
-        # Linear search: LOW→HIGH, stop at FIRST threshold where OI ≤ target
+        # Search increasing thresholds for the first OI at or below target.
         best_residue = None
         best_oi = float("inf")
         best_threshold = threshold_max
@@ -1284,8 +1262,7 @@ def svd_deconvolve_oscillation_batch(
 
         for thresh in thresholds:
             residue, oi, n_ret, cond, peak = _deconvolve_with_threshold(
-                tissue_padded, n_timepoints, thresh, u, s, vh,
-                apply_non_negativity,
+                tissue_padded, thresh, u, s, vh,
             )
             if oi <= oi_target:
                 best_residue = residue
@@ -1297,8 +1274,7 @@ def svd_deconvolve_oscillation_batch(
         # If no threshold achieved target, use maximum regularization
         if best_residue is None:
             best_residue, best_oi, _, _, best_peak = _deconvolve_with_threshold(
-                tissue_padded, n_timepoints, threshold_max, u, s, vh,
-                apply_non_negativity,
+                tissue_padded, threshold_max, u, s, vh,
             )
             best_threshold = threshold_max
 
@@ -1307,14 +1283,13 @@ def svd_deconvolve_oscillation_batch(
             delay_frames = best_peak
         else:
             delay_frames = best_peak - m
-        causal_indices = (best_peak + np.arange(n_timepoints)) % m
-        causal_residue = best_residue[causal_indices]
-
         residues[idx, :] = best_residue
-        cbf[idx] = float(np.max(causal_residue))
-        cbv[idx] = float(np.trapezoid(causal_residue, dx=dt))
-        if cbf[idx] > EPSILON_CONCENTRATION:
-            mtt[idx] = cbv[idx] / cbf[idx]
+        cbf[idx] = float(np.max(best_residue))
+        cbv[idx] = float(dt * np.sum(best_residue))
+        mtt[idx] = (
+            cbv[idx] / cbf[idx]
+            if cbf[idx] > EPSILON_CONCENTRATION and cbv[idx] > 0 else np.nan
+        )
         oscillation_index[idx] = best_oi
         threshold_used[idx] = best_threshold
         delay[idx] = float(delay_frames) * dt
@@ -1340,152 +1315,277 @@ def svd_deconvolve_oscillation_batch(
 
 @dataclass
 class TikhonovDeconvolutionResult(DeconvolutionResultBase):
-    """Result from Tikhonov regularised deconvolution.
-
-    Modified first-difference penalty operator (identity block on the
-    leading residue samples) with Morozov discrepancy λ-selection.
+    """Signed Tikhonov residue and full-N perfusion diagnostics.
 
     Attributes
     ----------
-        lambda_optimal: selected λ (Morozov discrepancy, or the degenerate
-            near-noise-free fallback default).
-        residual_norm: ||A·r - C||² at the unclipped solution.
-        solution_norm: ||L·r||² at the unclipped solution (where L is
-            the modified first-difference penalty operator).
-        data_driven_lambda: True if a data-driven (Morozov discrepancy) λ was
-            selected from the measured noise floor; False if the noise was
-            unmeasurable (near-noise-free) and the fixed fallback λ was used.
+    lambda_optimal : float
+        Discrete L-curve selection, or zero for an inactive tissue curve.
+    residual_norm : float
+        Squared data residual norm of the unconstrained fit.
+    solution_norm : float
+        Squared penalty norm of the unconstrained fit.
+    selection_status : TikhonovSelection
+        Interior curvature sign, upper-endpoint selection, or inactive input.
     """
 
     lambda_optimal: float
     residual_norm: float
     solution_norm: float
-    data_driven_lambda: bool = False
+    selection_status: "TikhonovSelection"
+
+    @property
+    def lcurve_corner_found(self) -> bool:
+        """Whether a strict interior curvature maximum was selected."""
+        return self.selection_status in (
+            TikhonovSelection.POSITIVE_CORNER,
+            TikhonovSelection.NONPOSITIVE_CORNER,
+        )
+
+
+class TikhonovSelection(IntEnum):
+    """Mutually exclusive outcomes of discrete L-curve selection."""
+
+    INACTIVE = 0
+    POSITIVE_CORNER = 1
+    NONPOSITIVE_CORNER = 2
+    UPPER_ENDPOINT = 3
+    INVALID_INPUT = 4
 
 
 def _build_modified_first_derivative_matrix(
     n: int, p: int = DEFAULT_TIKHONOV_PENALTY_P
 ) -> npt.NDArray[np.float64]:
-    """Build the (n, n) modified first-difference penalty operator L.
-
-    The first ``p`` rows form an identity block, so the penalty ``||L·r||²``
-    constrains the *magnitude* of the leading ``p`` residue samples; the
-    remaining rows are forward differences ``r[i] - r[i-1]`` that constrain
-    the *derivative* of the tail. The difference across the boundary
-    (``r[p-1] - r[p-2]``) is left unpenalised, so the regulariser does not
-    oversmooth the sharp initial rise of a dispersed residue (which would
-    depress ``CBF = max R``). Used for::
-
-        min ||A·r - C||² + λ² ||L·r||²
-
-    ``p`` is clamped to ``n``; for ``n <= p`` the operator degenerates to a
-    pure identity (magnitude-only) penalty.
-    """
-    L = np.zeros((n, n), dtype=np.float64)
-    p_eff = min(p, n)
-    ip = np.arange(p_eff)
-    L[ip, ip] = 1.0
-    tail = np.arange(p_eff, n)
-    L[tail, tail - 1] = -1.0
-    L[tail, tail] = 1.0
-    return L
-
-
-def _precompute_tikhonov_inverses(
-    AtA: npt.NDArray[np.floating],
-    LtL: npt.NDArray[np.floating],
-    lambdas: npt.NDArray[np.floating],
-) -> npt.NDArray[np.float64]:
-    """Precompute (A^T A + λ² L^T L)^{-1} for each λ in the sweep.
-
-    Uses Cholesky-based ``np.linalg.solve`` against the identity, which is
-    numerically stable: the system ``A^T A + λ² L^T L`` is symmetric
-    positive definite for any λ > 0 even though L^T L is rank-deficient
-    on its own. This avoids the ill-conditioning of the
-    generalised-eigenvalue pencil (which has near-zero L^T L modes
-    aligned with near-zero A^T A modes for DSC deconvolution operators).
-
-    Returns an array of shape (n_lambdas, n, n).
-    """
-    n = AtA.shape[0]
-    eye_n = np.eye(n)
-    inverses = np.zeros((len(lambdas), n, n), dtype=np.float64)
-    for k, lam in enumerate(lambdas):
-        M = AtA + (lam ** 2) * LtL
-        inverses[k] = np.linalg.solve(M, eye_n)
-    return inverses
-
-
-def _estimate_noise_mad(curve: npt.NDArray[np.floating]) -> float:
-    """Robust noise SD from the MAD of successive differences.
-
-    DSC concentration noise is heteroscedastic (highest at the bolus peak, where
-    the source signal is lowest), so a pre-bolus baseline SD under-reads the
-    deconvolution-relevant noise. The MAD of successive differences samples the
-    whole curve, and its median is insensitive to the sparse bolus excursion, so
-    it reads the effective noise level. Scaled by 1.4826 (MAD→Gaussian σ) and
-    1/√2 (successive differencing doubles the variance).
-
-    Assumes the bolus excursion is SPARSE relative to the acquisition window (a
-    majority-flat baseline + tail), which holds for clinical DSC. On very short
-    windows or broad/heavily-dispersed curves deterministic signal slope leaks
-    into the differences and inflates σ_n, biasing λ toward mild
-    over-regularization (a CBF under-read, the safe direction).
+    """Build a leading magnitude penalty followed by first differences.
 
     Parameters
     ----------
-    curve : np.ndarray
-        Tissue concentration curve, shape (n,).
-
-    Returns
-    -------
-    float
-        Estimated per-curve noise standard deviation.
-    """
-    from pmriprep.utils.baseline_detection import robust_noise_sigma
-
-    curve = np.asarray(curve, dtype=np.float64)
-    if curve.size < 2:
-        return 0.0
-    return float(robust_noise_sigma(curve))
-
-
-def _select_lambda_morozov(
-    residual_norms: npt.NDArray[np.floating],
-    sigma_n: float,
-    n: int,
-    tau: float,
-) -> int:
-    """Morozov discrepancy λ-selection index.
-
-    ``residual_norms`` is monotonically increasing in λ (higher regularization
-    → larger fit residual). Returns the index of the SMALLEST λ whose residual
-    reaches the expected noise magnitude ``τ·σ_n·√n`` — regularize until the fit
-    matches the noise floor and no further.
-
-    Parameters
-    ----------
-    residual_norms : np.ndarray
-        ``||A·r_λ - C||`` at each swept λ, non-decreasing in λ, shape (n_λ,).
-    sigma_n : float
-        Estimated per-voxel noise standard deviation.
     n : int
-        Number of timepoints (frames); the discrepancy floor is ``τ·σ_n·√n``.
-    tau : float
-        Morozov discrepancy factor.
+        Number of residue samples.
+    p : int
+        Number of leading samples penalized by magnitude rather than slope.
 
     Returns
     -------
-    int
-        Index of the selected λ. Edge cases: if even the largest λ stays below
-        the floor (noise dominates) the last index (most regularized) is
-        returned; if the smallest λ already meets it, the first.
+    np.ndarray
+        Square penalty matrix, with an identity block on the leading samples.
     """
-    target = tau * sigma_n * np.sqrt(n)
-    reached = np.nonzero(np.asarray(residual_norms) >= target)[0]
-    if reached.size == 0:
-        return len(residual_norms) - 1
-    return int(reached[0])
+    penalty = np.zeros((n, n), dtype=np.float64)
+    p_eff = min(p, n)
+    leading = np.arange(p_eff)
+    penalty[leading, leading] = 1.0
+    tail = np.arange(p_eff, n)
+    penalty[tail, tail - 1] = -1.0
+    penalty[tail, tail] = 1.0
+    return penalty
+
+
+@dataclass
+class _TikhonovSystem:
+    """Shared standard-form decomposition for one AIF and penalty."""
+
+    matrix: npt.NDArray[np.float64]
+    penalty: npt.NDArray[np.float64]
+    left: npt.NDArray[np.float64]
+    singular: npt.NDArray[np.float64]
+    back: npt.NDArray[np.float64]
+    unpenalized: npt.NDArray[np.float64]
+    projection: npt.NDArray[np.float64]
+    lambdas: npt.NDArray[np.float64]
+
+
+def _validate_tikhonov_inputs(
+    tissue: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float,
+    lambda_min: float,
+    lambda_max: float,
+) -> None:
+    """Require finite curves, a positive frame interval and ordered bounds."""
+    if tissue.ndim == 0 or tissue.shape[-1] == 0:
+        raise ValueError("Arrays cannot be empty")
+    if aif.ndim != 1 or tissue.shape[-1] != aif.size:
+        raise ValueError("tissue curves and aif must have the same length")
+    if aif.size < 2:
+        raise ValueError("At least two time samples are required")
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be finite and positive")
+    if not (np.isfinite(lambda_min) and np.isfinite(lambda_max)
+            and 0 < lambda_min < lambda_max):
+        raise ValueError("lambda_min and lambda_max must be finite, positive, and ordered")
+    if not np.all(np.isfinite(aif)) or not np.all(np.isfinite(tissue)):
+        raise ValueError("Tissue curves and aif must contain only finite values")
+
+
+def _prepare_tikhonov_system(
+    aif: npt.NDArray[np.floating],
+    dt: float,
+    lambda_min: float,
+    lambda_max: float,
+    penalty: Optional[npt.NDArray[np.floating]] = None,
+) -> _TikhonovSystem:
+    """Reduce the full-N causal forward model and penalty to standard form."""
+    matrix = np.asarray(build_volterra_matrix(aif, dt), dtype=np.float64)
+    n = len(aif)
+    if not np.any(matrix):
+        raise ValueError("AIF produces a degenerate convolution matrix")
+    if penalty is None:
+        active_penalty = _build_modified_first_derivative_matrix(n)
+    else:
+        if penalty.ndim != 2 or penalty.shape[1] != len(aif):
+            raise ValueError("Penalty columns must match the AIF length")
+        if not np.all(np.isfinite(penalty)):
+            raise ValueError("Penalty must contain only finite values")
+        active_penalty = np.asarray(penalty, dtype=np.float64)
+
+    projection = np.eye(len(aif), dtype=np.float64)
+    unpenalized = np.zeros((n, n), dtype=np.float64)
+    if np.array_equal(active_penalty, _build_modified_first_derivative_matrix(n)):
+        transform = linalg.solve_triangular(
+            active_penalty, np.eye(n), lower=True,
+        )
+    else:
+        transform = linalg.pinv(active_penalty)
+        null = linalg.null_space(active_penalty)
+        if null.shape[1]:
+            null_forward = matrix @ null
+            if np.linalg.matrix_rank(null_forward) != null.shape[1]:
+                raise ValueError("Unpenalized residue components are not identifiable")
+            unpenalized = null @ linalg.pinv(null_forward)
+            projection -= matrix @ unpenalized
+            transform -= unpenalized @ matrix @ transform
+
+    left, singular, right = linalg.svd(matrix @ transform, full_matrices=False)
+    scale = float(linalg.svdvals(matrix)[0])
+    lambdas = scale * np.logspace(
+        np.log10(lambda_min), np.log10(lambda_max), LCURVE_N_LAMBDAS,
+    )
+    return _TikhonovSystem(
+        matrix, active_penalty, left, singular, transform @ right.T,
+        unpenalized, projection, lambdas,
+    )
+
+
+def _tikhonov_lcurve(
+    singular: npt.NDArray[np.floating],
+    coefficients_squared: npt.NDArray[np.floating],
+    perpendicular_squared: npt.NDArray[np.floating],
+    lambdas: npt.NDArray[np.floating],
+) -> tuple[
+    npt.NDArray[np.float64], npt.NDArray[np.float64],
+    npt.NDArray[np.float64], npt.NDArray[np.float64],
+]:
+    """Evaluate norms and signed log-log curvature using analytic derivatives.
+
+    Parameters
+    ----------
+    singular : np.ndarray
+        Singular values of the standard-form forward matrix.
+    coefficients_squared : np.ndarray
+        Squared data coefficients, shape (n_components, n_voxels).
+    perpendicular_squared : np.ndarray
+        Squared residual outside the left singular-vector space, per voxel.
+    lambdas : np.ndarray
+        Positive regularization parameters.
+
+    Returns
+    -------
+    rho, eta, curvature, curvature_derivative : np.ndarray
+        Data and penalty norms and signed curvature, each shaped
+        (n_lambdas, n_voxels). The derivative is with respect to log lambda.
+        Undefined curvature is negative infinity.
+    """
+    lam2 = np.atleast_1d(lambdas)[:, None] ** 2
+    s2 = singular[None, :] ** 2
+    fraction = lam2 / (s2 + lam2)
+    first = 2 * fraction * (1 - fraction)
+    second = 4 * fraction * (1 - fraction) * (1 - 2 * fraction)
+    third = 8 * fraction * (1 - fraction) * (1 - 6 * fraction + 6 * fraction ** 2)
+    weight = singular[None, :] / (s2 + lam2)
+    weight_first = -2 * fraction * weight
+    weight_second = 4 * fraction * (2 * fraction - 1) * weight
+    weight_third = -8 * fraction * (1 - 6 * fraction + 6 * fraction ** 2) * weight
+    rho2 = (fraction ** 2) @ coefficients_squared + perpendicular_squared
+    eta2 = (weight ** 2) @ coefficients_squared
+    rho_first = (2 * fraction * first) @ coefficients_squared
+    eta_first = (2 * weight * weight_first) @ coefficients_squared
+    rho_second = (2 * (first ** 2 + fraction * second)) @ coefficients_squared
+    eta_second = (2 * (weight_first ** 2 + weight * weight_second)) @ coefficients_squared
+    rho_third = (2 * (3 * first * second + fraction * third)) @ coefficients_squared
+    eta_third = (2 * (3 * weight_first * weight_second + weight * weight_third)) @ coefficients_squared
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        dx = rho_first / (2 * rho2)
+        dy = eta_first / (2 * eta2)
+        ddx = rho_second / (2 * rho2) - 2 * dx ** 2
+        ddy = eta_second / (2 * eta2) - 2 * dy ** 2
+        dddx = rho_third / (2 * rho2) - 3 * rho_second * rho_first / (2 * rho2 ** 2) + (rho_first / rho2) ** 3
+        dddy = eta_third / (2 * eta2) - 3 * eta_second * eta_first / (2 * eta2 ** 2) + (eta_first / eta2) ** 3
+        speed2 = dx ** 2 + dy ** 2
+        numerator = dx * ddy - dy * ddx
+        curvature = numerator / speed2 ** 1.5
+        derivative = ((dx * dddy - dy * dddx) * speed2 - 3 * numerator * (dx * ddx + dy * ddy)) / speed2 ** 2.5
+    return (
+        np.sqrt(rho2), np.sqrt(eta2),
+        np.where(np.isfinite(curvature), curvature, -np.inf), derivative,
+    )
+
+
+def _select_lcurve_corner(
+    curvature: npt.NDArray[np.floating],
+) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.int8]]:
+    """Select the strict interior maximum nearest the upper grid endpoint.
+
+    Parameters
+    ----------
+    curvature : np.ndarray
+        Signed curvature, shape (n_lambdas, n_voxels). Undefined samples
+        cannot bracket an extremum.
+
+    Returns
+    -------
+    indices, status : np.ndarray
+        Per-voxel grid indices and selection codes. Either curvature sign is
+        eligible; no strict interior maximum selects the upper endpoint.
+    """
+    eligible = np.zeros_like(curvature, dtype=bool)
+    eligible[1:-1] = (
+        np.isfinite(curvature[:-2])
+        & np.isfinite(curvature[1:-1])
+        & np.isfinite(curvature[2:])
+        & (curvature[1:-1] > curvature[:-2])
+        & (curvature[1:-1] > curvature[2:])
+    )
+    found = np.any(eligible, axis=0)
+    indices = curvature.shape[0] - 1 - np.argmax(eligible[::-1], axis=0)
+    chosen = curvature[indices, np.arange(curvature.shape[1])]
+    status = np.full(found.shape, TikhonovSelection.UPPER_ENDPOINT, dtype=np.int8)
+    status[found & (chosen > 0)] = TikhonovSelection.POSITIVE_CORNER
+    status[found & (chosen <= 0)] = TikhonovSelection.NONPOSITIVE_CORNER
+    return indices, status
+
+
+def _fit_tikhonov_curves(
+    curves: npt.NDArray[np.floating],
+    system: _TikhonovSystem,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.int8]]:
+    """Fit signed full-N residues using discrete L-curve selection."""
+    projected = system.projection @ curves.T
+    coefficients = system.left.T @ projected
+    perpendicular = np.sum((projected - system.left @ coefficients) ** 2, axis=0)
+    _, _, curvature, _ = _tikhonov_lcurve(
+        system.singular, coefficients ** 2, perpendicular, system.lambdas,
+    )
+    picks, status = _select_lcurve_corner(curvature)
+    selected = system.lambdas[picks].copy()
+
+    weights = system.singular[:, None] / (
+        system.singular[:, None] ** 2 + selected[None, :] ** 2
+    )
+    residue = (system.back @ (weights * coefficients) + system.unpenalized @ curves.T).T
+    inactive = ~np.any(curves != 0.0, axis=1)
+    selected[inactive] = 0.0
+    status[inactive] = TikhonovSelection.INACTIVE
+    return residue, selected, status
 
 
 def _tikhonov_solve(
@@ -1494,121 +1594,26 @@ def _tikhonov_solve(
     dt: float,
     lambda_min: float,
     lambda_max: float,
-    apply_non_negativity: bool,
     L: npt.NDArray[np.floating],
 ) -> TikhonovDeconvolutionResult:
-    """Discrepancy-regularised Tikhonov solve for a single curve.
-
-    Shared core of :func:`tikhonov_deconvolve`: builds the Volterra
-    (product-integration) matrix from the AIF, forms the normal equations with
-    penalty operator ``L``, sweeps λ on a σ_max-scaled log grid, selects λ by
-    the Morozov discrepancy principle (smallest λ whose fit residual reaches the
-    measured noise floor τ·σ_n·√n; near-noise-free curves fall back to
-    ``TIKHONOV_FALLBACK_LAMBDA_FRACTION · σ_max``), and returns the residue with
-    its perfusion summaries. The caller owns input validation and the choice of
-    ``L``.
-
-    Parameters
-    ----------
-    tissue_curve : np.ndarray
-        Tissue concentration curve, shape (n,).
-    aif : np.ndarray
-        Arterial input function, shape (n,).
-    dt : float
-        Frame period in seconds, used for CBV/MTT integration.
-    lambda_min, lambda_max : float
-        Bounds of the log-spaced λ sweep, as fractions of σ_max(A).
-    apply_non_negativity : bool
-        If True, clip negative residue values to zero after solving.
-    L : np.ndarray
-        Penalty operator applied in the smoothness term.
-
-    Returns
-    -------
-    TikhonovDeconvolutionResult
-        Residue, perfusion parameters, chosen λ, and the data-driven-λ flag.
-    """
-    n = len(tissue_curve)
-    tissue = tissue_curve.astype(np.float64, copy=False)
-
-    A = build_volterra_matrix(aif, dt)
-    AtA = A.T @ A
-    LtL = L.T @ L
-    AtC = A.T @ tissue
-
-    sigma_max = float(linalg.svdvals(A)[0])
-    if sigma_max <= 0.0:
-        raise ValueError(
-            "AIF produces a degenerate convolution matrix (σ_max = 0)."
-        )
-
-    # λ_min, λ_max are interpreted as fractions of σ_max(A). First-order
-    # Tikhonov has no problem-independent λ scale; absolute values are
-    # AIF-dependent and not portable across protocols. The 4-decade
-    # default sweep keeps the system well-conditioned at the low end
-    # (where AtA alone is rank-deficient for DSC deconvolution operators).
-    lambdas = np.logspace(
-        np.log10(lambda_min), np.log10(lambda_max), LCURVE_N_LAMBDAS
-    ) * sigma_max
-    residual_norms = np.zeros(LCURVE_N_LAMBDAS, dtype=np.float64)
-    solution_norms = np.zeros(LCURVE_N_LAMBDAS, dtype=np.float64)
-    residues_sweep = np.zeros((LCURVE_N_LAMBDAS, n), dtype=np.float64)
-
-    for k, lam in enumerate(lambdas):
-        M = AtA + (lam ** 2) * LtL
-        r = np.linalg.solve(M, AtC)
-        residues_sweep[k] = r
-        residual_norms[k] = float(np.linalg.norm(A @ r - tissue))
-        solution_norms[k] = float(np.linalg.norm(L @ r))
-
-    # Morozov discrepancy λ-selection: regularize until the fit residual reaches
-    # the measured per-voxel noise floor. On near-noise-free data the floor is
-    # unmeasurable, so fall through to the fixed fallback fraction (clamped into
-    # the caller's [lambda_min, lambda_max]).
-    fallback_lambda = (
-        float(np.clip(TIKHONOV_FALLBACK_LAMBDA_FRACTION, lambda_min, lambda_max))
-        * sigma_max
-    )
-    sigma_n = _estimate_noise_mad(tissue)
-    tissue_peak = float(np.max(np.abs(tissue)))
-    # `data_driven` now records whether a data-driven (discrepancy) λ was
-    # selected (True) vs the degenerate near-noise-free fallback (False).
-    if sigma_n < TIKHONOV_MOROZOV_DEGENERATE_FRAC * tissue_peak:
-        data_driven = False
-        best_lambda = fallback_lambda
-        M = AtA + (best_lambda ** 2) * LtL
-        best_residue = np.linalg.solve(M, AtC)
-        best_residual_norm_unsq = float(np.linalg.norm(A @ best_residue - tissue))
-        best_solution_norm_unsq = float(np.linalg.norm(L @ best_residue))
-    else:
-        data_driven = True
-        best_idx = _select_lambda_morozov(
-            residual_norms, sigma_n, n, TIKHONOV_MOROZOV_TAU
-        )
-        best_lambda = float(lambdas[best_idx])
-        best_residue = residues_sweep[best_idx].copy()
-        best_residual_norm_unsq = residual_norms[best_idx]
-        best_solution_norm_unsq = solution_norms[best_idx]
-
-    residual_norm = float(best_residual_norm_unsq ** 2)
-    solution_norm = float(best_solution_norm_unsq ** 2)
-
-    if apply_non_negativity:
-        best_residue = np.maximum(best_residue, 0.0)
-
-    cbf = float(np.max(best_residue))
-    cbv = float(np.trapezoid(best_residue, dx=dt))
-    mtt = cbv / cbf if cbf > EPSILON_CONCENTRATION else 0.0
-
+    """Solve one curve and integrate its full signed finite residue."""
+    tissue = np.asarray(tissue_curve, dtype=np.float64)
+    arterial = np.asarray(aif, dtype=np.float64)
+    if tissue.ndim != 1:
+        raise ValueError("tissue_curve must be one-dimensional")
+    _validate_tikhonov_inputs(tissue, arterial, dt, lambda_min, lambda_max)
+    system = _prepare_tikhonov_system(arterial, dt, lambda_min, lambda_max, L)
+    raw, selected, status = _fit_tikhonov_curves(tissue[None, :], system)
+    residual_norm = float(np.sum((system.matrix @ raw[0] - tissue) ** 2))
+    solution_norm = float(np.sum((system.penalty @ raw[0]) ** 2))
+    residue = raw[0]
+    cbf = float(np.max(residue))
+    cbv = float(np.trapezoid(residue, dx=dt))
     return TikhonovDeconvolutionResult(
-        residue=best_residue,
-        cbf=cbf,
-        cbv=cbv,
-        mtt=mtt,
-        lambda_optimal=float(best_lambda),
-        residual_norm=residual_norm,
-        solution_norm=solution_norm,
-        data_driven_lambda=bool(data_driven),
+        residue=residue, cbf=cbf, cbv=cbv,
+        mtt=cbv / cbf if cbf > EPSILON_CONCENTRATION and cbv > 0 else np.nan,
+        lambda_optimal=float(selected[0]), residual_norm=residual_norm,
+        solution_norm=solution_norm, selection_status=TikhonovSelection(status[0]),
     )
 
 
@@ -1618,84 +1623,48 @@ def tikhonov_deconvolve(
     dt: float = 1.0,
     lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
     lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
-    apply_non_negativity: bool = True,
 ) -> TikhonovDeconvolutionResult:
-    """First-order Tikhonov regularised deconvolution with Morozov discrepancy λ selection.
+    """Perform first-order Tikhonov deconvolution with L-curve selection.
 
-    Solves the regularised least squares problem with a modified
-    first-difference smoothness penalty::
-
-        minimize ||A·r - C||² + λ²||L·r||²
-
-    where ``A`` is the Volterra (product-integration) convolution matrix built from
-    the AIF, ``r`` is the residue function, and ``L`` is the (n, n) modified
-    first-difference
-    operator: an identity block constrains the magnitude of the leading
-    residue samples while forward differences constrain the smoothness of the
-    tail, so the sharp initial rise of a dispersed residue is preserved
-    rather than oversmoothed.
-
-    The regularization λ is selected by the Morozov discrepancy principle: over
-    a log-spaced λ sweep, the smallest λ whose fit residual ``||A·r_λ - C||``
-    reaches the measured per-voxel noise level ``τ·σ_n·√n`` (σ_n from the robust
-    MAD of successive concentration differences) is chosen — regularize until
-    the fit matches the noise floor and no further. Near-noise-free curves fall
-    back to a fixed λ fraction.
-
-    Off Tikhonov's dispersed operating regime, on higher-noise non-dispersed
-    data the discrepancy selector regularizes more than an L-curve would, so
-    CBF = max(residue) is under-read; because MTT = ∫residue / max(residue), a
-    CBF under-read inflates the deconvolution MTT. This is a documented
-    limitation — deconvolution MTT is semi-quantitative and AUC-CBV is the
-    primary volume metric.
+    The forward model uses Volterra product integration. A modified
+    first-difference penalty constrains the magnitude of the leading two
+    residue samples and differences between later samples. Selection uses the
+    strict interior curvature maximum nearest the upper lambda bound, allowing
+    either curvature sign. The sweep uses 100 log-spaced values without
+    continuous refinement. If no such maximum exists, the upper endpoint is
+    selected. Zero tissue curves are inactive and have zero lambda/residue.
 
     Parameters
     ----------
-    tissue_curve : np.ndarray
-        Tissue concentration curve, shape (n_timepoints,).
-    aif : np.ndarray
-        Arterial input function, shape (n_timepoints,). Must match
-        ``tissue_curve`` length.
+    tissue_curve, aif : np.ndarray
+        Finite one-dimensional concentration curves of equal length.
     dt : float, optional
-        Frame period in seconds. Default 1.0 gives frame-unit timings;
-        provide the actual TR for MTT/Tmax in seconds.
+        Positive frame interval in seconds.
     lambda_min, lambda_max : float, optional
-        Bounds of the log-spaced λ sweep,
-        **expressed as fractions of σ_max(A)** (the largest singular
-        value of the AIF convolution matrix). The natural scale for
-        first-order Tikhonov is the operator norm; absolute λ values
-        are AIF-dependent and not portable. Defaults from
-        ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
-    apply_non_negativity : bool, optional
-        If True, clip negative residue values to zero
-        after solving.
+        Positive, increasing search bounds as fractions of the largest
+        singular value of the forward matrix.
 
     Returns
     -------
     TikhonovDeconvolutionResult
-        TikhonovDeconvolutionResult with the residue, perfusion parameters,
-        chosen λ, and a flag indicating whether a data-driven (discrepancy) λ
-        was selected.
+        Signed flow-scaled residue over all N lags. CBV is its finite
+        trapezoidal integral; residue MTT is CBV/CBF, or NaN for nonpositive
+        area or a peak at or below the concentration tolerance. Lags without
+        forward sensitivity are determined by the penalty and do not recover
+        an unobserved physiological tail. The interface reports AUC-CBV/CBF
+        as its primary MTT. This estimator is sensitive to bolus delay.
+
+    Raises
+    ------
+    ValueError
+        If curves, sampling or bounds are invalid, or the forward matrix is zero.
     """
-    # Validate inputs
-    if len(tissue_curve) != len(aif):
-        raise ValueError(
-            f"tissue_curve and aif must have same length, "
-            f"got {len(tissue_curve)} and {len(aif)}"
-        )
-
-    if len(tissue_curve) == 0:
-        raise ValueError("Arrays cannot be empty")
-
-    if lambda_min >= lambda_max:
-        raise ValueError(
-            f"lambda_min must be less than lambda_max, "
-            f"got {lambda_min} >= {lambda_max}"
-        )
-
-    L = _build_modified_first_derivative_matrix(len(tissue_curve))
+    tissue = np.asarray(tissue_curve, dtype=np.float64)
+    if tissue.ndim != 1:
+        raise ValueError("tissue_curve must be one-dimensional")
     return _tikhonov_solve(
-        tissue_curve, aif, dt, lambda_min, lambda_max, apply_non_negativity, L
+        tissue, aif, dt, lambda_min, lambda_max,
+        _build_modified_first_derivative_matrix(len(tissue)),
     )
 
 
@@ -1705,161 +1674,84 @@ def tikhonov_deconvolve_batch(
     dt: float = 1.0,
     lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
     lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
-    apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
-    npt.NDArray[np.floating],  # residues
-    npt.NDArray[np.floating],  # cbf
-    npt.NDArray[np.floating],  # cbv
-    npt.NDArray[np.floating],  # mtt
-    npt.NDArray[np.floating],  # lambda_optimal
-    npt.NDArray[np.bool_],  # data_driven_map
+    npt.NDArray[np.floating], npt.NDArray[np.floating],
+    npt.NDArray[np.floating], npt.NDArray[np.floating],
+    npt.NDArray[np.floating], npt.NDArray[np.int8],
 ]:
-    """Batch first-order Tikhonov deconvolution with Morozov discrepancy λ selection.
-
-    Vectorised counterpart of :func:`tikhonov_deconvolve`. The Volterra
-    (product-integration) matrix ``A`` and its first-derivative pencil ``(A^T A, L^T L)``
-    eigendecomposition are computed once and shared across all voxels;
-    each voxel runs its own Morozov discrepancy λ-selection.
+    """Fit Tikhonov residues using a shared standard-form SVD.
 
     Parameters
     ----------
     tissue_curves : np.ndarray
-        Tissue concentration curves, shape
-        (n_voxels, n_timepoints) or (x, y, z, n_timepoints) for 4D data.
+        Concentration curves with spatial dimensions followed by time.
     aif : np.ndarray
-        Arterial input function, shape (n_timepoints,).
+        Finite one-dimensional arterial concentration curve.
     dt : float, optional
-        Time step in seconds.
-    lambda_min : float, optional
-        Minimum λ value (log-grid lower bound).
-    lambda_max : float, optional
-        Maximum λ value (log-grid upper bound).
-    apply_non_negativity : bool, optional
-        Apply non-negativity constraint on residue.
+        Positive frame interval in seconds.
+    lambda_min, lambda_max : float, optional
+        Positive, increasing search bounds as fractions of the forward
+        matrix's largest singular value.
     mask : np.ndarray, optional
-        Optional boolean mask of voxels to process. If None, process all.
-        Shape must match spatial dimensions of tissue_curves.
+        Boolean mask matching the spatial dimensions. Only finite selected
+        curves are fitted; excluded outputs are zero.
 
     Returns
     -------
-    tuple
-        Tuple of (residues, cbf, cbv, mtt, lambda_optimal, data_driven_map)
-        arrays. All spatial outputs share the input spatial shape (excluding
-        time). data_driven_map is True where a data-driven λ was selected; False
-        where the per-voxel solver fell back to ``λ = 0.1 σ_max(A)``. Use
-        the fraction of False voxels in QC to detect over-regularization.
+    residue, cbf, cbv, mtt, lambda_optimal, selection_status : np.ndarray
+        Signed residues retain all N samples. CBV uses finite trapezoidal
+        integration; residue MTT is NaN for a nonpositive area or a peak at or
+        below the concentration tolerance. Other arrays have the input spatial
+        shape. Status codes are given by TikhonovSelection; zero tissue curves
+        and excluded voxels are inactive, with zero lambda/residue. Excluded
+        MTT values are zero. Selection uses the same discrete L-curve rule as the
+        scalar function. Nonfinite selected tissue curves have INVALID_INPUT
+        status and NaN residue, parameters and lambda, without affecting other
+        voxels.
+
+    Raises
+    ------
+    ValueError
+        If spatial/time dimensions, mask shape, AIF, sampling or bounds are
+        invalid, or the shared forward matrix is zero.
     """
-    original_shape = tissue_curves.shape
-    n_timepoints = original_shape[-1]
-    tissue_2d: npt.NDArray[np.float64]
-
-    if n_timepoints == 0:
-        raise ValueError("Arrays cannot be empty")
-    if len(aif) != n_timepoints:
-        raise ValueError(
-            f"aif length ({len(aif)}) must match the time axis "
-            f"({n_timepoints})"
+    tissue = np.asarray(tissue_curves, dtype=np.float64)
+    arterial = np.asarray(aif, dtype=np.float64)
+    if tissue.ndim < 2:
+        raise ValueError("tissue_curves must have spatial and time dimensions")
+    spatial_shape = tissue.shape[:-1]
+    if mask is not None and mask.shape != spatial_shape:
+        raise ValueError("mask shape must match the tissue spatial dimensions")
+    mask_flat = np.ones(int(np.prod(spatial_shape)), dtype=bool) if mask is None else np.asarray(mask, dtype=bool).ravel()
+    curves = tissue.reshape((mask_flat.size, tissue.shape[-1]))
+    finite = np.all(np.isfinite(curves), axis=-1)
+    valid = mask_flat & finite
+    invalid = mask_flat & ~finite
+    _validate_tikhonov_inputs(curves[valid], arterial, dt, lambda_min, lambda_max)
+    system = _prepare_tikhonov_system(arterial, dt, lambda_min, lambda_max)
+    residue = np.zeros_like(curves)
+    cbf = np.zeros(mask_flat.size)
+    cbv = np.zeros(mask_flat.size)
+    mtt = np.zeros(mask_flat.size)
+    selected = np.zeros(mask_flat.size)
+    status = np.zeros(mask_flat.size, dtype=np.int8)
+    for values in (residue, cbf, cbv, mtt, selected):
+        values[invalid] = np.nan
+    status[invalid] = TikhonovSelection.INVALID_INPUT
+    indices = np.flatnonzero(valid)
+    for start in range(0, indices.size, 256):
+        subset = indices[start:start + 256]
+        active, selected[subset], status[subset] = _fit_tikhonov_curves(curves[subset], system)
+        residue[subset] = active
+        cbf[subset] = np.max(active, axis=1)
+        cbv[subset] = np.trapezoid(active, dx=dt, axis=1)
+        mtt[subset] = np.divide(
+            cbv[subset], cbf[subset], out=np.full(len(subset), np.nan),
+            where=(cbf[subset] > EPSILON_CONCENTRATION) & (cbv[subset] > 0),
         )
-
-    if tissue_curves.ndim > 2:
-        spatial_shape = original_shape[:-1]
-        n_voxels = int(np.prod(spatial_shape))
-        tissue_2d = tissue_curves.reshape(n_voxels, n_timepoints).astype(
-            np.float64, copy=False
-        )
-    else:
-        spatial_shape = (original_shape[0],)
-        n_voxels = original_shape[0]
-        tissue_2d = tissue_curves.astype(np.float64, copy=False)
-
-    if mask is not None:
-        mask_flat = mask.flatten()
-    else:
-        mask_flat = np.ones(n_voxels, dtype=bool)
-
-    A = build_volterra_matrix(aif, dt)
-    L = _build_modified_first_derivative_matrix(n_timepoints)
-    AtA = A.T @ A
-    LtL = L.T @ L
-
-    sigma_max = float(linalg.svdvals(A)[0])
-    if sigma_max <= 0.0:
-        raise ValueError(
-            "AIF produces a degenerate convolution matrix (σ_max = 0)."
-        )
-    # Clamp the fallback fraction into the caller's requested [lambda_min,
-    # lambda_max] so a custom sweep range is honored (default range contains
-    # 0.015, so production behavior is unchanged).
-    fallback_lambda = (
-        float(np.clip(TIKHONOV_FALLBACK_LAMBDA_FRACTION, lambda_min, lambda_max))
-        * sigma_max
+    return (
+        residue.reshape(tissue.shape), cbf.reshape(spatial_shape),
+        cbv.reshape(spatial_shape), mtt.reshape(spatial_shape),
+        selected.reshape(spatial_shape), status.reshape(spatial_shape),
     )
-
-    # λ bounds are fractions of σ_max(A); see scalar tikhonov_deconvolve
-    # for the rationale. Scale once and reuse for the precomputed inverses.
-    lambdas = np.logspace(
-        np.log10(lambda_min), np.log10(lambda_max), LCURVE_N_LAMBDAS
-    ) * sigma_max
-
-    # Shared precompute: (A^T A + λ² L^T L)^{-1} for each λ. Each system is
-    # SPD for any λ > 0, so np.linalg.solve is rock-solid even where
-    # AtA alone is rank-deficient (typical for DSC deconvolution operators).
-    inverses = _precompute_tikhonov_inverses(AtA, LtL, lambdas)
-    M_fallback = AtA + (fallback_lambda ** 2) * LtL
-
-    residues = np.zeros((n_voxels, n_timepoints), dtype=np.float64)
-    cbf = np.zeros(n_voxels, dtype=np.float64)
-    cbv = np.zeros(n_voxels, dtype=np.float64)
-    mtt = np.zeros(n_voxels, dtype=np.float64)
-    lambda_optimal = np.zeros(n_voxels, dtype=np.float64)
-    data_driven_map = np.zeros(n_voxels, dtype=bool)
-
-    masked_indices = np.where(mask_flat)[0]
-    for idx in masked_indices:
-        tissue = tissue_2d[idx]
-        AtC = A.T @ tissue
-
-        # R[k, :] = inverses[k] @ AtC — shape (LCURVE_N_LAMBDAS, n)
-        R = inverses @ AtC
-
-        # Morozov selection uses only the residual norm (fit vs noise floor);
-        # the batch return carries no solution norm, so ‖L·r‖ is not computed.
-        residual_norms = np.linalg.norm(R @ A.T - tissue, axis=1)
-
-        # Morozov discrepancy selection; degenerate near-noise-free voxels take
-        # the precomputed fallback. Same rule as _tikhonov_solve (parity).
-        sigma_n = _estimate_noise_mad(tissue)
-        tissue_peak = float(np.max(np.abs(tissue)))
-        if sigma_n < TIKHONOV_MOROZOV_DEGENERATE_FRAC * tissue_peak:
-            data_driven = False
-            best_lambda = fallback_lambda
-            best_residue = np.linalg.solve(M_fallback, AtC)
-        else:
-            data_driven = True
-            best_idx = _select_lambda_morozov(
-                residual_norms, sigma_n, n_timepoints, TIKHONOV_MOROZOV_TAU
-            )
-            best_lambda = float(lambdas[best_idx])
-            best_residue = R[best_idx].copy()
-
-        if apply_non_negativity:
-            best_residue = np.maximum(best_residue, 0.0)
-
-        residues[idx, :] = best_residue
-        cbf[idx] = float(np.max(best_residue))
-        cbv[idx] = float(np.trapezoid(best_residue, dx=dt))
-        if cbf[idx] > EPSILON_CONCENTRATION:
-            mtt[idx] = cbv[idx] / cbf[idx]
-        lambda_optimal[idx] = best_lambda
-        data_driven_map[idx] = bool(data_driven)
-
-    if tissue_curves.ndim > 2:
-        residues = residues.reshape(original_shape)  # type: ignore[assignment]
-        cbf = cbf.reshape(spatial_shape)  # type: ignore[assignment]
-        cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
-        mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
-        lambda_optimal = lambda_optimal.reshape(spatial_shape)  # type: ignore[assignment]
-        data_driven_map = data_driven_map.reshape(spatial_shape)  # type: ignore[assignment]
-
-    return residues, cbf, cbv, mtt, lambda_optimal, data_driven_map

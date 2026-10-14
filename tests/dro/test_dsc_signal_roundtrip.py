@@ -20,6 +20,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
@@ -94,7 +95,8 @@ def _make_signal_roundtrip_data(
 
     Returns signal WITH baseline prepended, and AIF post-baseline only
     (matching the pipeline convention where AIF concentration has no
-    baseline frames).
+    baseline frames). Returned MTT truth is the full-period area of the
+    sampled residue divided by its peak, matching the circulant forward model.
     """
     # Generate AIF and tissue concentration (post-baseline only)
     aif_post, _ = generate_dsc_aif_dro(
@@ -105,10 +107,7 @@ def _make_signal_roundtrip_data(
     )
 
     residue = make_exponential_residue(cbf, mtt, n_timepoints, dt_sec)
-    # Use the block-circulant forward operator, which is the matched inverse of
-    # svd_deconvolve_oscillation (oSVD). The Toeplitz/causal forward leaves a
-    # ~17% discretization mismatch that is unrelated to the noise physics these
-    # tests measure (see TestOSVDRecovery, which uses the same matched operator).
+    mtt_truth = float(dt_sec * np.sum(residue) / np.max(residue))
     tissue_conc_post = dsc_forward_model_circulant(aif_post, residue, dt_sec)
 
     # Convert to signal domain (prepends baseline)
@@ -122,7 +121,7 @@ def _make_signal_roundtrip_data(
         else:
             signal = add_gaussian_noise(signal, noise_std, seed=seed)
 
-    return signal, aif_post, dt_sec, cbf, mtt
+    return signal, aif_post, dt_sec, cbf, mtt_truth
 
 
 # =============================================================================
@@ -260,7 +259,7 @@ class TestSignalDomainRoundTrip:
 
     @pytest.mark.parametrize("snr", [3.0, 5.0])
     def test_very_low_snr_no_crash(self, snr: float) -> None:
-        """At SNR < 5, pipeline should not crash. Output must be finite."""
+        """Low-SNR curves retain signed areas and mark invalid residue MTT unavailable."""
         tissue = DSC_TISSUE_PARAMS["gm"]
         signal, aif, dt, _, _ = _make_signal_roundtrip_data(
             cbf=tissue.cbf, mtt=tissue.mtt, te=0.030, s0=1000.0,
@@ -272,7 +271,12 @@ class TestSignalDomainRoundTrip:
 
         result = svd_deconvolve_standard(conc[10:], aif, dt)
         assert np.isfinite(result.cbf), "CBF is not finite at low SNR"
-        assert np.isfinite(result.mtt), "MTT is not finite at low SNR"
+        assert np.isfinite(result.cbv), "Residue area is not finite at low SNR"
+        assert result.cbv == pytest.approx(np.trapezoid(result.residue, dx=dt))
+        if result.cbv > 0 and result.cbf > EPSILON_CONCENTRATION:
+            assert result.mtt == pytest.approx(result.cbv / result.cbf)
+        else:
+            assert np.isnan(result.mtt)
 
 
 #: Physics-derived oSVD CBF-recovery envelope: per-SNR |bias| ceiling taken from

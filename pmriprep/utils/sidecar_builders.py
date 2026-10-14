@@ -1144,7 +1144,7 @@ def build_dsc_map_sidecar(
         method = method_metrics.get("method", qc_metrics.get("method"))
         if method in {"sSVD", "oSVD", "tikhonov"}:
             sidecar["MTTMethod"] = (
-                "measured_aif_full_bolus_auc_cbv_over_deconvolution_cbf"
+                "full_bolus_auc_cbv_over_deconvolution_cbf"
             )
         elif method == "cpi":
             sidecar["MTTMethod"] = "fitted_residue_integral"

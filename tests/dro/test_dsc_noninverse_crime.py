@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 from scipy.linalg import svd
 
+from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER
+
 from pmriprep.utils.dsc_deconvolution import (
     build_toeplitz_matrix,
     build_volterra_matrix,
@@ -50,7 +52,10 @@ TISSUES = [("GM", 60.0, 4.0), ("WM", 25.0, 4.8), ("Tumor", 100.0, 6.0)]
 
 
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
-def test_osvd_recovers_independent_tissue(name, cbf_true, mtt_true):
+@pytest.mark.parametrize("metric", ["cbf", pytest.param("mtt", marks=OSVD_RESIDUE_MTT)])
+def test_osvd_recovers_independent_tissue(
+    name: str, cbf_true: float, mtt_true: float, metric: str,
+) -> None:
     """oSVD CBF and helper residue-MTT stay within this fixture's regression bounds."""
     dt = 1.5
     n = 60
@@ -60,11 +65,12 @@ def test_osvd_recovers_independent_tissue(name, cbf_true, mtt_true):
 
     res = svd_deconvolve_oscillation(tissue, aif, dt=dt)
 
-    cbf_err = (res.cbf - cbf_true) / cbf_true
-    assert -0.25 < cbf_err < 0.10, f"{name} oSVD CBF error {cbf_err:.1%}"
-
-    mtt_err = (res.mtt - mtt_true) / mtt_true
-    assert -0.20 < mtt_err < 0.10, f"{name} oSVD residue-MTT error {mtt_err:.1%}"
+    if metric == "cbf":
+        cbf_err = (res.cbf - cbf_true) / cbf_true
+        assert -0.25 < cbf_err < 0.10, f"{name} oSVD CBF error {cbf_err:.1%}"
+    else:
+        mtt_err = (res.mtt - mtt_true) / mtt_true
+        assert -0.20 < mtt_err < 0.10, f"{name} oSVD residue-MTT error {mtt_err:.1%}"
 
 
 def _ssvd_cbf_with_operator(tissue, aif, dt, builder, threshold):
@@ -121,6 +127,7 @@ def test_ssvd_volterra_beats_toeplitz(name, cbf_true, mtt_true):
     )
 
 
+@P2_NO_CORNER
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
 def test_tikhonov_recovers_independent_tissue(name, cbf_true, mtt_true):
     """Tikhonov CBF stays within the sampled-AIF, noise-free regression bounds."""

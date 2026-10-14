@@ -347,11 +347,30 @@ class TestEnrichDSC:
         assert result["PerfusionProcessing"]["AIF"]["Source"] == "synthetic"
 
     def test_tikhonov_lambda(self) -> None:
-        """Tikhonov deconvolution includes lambda_mean."""
+        """Tikhonov sidecars retain selection and residue-integration semantics."""
         sidecar = _make_dsc_sidecar()
-        qc = {"deconvolution": {"lambda_mean": 0.15}}
+        deconvolution = {
+            "lambda_mean": 0.15,
+            "regularization_selection": "lcurve_upper_extremum",
+            "regularization_penalty": "modified_first_difference",
+            "penalty_leading_samples": 2,
+            "lambda_grid_size": 100,
+            "lambda_search_bounds_relative": [0.001, 10.0],
+            "lambda_continuous_refinement": False,
+            "residue_cbv_integration": "full_length_signed_trapezoid",
+            "residue_post_fit_clipping": False,
+            "lcurve_selection_counts": {
+                "positive_corner": 7, "nonpositive_corner": 2,
+                "upper_endpoint": 1, "inactive": 3,
+            },
+            "residue_diagnostics": {"negative_cbv_voxels": 2},
+            "lcurve_corner_fraction": 0.9,
+            "lcurve_upper_endpoint_fraction": 0.1,
+        }
+        qc = {"deconvolution": deconvolution}
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
-        assert result["PerfusionProcessing"]["Deconvolution"]["lambda_mean"] == pytest.approx(0.15)
+        for key, value in deconvolution.items():
+            assert result["PerfusionProcessing"]["Deconvolution"][key] == value
 
     def test_parametric_convergence_and_fallback(self) -> None:
         """Parametric runs propagate solver convergence and fallback rates."""

@@ -140,20 +140,11 @@ AIF_PEAK_CEILING_3T: Final[float] = 120.0
 #: Default singular value truncation threshold (fraction of max) for sSVD
 DEFAULT_SVD_THRESHOLD: Final[float] = 0.2
 
-#: Default oscillation index threshold for oSVD. OI(λ) decreases with the
-#: truncation threshold λ, so a tighter (smaller) OI target forces the search
-#: to a higher threshold, suppressing noise-driven residue-tail oscillation and
-#: the MTT inflation it causes; a looser target permits smaller thresholds. The
-#: value is the SNR-robust in-basin choice across the clinical TR range, where
-#: the oSVD CBF optimum rises modestly with TR and falls with SNR.
+#: Target oscillation index for oSVD. The search selects the first truncation
+#: threshold meeting this target, or the upper threshold if none does.
 DEFAULT_OI_THRESHOLD: Final[float] = 0.095
 
-#: Default Linear search-grid resolution (number of evenly-spaced truncation
-#: thresholds) for the oSVD oscillation-index search. Grid-resolution
-#: sensitivity is modest and saturates by ~50 steps at the clinical operating
-#: point; adaptive bisection is avoided as it converges to the smallest
-#: qualifying threshold at the noise edge, inflating the residue-tail integral
-#: and the MTT estimate.
+#: Number of evenly spaced truncation thresholds in the oSVD search.
 DEFAULT_OSVD_GRID_STEPS: Final[int] = 50
 
 
@@ -170,59 +161,16 @@ class TikhonovRange(NamedTuple):
 
 #: Default lambda search range for Tikhonov regularization, expressed
 #: as fractions of σ_max(A) (largest singular value of the AIF convolution
-#: matrix). The natural scale for first-order Tikhonov is the operator
-#: norm; absolute λ values are AIF-dependent and not portable. The 4-decade
-#: span (1e-3 to 10) covers the well-conditioned regime where the L-curve
-#: actually has a corner — narrower ranges miss corners, wider ranges (e.g.
-#: starting at 1e-6·σ_max) descend into the rank-deficient AtA noise floor
-#: where the L-curve becomes non-monotone.
+#: matrix). Absolute lambda values therefore scale with the AIF and sampling.
 DEFAULT_LAMBDA_RANGE: Final[TikhonovRange] = TikhonovRange(1e-3, 10.0)
 
-#: Number of log-spaced lambda values in the L-curve sweep. 50 is a
-#: defensible compromise between corner-localization quality (which
-#: degrades below ~30 samples) and per-voxel runtime cost.
-LCURVE_N_LAMBDAS: Final[int] = 50
-
-#: Morozov discrepancy factor for Tikhonov λ-selection. The residue is
-#: regularized until the fit residual ‖A·r − C‖ reaches the expected noise
-#: magnitude τ·σ_n·√n and no further — fitting below the noise floor is fitting
-#: noise. τ=1.0 is Morozov's principle stated exactly, appropriate when the
-#: noise estimator (robust MAD of successive concentration differences) reads
-#: the true σ_n — which holds when the bolus excursion is sparse relative to the
-#: acquisition window (a majority-flat baseline + tail), the regime of clinical
-#: DSC. Where that assumption weakens the estimator reads slightly high, biasing
-#: τ=1 toward mild over-regularization (the safe direction, a CBF under-read).
-TIKHONOV_MOROZOV_TAU: Final[float] = 1.0
-
-#: Degenerate-noise threshold for Tikhonov λ-selection, as a fraction of the
-#: tissue-curve peak. When σ_n < this·max(tissue) the noise floor is
-#: unmeasurable (essentially noise-free data, e.g. inverse-crime DROs), the
-#: discrepancy target is meaningless, and the selector falls through to the
-#: fixed TIKHONOV_FALLBACK_LAMBDA_FRACTION. 0.005 sits between synthetic-clean
-#: curves (σ_n/peak ≈ 0.0001–0.001) and typical real acquisitions (≥0.01), so on
-#: majority-flat clinical DSC curves the guard fires only on near-noise-free
-#: data. (σ_n is the MAD-of-diffs estimate; on very short or broad curves signal
-#: slope can lift it, so this separation is regime-dependent, not absolute.)
-TIKHONOV_MOROZOV_DEGENERATE_FRAC: Final[float] = 0.005
-
-#: Fallback λ (as a fraction of σ_max(A)) used by the Tikhonov DEGENERATE path
-#: only — when the noise floor is unmeasurable (σ_n below the degenerate
-#: fraction), the Morozov discrepancy target is meaningless, so a fixed small
-#: regularization is applied. 0.015 is an EMPIRICAL fraction measured on the
-#: near-noise-free DRO AIF (the CBF-optimal noiseless fraction is ≈0.013; 0.015
-#: adds a small margin toward more regularization). It governs only data with no
-#: measurable noise floor — curves with measurable noise use the discrepancy
-#: selector — so its exact value does not affect recovery on such curves.
-TIKHONOV_FALLBACK_LAMBDA_FRACTION: Final[float] = 0.015
+#: Number of log-spaced lambda values in the discrete L-curve sweep.
+LCURVE_N_LAMBDAS: Final[int] = 100
 
 #: Number of leading residue samples excluded from the first-difference
 #: penalty in the modified Tikhonov operator. For these samples the side
 #: constraint penalizes the residue magnitude (an identity block) instead
-#: of its derivative, so the regularizer does not oversmooth the sharp
-#: initial rise of a dispersed residue (which would depress CBF = max R).
-#: p = 2 is the smallest count that protects the rise without leaving the
-#: initial samples unregularized; it is stable across SNR, MTT, and clinical
-#: DSC repetition times (coarser TR under-protects the rise).
+#: of the difference from the preceding sample.
 DEFAULT_TIKHONOV_PENALTY_P: Final[int] = 2
 
 

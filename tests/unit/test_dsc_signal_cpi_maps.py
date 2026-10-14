@@ -13,6 +13,8 @@ from pmriprep.models.dsc.signal_cpi.acquisition import prepare_cpi_acquisition
 from pmriprep.models.dsc.signal_cpi.connection import GuidedVoxel
 from pmriprep.models.dsc.signal_cpi.policy import FitAssessment
 from pmriprep.models.dsc.signal_cpi.settings import CPIOptions
+from pmriprep.utils.dsc_deconvolution import svd_deconvolve_oscillation
+from pmriprep.utils.provenance import enrich_provenance_from_qc
 
 
 @pytest.mark.parametrize("label", ["CPI fitting", "CPI initial fitting"])
@@ -43,10 +45,12 @@ def test_progress_reports_count_elapsed_and_remaining(
 
 
 @pytest.mark.parametrize("fallback", ["none", "osvd"])
+@pytest.mark.parametrize("oi_target", [0.035, 1e-10])
 def test_mixed_map_keeps_provisional_fit_and_only_marks_actual_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fallback: Any,
+    oi_target: float,
 ) -> None:
     """No-convergence alone does not reject CPI; failed fallback remains NaN."""
     time = np.arange(30.0) * 3
@@ -98,7 +102,7 @@ def test_mixed_map_keeps_provisional_fit_and_only_marks_actual_replacement(
     raw[3] = np.nan
     monkeypatch.setattr(maps, "fit_selected_voxels", lambda a, **kwargs: iter(rows))
     result = maps.fit_cpi_maps(
-        acquisition, raw, raw, oi_target=0.035, prediction_file=tmp_path / "fits.npy"
+        acquisition, raw, raw, oi_target=oi_target, prediction_file=tmp_path / "fits.npy"
     )
     np.testing.assert_array_equal(result.cbf[:2], 0.01)
     np.testing.assert_array_equal(result.cbf_std[:2], 0.001)
@@ -122,6 +126,29 @@ def test_mixed_map_keeps_provisional_fit_and_only_marks_actual_replacement(
         assert np.isnan(result.delay[2, 0, 0])
         assert result.qc["n_fallback_attempted"] == 1 and result.qc["n_missing"] == 1
         assert result.qc["fallback_rate"] == 0.25
+
+    target_status = result.qc["fallback_oscillation_target"]
+    if fallback == "none":
+        assert target_status["met_voxels"] == target_status["unmet_voxels"] == 0
+        assert target_status["unmet_fraction"] is None
+    else:
+        fit = svd_deconvolve_oscillation(
+            raw[2, 0, 0], acquisition.branches[0].aif, 3., oi_target=oi_target,
+        )
+        assert fit.converged == (oi_target == 0.035)
+        assert target_status["met_voxels"] == int(fit.converged)
+        assert target_status["unmet_voxels"] == int(not fit.converged)
+        assert target_status["unmet_fraction"] == float(not fit.converged)
+        assert result.qc["n_fallback_failed"] == 0
+        assert result.qc["fallback_outcomes"] == {"inadmissible_concentration": 1}
+    assert target_status["target"] == oi_target
+    assert target_status["fraction_denominator"] == "oSVD replacements"
+    assert target_status["unmet_policy"] == "retain_and_flag"
+    sidecar = enrich_provenance_from_qc(
+        {"PerfusionProcessing": {"Deconvolution": {"method": "cpi"}}},
+        {"deconvolution": result.qc}, "DSC",
+    )
+    assert sidecar["PerfusionProcessing"]["Deconvolution"]["fallback_oscillation_target"] == target_status
 
     normalization = result.qc["cpi_signal_normalization"]
     assert normalization == {

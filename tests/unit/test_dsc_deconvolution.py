@@ -88,7 +88,7 @@ class TestBuildBlockCirculantMatrix:
         matrix = build_block_circulant_matrix(aif, dt=dt)
         col = matrix[:, 0] / dt  # undo the dt scaling
 
-        assert col[0] == pytest.approx(aif[0])  # unsmoothed endpoint
+        assert col[0] == pytest.approx((4 * aif[0] + aif[1]) / 6)
         for k in range(1, n - 1):
             assert col[k] == pytest.approx((aif[k - 1] + 4 * aif[k] + aif[k + 1]) / 6)
         assert col[n - 1] == pytest.approx((aif[n - 2] + 4 * aif[n - 1]) / 6)  # one-sided
@@ -102,6 +102,23 @@ class TestBuildBlockCirculantMatrix:
         matrix = build_block_circulant_matrix(aif, dt=1.0)
         assert matrix.shape == (2 * n, 2 * n)
         assert np.allclose(matrix[:, 1], np.roll(matrix[:, 0], 1))
+
+    @pytest.mark.parametrize("aif", [
+        [0.6, 0.0], [0.0, 0.9, 0.4], [-0.2, 0.1, 1.0, -0.3],
+    ])
+    def test_zero_extended_convolution(self, aif: list[float]) -> None:
+        """The operator matches independent smoothing and periodic convolution."""
+        arterial = np.array(aif)
+        size = 2 * arterial.size
+        kernel = np.zeros(size)
+        smoothed = np.convolve(arterial, np.array([1, 4, 1]) / 6)[1:]
+        kernel[:smoothed.size] = smoothed
+        residue = np.linspace(-0.2, 1, size)
+        expected = np.array([
+            sum(kernel[(i - j) % size] * residue[j] for j in range(size))
+            for i in range(size)
+        ]) * 1.5
+        np.testing.assert_allclose(build_block_circulant_matrix(arterial, 1.5) @ residue, expected)
 
     def test_requires_two_samples(self) -> None:
         with pytest.raises(ValueError):
@@ -195,8 +212,7 @@ class TestSVDDeconvolveCirculant:
     def test_delay_detection(self) -> None:
         """cSVD should detect a non-negative delay for delayed tissue.
 
-        Uses circulant forward model to avoid discretization mismatch
-        between Toeplitz (trapezoidal) and circulant (rectangular) weighting.
+        Uses the same circulant operator to generate and deconvolve the curve.
         """
         n = 40
         dt = 1.5
@@ -264,12 +280,8 @@ class TestOSVDDelayDetection:
     def test_osvd_relative_delay_recovery(self) -> None:
         """oSVD delay differences should match injected delay differences.
 
-        Uses the circulant forward model. The peak search is restricted to
-        physical delays (|d| <= N/2), excluding the wrap-boundary region where
-        an under-regularized deconvolution plants a spurious peak; the
-        recovered delay tracks the injected delay even at minimal
-        regularization (regression guard for the boundary-wrap bug: with plain
-        argmax, injected delay 3 wraps to -40).
+        Uses the circulant forward model and searches the full residue for
+        its peak after oscillation-based threshold selection.
         """
         n = 40
         dt = 1.5
@@ -371,11 +383,12 @@ class TestSVDThresholdSensitivity:
         assert result_high.n_singular_values <= result_low.n_singular_values
 
 
-class TestNonNegativityConstraint:
-    """Tests for non-negativity constraint on residue function."""
+class TestSignedResidue:
+    """Unconstrained sSVD residues retain negative samples and their area."""
 
-    def test_non_negativity_enforced(self) -> None:
-        """With apply_non_negativity=True, residue has no negative values."""
+    def test_signed_solution_matches_truncated_inverse(self) -> None:
+        """The default returned residue equals the linear truncated inverse."""
+        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
         n = 30
         dt = 1.0
         t = np.arange(n, dtype=np.float64)
@@ -387,13 +400,15 @@ class TestNonNegativityConstraint:
         tissue += rng.normal(0, 0.5, n)
 
         result = svd_deconvolve_standard(
-            tissue, aif, dt=dt, threshold=0.05, apply_non_negativity=True
+            tissue, aif, dt=dt, threshold=0.05
         )
 
-        assert np.all(result.residue >= 0.0)
+        reference = np.linalg.pinv(build_volterra_matrix(aif, dt), rcond=0.05) @ tissue
+        np.testing.assert_allclose(result.residue, reference, rtol=1e-10, atol=1e-12)
+        assert result.cbv == pytest.approx(np.trapezoid(reference, dx=dt))
 
-    def test_without_non_negativity_may_have_negatives(self) -> None:
-        """Without non-negativity, residue may contain negative values."""
+    def test_default_residue_preserves_negative_samples(self) -> None:
+        """Noise-driven negative residue samples survive parameter extraction."""
         n = 30
         dt = 1.0
         t = np.arange(n, dtype=np.float64)
@@ -405,7 +420,7 @@ class TestNonNegativityConstraint:
         tissue += rng.normal(0, 0.5, n)
 
         result = svd_deconvolve_standard(
-            tissue, aif, dt=dt, threshold=0.05, apply_non_negativity=False
+            tissue, aif, dt=dt, threshold=0.05
         )
 
         # With noise and low threshold, we expect some negative values
@@ -453,7 +468,7 @@ class TestComputeOscillationIndex:
         assert compute_oscillation_index(np.array([5.0, 3.0])) == 0.0
 
     def test_second_difference_formula(self) -> None:
-        """OI is summed |R[k]-2R[k-1]+R[k-2]| / (L*max) (Wu 2003 Eq. 6)."""
+        """OI is summed |R[k]-2R[k-1]+R[k-2]| / (L*max)."""
         residue = np.array([0.0, 1.0, 0.0, 1.0, 0.0])
         # second differences = -2, +2, -2 -> sum|.| = 6; OI = 6/(5*1) = 1.2
         assert compute_oscillation_index(residue) == pytest.approx(1.2)

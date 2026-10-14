@@ -811,6 +811,28 @@ def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
     }
 
 
+@pytest.mark.parametrize(
+    ("method", "field", "label"),
+    [
+        ("oSVD", "oi_mean", "OI Mean (oSVD)"),
+        ("oSVD", "threshold_mean", "Threshold Mean (oSVD)"),
+        ("tikhonov", "lambda_mean", "Lambda Mean (Tikhonov)"),
+    ],
+)
+@pytest.mark.parametrize("value", [None, 0.0, 0.1234])
+def test_deconv_panel_optional_means(
+    env: Environment, method: str, field: str, label: str, value: float | None,
+) -> None:
+    """Unavailable means are omitted while zero and finite means are displayed."""
+    template = env.get_template("sections/section_dsc.html")
+    rendered = template.render(dsc=_dsc_ctx_with_deconv(method, **{field: value}))
+    if value is None:
+        assert label not in rendered
+    else:
+        assert label in rendered
+        assert f'<div class="metric-value">{value:.4f}</div>' in rendered
+
+
 def test_deconv_panel_inference_shown_for_cpi(env):
     """CPI runs render an "Inference" metric box (not a "Bayesian" label)."""
     template = env.get_template("sections/section_dsc.html")

@@ -121,6 +121,7 @@ def _assemble_maps(
     reasons: Counter[str] = Counter()
     failed: Counter[str] = Counter()
     requested = attempted = n_converged = accepted = gamma = 0
+    osvd_target_met = osvd_target_unmet = 0
     delay_bound = spacing_bound = 0
     for output in resolve_fallbacks(
         acquisition,
@@ -137,6 +138,9 @@ def _assemble_maps(
         attempted += output.fallback_attempted
         if output.fallback_reason is not None:
             failed[output.fallback_reason] += 1
+        if output.source == "osvd":
+            osvd_target_met += output.osvd_oi_target_met is True
+            osvd_target_unmet += output.osvd_oi_target_met is False
         for target, value in zip(
             (cbf, cbv, mtt, delay, std, k2),
             (
@@ -214,6 +218,16 @@ def _assemble_maps(
         fallback_fraction_denominator="fitting support",
         rejection_reasons=dict(reasons),
         fallback_outcomes=dict(failed),
+        fallback_oscillation_target={
+            "target": float(oi_target),
+            "met_voxels": osvd_target_met,
+            "unmet_voxels": osvd_target_unmet,
+            "unmet_fraction": (
+                osvd_target_unmet / sources["osvd"] if sources["osvd"] else None
+            ),
+            "fraction_denominator": "oSVD replacements",
+            "unmet_policy": "retain_and_flag",
+        },
         cpi_spacing_at_bound_n=spacing_bound,
         cpi_spacing_at_bound_fraction=spacing_bound / max(1, accepted),
         arrival_delay_method=(

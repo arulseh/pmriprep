@@ -33,9 +33,14 @@ _DSC_DECONV_TEXT: dict[str, str] = {
     "sSVD": "standard singular value decomposition [@ostergaard_1996]",
     "oSVD": "oscillation-index regularized singular value decomposition [@wu_2003]",
     "tikhonov": (
-        "Tikhonov-regularized deconvolution with the regularization parameter "
-        "selected by the Morozov discrepancy principle "
-        "[@calamante_2003; @hansen_1998; @morozov_1966]"
+        "Tikhonov regularization with a modified first-difference penalty "
+        "and two leading magnitude-penalized samples [@calamante_2003]. "
+        "The L-curve rule selected the strict interior curvature maximum "
+        "nearest the upper bound, allowing either curvature sign, from 100 "
+        "log-spaced regularization parameters spanning 0.001 to 10 times "
+        "the largest singular value of the forward matrix. If no interior "
+        "maximum existed, the upper endpoint was selected "
+        "[@sourbron_2007_optimization]"
     ),
     "cpi": "control point interpolation [@mehndiratta_2013]",
 }
@@ -485,7 +490,9 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         if fallback_used:
             sentences.append(
                 "Voxels with a rejected CPI fit were replaced by oSVD "
-                "estimates [@wu_2003]."
+                "estimates [@wu_2003]. The fallback retained signed residues "
+                "without post-fit clipping and used the full 2N-sample "
+                "periodic residue area, including circular closure."
             )
     else:
         method_text = _DSC_DECONV_TEXT.get(
@@ -493,6 +500,22 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         )
         sentences.append(
             f"Other model-derived DSC parameter maps were produced using {method_text}."
+        )
+        if method in ("sSVD", "tikhonov"):
+            sentences.append(
+                "The full N-sample causal system used Volterra product "
+                "integration [@sourbron_2007]."
+            )
+        sentences.append(
+            "Signed unconstrained residues were retained without post-fit clipping. "
+            "Reported MTT was computed as AUC-CBV divided by CBF."
+        )
+        sentences.append(
+            "Secondary residue-integral CBV used the full 2N-sample periodic "
+            "area, including circular closure."
+            if method == "oSVD" else
+            "Secondary residue-integral CBV used finite trapezoidal integration "
+            "over all N residue samples."
         )
 
     if is_cpi and (deconv.get("cpi_gamma_fraction") or 0) > 0:

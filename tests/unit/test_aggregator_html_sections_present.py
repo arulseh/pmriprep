@@ -24,7 +24,20 @@ def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
 
 
-def test_unified_report_renders_recommendation_and_warnings(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "deconvolution_qc",
+    [
+        {"method": "oSVD", "n_voxels": 0, "oi_mean": None, "threshold_mean": None},
+        {
+            "method": "tikhonov", "n_voxels": 0, "lambda_mean": None,
+            "lcurve_corner_fraction": None, "lcurve_upper_endpoint_fraction": None,
+        },
+    ],
+    ids=["osvd_null_means", "tikhonov_null_means"],
+)
+def test_unified_report_renders_recommendation_and_warnings(
+    tmp_path: Path, deconvolution_qc: dict,
+) -> None:
     """End-to-end render carries recommendation banner, warnings, and section headings."""
     ses = tmp_path / "pmriprep" / "sub-01" / "ses-0001"
     prefix = "sub-01_ses-0001"
@@ -49,6 +62,7 @@ def test_unified_report_renders_recommendation_and_warnings(tmp_path: Path) -> N
                 "preload": {},
                 "preprocessing": {"fd_mean": 0.1, "fd_max": 0.4,
                                   "n_volumes": 60, "tr_ms": 1500.0},
+                "deconvolution": deconvolution_qc,
             },
         },
     )
@@ -75,6 +89,10 @@ def test_unified_report_renders_recommendation_and_warnings(tmp_path: Path) -> N
     # Warnings rendered
     assert "Tissue segmentation" in html
     assert "FLAIR not available" in html
+    assert "Voxels Fitted" in html
+    assert "OI Mean (oSVD)" not in html
+    assert "Threshold Mean (oSVD)" not in html
+    assert "Lambda Mean (Tikhonov)" not in html
 
 
 def test_boilerplate_bib_resolves_every_cited_key() -> None:
@@ -136,9 +154,18 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
             "deconvolution": {"method": "tikhonov"},
         }
     )
-    assert "Morozov discrepancy principle" in tikhonov
-    assert "L-curve" not in tikhonov
-    assert "@morozov_1966" in tikhonov
+    assert "L-curve" in tikhonov
+    assert "@calamante_2003" in tikhonov
+    assert "@sourbron_2007_optimization" in tikhonov
+    assert "@sourbron_2007]" in tikhonov
+    assert "strict interior curvature maximum nearest the upper bound" in tikhonov
+    assert "P2" not in tikhonov
+    assert "100 log-spaced" in tikhonov
+    assert "either curvature sign" in tikhonov
+    assert "upper endpoint" in tikhonov
+    assert "without post-fit clipping" in tikhonov
+    assert "fixed regularization" not in tikhonov
+    assert "Morozov" not in tikhonov
     assert "@rosen_1990" in tikhonov
     assert "@boxerman_2006" in tikhonov
     assert "@weisskoff_1994" not in tikhonov

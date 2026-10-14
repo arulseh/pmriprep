@@ -22,6 +22,8 @@ class CPIOutputVoxel:
     fallback was requested or attempted. A substituted result has no CPI
     uncertainty or fitted leakage coefficient. The original record remains
     available for fit diagnostics, including its convergence and R-squared.
+    Valid oSVD replacements are retained when their oscillation target is
+    unmet; osvd_oi_target_met records that status separately from failures.
     """
 
     fit: GuidedVoxel
@@ -34,6 +36,7 @@ class CPIOutputVoxel:
     fitted_k2: float = np.nan
     fallback_attempted: bool = False
     fallback_reason: str | None = None
+    osvd_oi_target_met: bool | None = None
 
 
 def resolve_fallbacks(
@@ -113,4 +116,5 @@ def resolve_fallbacks(
                                      fallback_reason="invalid_osvd_measurement")
                 continue
             yield CPIOutputVoxel(row, "osvd", fit.cbf, fit.cbv, fit.mtt, np.nan,
-                                 fallback_attempted=True)
+                                 fallback_attempted=True,
+                                 osvd_oi_target_met=bool(fit.converged))

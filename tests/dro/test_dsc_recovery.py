@@ -4,12 +4,15 @@ Tests that deconvolution methods can recover known ground-truth CBF, CBV,
 and MTT from synthetic concentration-time curves at various noise levels.
 """
 
+from itertools import product
 from typing import Any, Tuple
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 from scipy.special import gammainc
+
+from tests.dsc_accuracy import P2_NO_CORNER, P2_UPPER_CORNER
 
 from pmriprep.utils.dsc_constants import DEFAULT_LAMBDA_RANGE
 from pmriprep.utils.dsc_deconvolution import (
@@ -368,7 +371,7 @@ class TestSSVDRecovery:
 class TestCSVDRecovery:
     """Test circulant SVD deconvolution delay detection.
 
-    cSVD uses a block-circulant matrix (Wu 2003). Forward model uses
+    cSVD uses a block-circulant matrix. Forward model uses
     the matched circulant matrix to isolate algorithm behavior from
     discretization mismatch.
     """
@@ -409,14 +412,14 @@ class TestCSVDRecovery:
 class TestOSVDRecovery:
     """Test oscillation-index SVD deconvolution parameter recovery.
 
-    oSVD uses a block-circulant matrix (Wu 2003). Forward model uses
+    oSVD uses a block-circulant matrix. The forward model uses
     the matched circulant matrix to isolate algorithm behavior from
     discretization mismatch.
     """
 
     @pytest.mark.parametrize("cbf,mtt", DSC_PARAMS)
     def test_osvd_zero_noise(self, cbf: float, mtt: float) -> None:
-        """oSVD recovers CBF and MTT at zero noise."""
+        """oSVD recovers the sampled circulant residue's CBF and area/peak."""
         tissue, aif, dt, time_sec = _make_dsc_test_data(
             cbf, mtt, 0.0, forward_model=dsc_forward_model_circulant,
         )
@@ -426,7 +429,9 @@ class TestOSVDRecovery:
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         assert result.mtt > 0, f"MTT should be positive, got {result.mtt}"
         _assert_param_recovery(result.cbf, cbf, 0.10, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, 0.10, param_name="MTT")
+        sampled_residue = make_exponential_residue(cbf, mtt, len(aif), dt)
+        periodic_mtt = float(dt * np.sum(sampled_residue) / np.max(sampled_residue))
+        _assert_param_recovery(result.mtt, periodic_mtt, 0.10, param_name="Residue MTT")
 
     # MC-derived regression guards (mean + 3*sigma, N=100) on the broad-AIF
     # operating point, not physiology-derived tolerances; the wide MTT bands
@@ -501,7 +506,7 @@ class TestTikhonovRecovery:
     Production deconvolves tissue against an auto-detected arterial AIF, but
     the tissue is fed by that artery through downstream transport, so the
     effective residue the deconvolver must recover is dispersed — it rises
-    from zero to an interior peak (Calamante's dispersed regime), where the
+    from zero to an interior peak, where the
     production modified penalty operator (identity block on the leading
     samples + first-difference) belongs.
 
@@ -515,10 +520,8 @@ class TestTikhonovRecovery:
     error and is the reported MTT here; the internal residue-MTT is too
     dispersion/noise sensitive to bound usefully.
 
-    Tolerances are mean+3σ from 20-seed Monte Carlo on the production defaults
-    (``DEFAULT_LAMBDA_RANGE = (1e-3, 10) · σ_max(A)``, Morozov discrepancy
-    λ-selection at ``TIKHONOV_MOROZOV_TAU = 1.0``, ``DEFAULT_TIKHONOV_PENALTY_P = 2``).
-    That the modified operator beats pure L₁ on this regime is asserted
+    The fixed regression bounds cover CBF and AUC-MTT recovery. That the
+    modified operator beats pure L₁ on this regime is asserted
     directly in ``test_modified_penalty_beats_l1_on_dispersed``.
     """
 
@@ -531,25 +534,25 @@ class TestTikhonovRecovery:
         pytest.param(0.13, 3.0, 4.0, id="long_mtt"),
     ]
 
-    # Tolerances per (noise_frac, cbf_tol, aucmtt_tol). MC mean+3σ (N=100) on
-    # the Volterra dispersed DRO with the Morozov discrepancy λ-selector, max
-    # across the four tissues (zero-noise = deterministic per-tissue max, taken
-    # via the degenerate near-noise-free fallback path):
-    #   noiseless: CBF 13.2%, AUC-MTT 8.0%
-    #   2% noise:  CBF 39.9%, AUC-MTT 43.0%
-    #   5% noise:  CBF 53.6%, AUC-MTT 81.1%
-    # The noisy bands are wider than the old L-curve selector: Morozov is more
-    # conservative (more regularization -> CBF under-read, the SAFE direction vs
-    # the OSIPI over-read it fixes; a CBF under-read inflates AUC-MTT). The OSIPI
-    # DRO test is the can-fail guard against any regression back toward over-read.
+    # Bounds per (noise_frac, cbf_tol, aucmtt_tol), across all four tissues.
     NOISE_LEVELS = [
         pytest.param(0.0,  0.16, 0.13, id="zero"),
         pytest.param(0.02, 0.42, 0.45, id="low"),
         pytest.param(0.05, 0.56, 0.85, id="medium"),
     ]
 
-    @pytest.mark.parametrize("cbf,alpha,beta", GAMMA_PARAMS)
-    @pytest.mark.parametrize("noise_frac,cbf_tol,aucmtt_tol", NOISE_LEVELS)
+    @pytest.mark.parametrize(
+        "cbf,alpha,beta,noise_frac,cbf_tol,aucmtt_tol",
+        [
+            pytest.param(
+                *tissue.values, *noise.values,
+                id=f"{noise.id}-{tissue.id}",
+                marks=P2_UPPER_CORNER
+                if (noise.id, tissue.id) == ("zero", "normal_gm") else (),
+            )
+            for tissue, noise in product(GAMMA_PARAMS, NOISE_LEVELS)
+        ],
+    )
     def test_tikhonov(
         self,
         cbf: float,
@@ -631,10 +634,10 @@ class TestTikhonovRecovery:
                 residue, dt, *DSC_DRO_VTF_MODERATE
             )))
             err_modified = abs(
-                _tikhonov_solve(tissue, aif, dt, lo, hi, True, L_mod).cbf - cbf_gt
+                _tikhonov_solve(tissue, aif, dt, lo, hi, L_mod).cbf - cbf_gt
             )
             err_l1 = abs(
-                _tikhonov_solve(tissue, aif, dt, lo, hi, True, l1).cbf - cbf_gt
+                _tikhonov_solve(tissue, aif, dt, lo, hi, l1).cbf - cbf_gt
             )
             if err_modified >= err_l1:
                 losses += 1
@@ -719,7 +722,7 @@ SVD_GAMMA_PARAMS = [
 # threshold truncating the gamma plateau. MTT 15.1% sets the floor.
 # 5% noise: MC N=20, mean+3σ. Binding: oSVD long_mtt CBF 56%,
 # oSVD normal_gm MTT 85%. Large MTT errors are inherent to SVD on
-# non-exponential residues (Mouridsen 2006).
+# non-exponential residues.
 SVD_GAMMA_NOISE_LEVELS = [
     pytest.param(0.0, 0.20, 0.16, id="zero"),     # CBF 19%, MTT 15.1% (deterministic)
     pytest.param(0.05, 0.57, 0.86, id="medium"),   # MC: CBF m+3σ=56%, MTT m+3σ=85%
@@ -837,15 +840,9 @@ class TestDSCEdgeCases:
         _assert_param_recovery(result.cbf, 0.065, 0.10, param_name="CBF")
         _assert_param_recovery(result.mtt, 15.0, 0.15, param_name="MTT")
 
+    @P2_NO_CORNER
     def test_ssvd_tikhonov_agreement(self) -> None:
-        """sSVD and Tikhonov (both Toeplitz) should agree at zero noise.
-
-        Tolerance is 25%: sSVD with threshold=0.001 is essentially the
-        unregularised pseudo-inverse, while the production modified-penalty
-        Tikhonov always applies a smoothness penalty (discrepancy-selected) even
-        at zero noise. The smoothing biases CBF down ~5–25% on exponential
-        residues.
-        """
+        """Evaluate the 25% CBF agreement target for two causal estimators."""
         tissue, aif, dt, time_sec = _make_dsc_test_data(
             cbf=0.10, mtt=4.0, noise_frac=0.0
         )
