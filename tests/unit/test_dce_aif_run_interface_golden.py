@@ -221,6 +221,27 @@ def _cell_population(tmp_path: Path) -> dict[str, Any]:
     return _snapshot(iface)
 
 
+def test_population_aif_preserves_arrival_at_coarse_sampling(tmp_path: Path) -> None:
+    """An undersampled population peak retains its configured arrival time."""
+    baseline_frames = 4
+    tr_seconds = 20.0
+    conc, mask = _make_conc(baseline_frames=baseline_frames)
+    conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
+    result = _base_iface(
+        conc_f, mask_f, aif_method="population",
+        tr=tr_seconds, baseline_frames=baseline_frames,
+    ).run(cwd=str(tmp_path))
+
+    curve = np.loadtxt(result.outputs.out_aif_curve)
+    qc = result.outputs.qc_metrics
+    assert np.max(curve) * 0.58 < 2.5
+    np.testing.assert_allclose(curve[:baseline_frames], 1e-6 / 0.58)
+    assert int(np.argmax(curve)) == baseline_frames + 1
+    assert qc["bat_seconds"] == baseline_frames * tr_seconds
+    assert qc["bat_method"] == "baseline_frames"
+    assert np.argmax(curve) * tr_seconds == qc["bat_seconds"] + tr_seconds
+
+
 def _cell_external(tmp_path: Path) -> dict[str, Any]:
     """Cell 7: external AIF file — P1 early-return path."""
     conc, mask = _make_conc()

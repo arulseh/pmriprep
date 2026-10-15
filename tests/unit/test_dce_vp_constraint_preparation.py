@@ -84,11 +84,15 @@ def test_dce_only_registration_qc_sentinel_is_trait_safe(tmp_path: Path) -> None
     assert pk_modeling.inputs.dsc_registration_qc == {}
 
 
-def test_prepare_vp_constraint_distinguishes_absent_dsc_run(tmp_path: Path) -> None:
+@pytest.mark.parametrize("is_auto", [False, True])
+def test_prepare_vp_constraint_distinguishes_absent_dsc_run(
+    tmp_path: Path, is_auto: bool,
+) -> None:
     """With no DSC inputs, the typed state retains explicit no-run provenance."""
     interface = ComputeDCEMaps(brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"))
 
-    result = interface._prepare_vp_constraint(_prepared())
+    prepared = _prepared()._replace(is_auto=is_auto)
+    result = interface._prepare_vp_constraint(prepared)
 
     assert result.vp_map is None
     assert result.mode == ConstraintMode.SKIP
@@ -99,11 +103,13 @@ def test_prepare_vp_constraint_distinguishes_absent_dsc_run(tmp_path: Path) -> N
     assert result.candidate_names == ["patlak"]
 
 
-def test_prepare_vp_constraint_rejects_nlls_box_before_loading_dsc(
+@pytest.mark.parametrize("is_auto", [False, True])
+def test_prepare_vp_constraint_rejects_nlls_prior_before_loading_dsc(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    is_auto: bool,
 ) -> None:
-    """NLLS cannot receive a DSC-derived vp box, including in auto mode."""
+    """Explicit and auto-selected Patlak NLLS omit the DSC prior."""
     monkeypatch.setattr(
         "pmriprep.utils.dsc_cbv_constraint.prepare_vp_constraint_from_data",
         lambda **kwargs: pytest.fail("NLLS must not prepare a DSC prior"),
@@ -116,7 +122,7 @@ def test_prepare_vp_constraint_rejects_nlls_box_before_loading_dsc(
     )
 
     result = interface._prepare_vp_constraint(
-        _prepared(populated=True, inference="nlls")
+        _prepared(populated=True, inference="nlls")._replace(is_auto=is_auto)
     )
 
     assert result.vp_map is None
@@ -124,6 +130,84 @@ def test_prepare_vp_constraint_rejects_nlls_box_before_loading_dsc(
     assert result.vp_uncertainty == 0.0
     assert result.qc["skip_reason"] == "nlls_constraint_unsupported"
     assert result.candidate_names == ["patlak"]
+
+
+@pytest.mark.parametrize(
+    ("model", "mode", "reason", "message"),
+    [
+        ("tofts", "auto", "model_without_vp", "no vp parameter"),
+        ("patlak", "skip", "disabled_by_configuration", "disabled by configuration"),
+    ],
+)
+def test_prepare_vp_constraint_reports_model_and_configuration_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    model: str, mode: str, reason: str, message: str,
+) -> None:
+    """Present DSC inputs are not described as missing when the prior is disabled."""
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_cbv_constraint.prepare_vp_constraint_from_data",
+        lambda **kwargs: pytest.fail("An inapplicable prior must not load DSC data"),
+    )
+    interface = ComputeDCEMaps(
+        brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
+        dsc_ncbv_file="ncbv.nii.gz", constraint_mode=mode,
+    )
+    prepared = _prepared(inference="vi")._replace(
+        model_name=model, is_auto=False, candidate_names=[],
+    )
+
+    result = interface._prepare_vp_constraint(prepared)
+
+    assert result.mode == ConstraintMode.SKIP
+    assert result.vp_map is None
+    assert result.vp_uncertainty == 0.0
+    assert result.qc["skip_reason"] == reason
+    assert message in result.qc["reason"]
+
+
+@pytest.mark.parametrize("model", ["patlak", "auto"])
+def test_patlak_vi_maps_use_qualified_dsc_prior(tmp_path: Path, model: str) -> None:
+    """Explicit and auto-selected Patlak use the same qualified spatial prior."""
+    time = np.arange(166, dtype=float) / 30.0
+    u = np.maximum(time - 0.5, 0.0)
+    aif = (u / 0.12) ** 3 * np.exp(-u / 0.12)
+    aif *= 5.0 / np.max(aif)
+    integral = np.r_[0.0, np.cumsum((aif[:-1] + aif[1:]) * np.diff(time) / 2)]
+    tissue = 0.02 * integral + 0.08 * aif
+    tissue += np.random.default_rng(7).normal(0, 0.003, time.size)
+    mask = np.ones((1, 1, 1), dtype=np.uint8)
+    for name, values in (
+        ("concentration", tissue.reshape(1, 1, 1, -1)),
+        ("mask", mask), ("ncbv", np.ones(mask.shape)),
+    ):
+        nib.save(nib.Nifti1Image(values, np.eye(4)), tmp_path / f"{name}.nii.gz")
+    np.savetxt(tmp_path / "aif.txt", aif)
+    interface = ComputeDCEMaps(
+        concentration_file=str(tmp_path / "concentration.nii.gz"),
+        brain_mask_file=str(tmp_path / "mask.nii.gz"),
+        aif_file=str(tmp_path / "aif.txt"),
+        dsc_ncbv_file=str(tmp_path / "ncbv.nii.gz"),
+        model=model, inference="vi", volume_tr=2.0, baseline_frames=15,
+        aif_bat_alignment="off", n_procs=1,
+        dsc_aif_qc={
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4, "baseline_return_ratio": 0.15,
+            "detection_method": "atlas_strict",
+        },
+        dsc_preload_qc={"k2_reference_available": True},
+        dsc_registration_qc={"qc_status": "PASS"},
+        dce_registration_qc={"qc_status": "PASS"},
+    )
+
+    outputs = interface.run(cwd=str(tmp_path)).outputs
+
+    assert outputs.constraint_qc["mode"] == "soft"
+    assert outputs.constraint_qc["vp_median"] == pytest.approx(0.01)
+    assert outputs.qc_metrics["n_constrained"] == 1
+    assert outputs.qc_metrics["inference_fallback"]["n_nlls_fallback"] == 0
+    assert np.isfinite(nib.load(outputs.out_vp).get_fdata()).all()
+    if model == "auto":
+        assert nib.load(outputs.out_model_selection).get_fdata().item() == 1
 
 
 def test_prepare_vp_constraint_reports_missing_nawm_before_nlls_policy(

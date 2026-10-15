@@ -4906,19 +4906,6 @@ class AIFDetection(BaseInterface):
         # Use small positive value (1e-6) to avoid log(0) issues downstream
         aif_curve = np.where(t_shifted < 0, 1e-6, aif_curve)
 
-        # Sanity check: population AIF must have proper peak
-        # If BAT shift clipped the AIF too early, regenerate without shift
-        pop_peak = float(np.max(aif_curve))
-        expected_min_peak = 2.5 * dose_factor  # ~2.5 mM minimum for full dose
-        bat_override = False
-        original_bat_seconds = bat_shift
-
-        if pop_peak < expected_min_peak:
-            # BAT shift is wrong - regenerate without shift
-            t_unshifted = np.arange(n_timepoints) * tr
-            aif_curve = parker_population_aif(t_unshifted, dose_factor)
-            bat_override = True
-
         # Convert the population curve from blood-voxel to plasma scale so it
         # matches Hct-corrected detected AIFs across sessions.
         aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
@@ -4934,9 +4921,6 @@ class AIFDetection(BaseInterface):
             "bat_seconds": bat_shift,
             "bat_method": "baseline_frames",
         }
-        if bat_override:
-            qc_metrics["bat_override"] = True
-            qc_metrics["original_bat_seconds"] = original_bat_seconds
         if _detection_attempt is not None:
             qc_metrics.update(_detection_attempt)
 

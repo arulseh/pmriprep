@@ -2785,6 +2785,9 @@ class ComputeDCEMaps(BaseInterface):
         Notes
         -----
         The prior remains NAWM-anchored as ``vp = NAWM_VP_REFERENCE * nCBV``.
+        Models with vp share the same qualification rules whether selected
+        explicitly or automatically. Models without vp and explicit prior
+        disabling return before loading DSC data.
         """
         from pmriprep.utils.dsc_cbv_constraint import (
             NO_DSC_RUN_REASON_STRING,
@@ -2807,12 +2810,28 @@ class ComputeDCEMaps(BaseInterface):
         ncbv_available = isdefined(self.inputs.dsc_ncbv_file) and bool(
             self.inputs.dsc_ncbv_file
         )
-        needs_vp_constraint = model_name in ("extended_tofts", "2cxm") or prepared.is_auto
+        needs_vp_constraint = model_name in _MODEL_HAS_VP or prepared.is_auto
         dsc_inputs_present = (
             (isdefined(self.inputs.dsc_ncbv_file) and bool(self.inputs.dsc_ncbv_file))
             or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
             or (isdefined(self.inputs.dsc_preload_qc) and bool(self.inputs.dsc_preload_qc))
         )
+
+        if not needs_vp_constraint or self.inputs.constraint_mode == "skip":
+            if not needs_vp_constraint:
+                reason = "The selected DCE model has no vp parameter."
+                skip_reason = "model_without_vp"
+            else:
+                reason = "The DSC-informed vp prior was disabled by configuration."
+                skip_reason = "disabled_by_configuration"
+            return _DCEVPConstraint(
+                None,
+                ConstraintMode.SKIP,
+                0.0,
+                {"mode": "skip", "reason": reason, "skip_reason": skip_reason},
+                model_name,
+                candidate_names,
+            )
 
         if (
             prepared.inference == "nlls"
