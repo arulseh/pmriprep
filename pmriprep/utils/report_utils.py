@@ -204,6 +204,8 @@ def _generate_boilerplate_text(
         Dict indicating which pipelines ran.
     pipeline_data : dict
         QC metrics dicts for each pipeline (None if not run).
+    versions : dict of str, optional
+        Third-party software versions to insert beside the named tools.
 
     Returns
     -------

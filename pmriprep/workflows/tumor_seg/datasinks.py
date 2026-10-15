@@ -422,7 +422,7 @@ def init_tumor_seg_datasinks_wf(
 
     sink_outputs.append((_add_nawm_sink(workflow, inputnode, is_postcon_ref), "out_file"))
 
-    # Figures writer (figure filmstrips only; clinical context now in dseg.json)
+    # Figure filmstrips; clinical context is written to dseg.json.
     figures_writer = pe.Node(TumorSegFiguresWriter(), name="figures_writer")
     workflow.connect([
         (inputnode, figures_writer, [

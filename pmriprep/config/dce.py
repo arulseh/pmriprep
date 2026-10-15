@@ -55,7 +55,7 @@ class DCEConfig:
     no_t1 : bool
         Skip T1 mapping (use field-strength-appropriate default T1).
     no_dsc_validation : bool
-        Skip DSC-DCE cross-validation.
+        Skip descriptive DSC–DCE vascular concordance assessment.
     motion_correct : bool
         Apply motion correction. True (default) runs mcflirt and processes the
         realigned series. False assumes the input was already motion-corrected
@@ -79,11 +79,10 @@ class DCEConfig:
         Pharmacokinetic model: auto (per-voxel BIC selection),
         tofts, extended_tofts, patlak, or 2cxm.
     inference : str
-        Inference engine: nlls (default, scipy least_squares),
-        vi (variational Bayes), map (Laplace MAP),
-        or mcmc (YAML-only — not exposed via CLI).
+        Public inference engines: nlls (default, bounded least squares) and
+        vi (variational Bayes). MAP and MCMC are internal validation paths.
     mcmc_samples : int
-        Number of MCMC samples for Bayesian inference.
+        Number of samples for the internal MCMC validation path.
     num_processes : int
         Number of parallel processes (0 = use system default).
     hdbet_device : str

@@ -226,6 +226,8 @@ def _create_perfusion_brain_mask_filmstrip(
         mean for DCE).
     brain_mask_file : str
         Path to brain mask NIfTI file.
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------
@@ -1212,6 +1214,8 @@ def _generate_dsc_param_maps_qc(
         Path to TTP map NIfTI.
     brain_mask_file : str
         Path to brain mask NIfTI.
+    timing_label : str, optional
+        Display label for the timing map: Tmax or CPI arrival delay.
     subject_id : str, optional
         Subject identifier.
     session_id : str, optional

@@ -687,6 +687,8 @@ def plot_motion_qc(
         Optional title for the figure
     radius : float, optional
         Head radius in mm for FD calculation (default 50.0)
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
     note : str, optional
         Caption rendered below the panels (e.g. a residual-motion disclaimer
         when motion correction was not applied).

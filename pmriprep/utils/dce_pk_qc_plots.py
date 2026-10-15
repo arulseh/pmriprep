@@ -171,6 +171,8 @@ def generate_preprocessing_qc_plot(
         Session identifier for title.
     output_path : str or None, optional
         Path to save PNG. If None, uses CWD.
+    voxel_size_mm : tuple of float, optional
+        Three spatial voxel dimensions in millimeters for the returned metadata.
 
     Returns
     -------
@@ -435,6 +437,8 @@ def generate_pk_modeling_qc_plot(
         3D Fp map for 2CXM (optional).
     ps : numpy.ndarray or None, optional
         3D PS map for 2CXM (optional).
+    enhancing_mask : numpy.ndarray or None, optional
+        Enhancing-tumor support preferred when choosing the example fit voxel.
     subject_id : str, optional
         Subject identifier for title.
     session_id : str, optional

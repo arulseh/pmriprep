@@ -18,38 +18,32 @@ class DSCVoxelResult:
 
     Attributes
     ----------
-        # Core perfusion parameters
-        cbf: Relative cerebral blood flow. Extracted from max(R(t)).
-        cbv: Relative cerebral blood volume. Computed as the integral of
-            the residue function.
-        mtt: Mean transit time (seconds). Central volume theorem: CBV/CBF.
-        ttp: Time to peak of tissue concentration curve (seconds).
-
-        # Derived metrics
-        psr: Percent signal recovery (%). Values <70% indicate BBB disruption,
-            >90% indicate intact BBB.
-        tmax: Time to maximum of residue function (seconds). Ischemic tissue
-            typically shows Tmax > 6s.
-
-        # AUC metrics
-        auc_raw: Area under uncorrected ΔR2* curve (a.u.).
-        auc_corr: Area under leakage-corrected ΔR2* curve (a.u.).
-
-        # Leakage correction
-        k2: K2 leakage correction factor (s^-1). Values near zero indicate
-            little fitted leakage correction.
-        correction_applied: Whether leakage correction was applied.
-
-        # Bayesian uncertainty estimates (only populated for Bayesian methods)
-        cbf_std: Standard deviation of CBF posterior distribution.
-        cbv_std: Reserved for covariance-aware CBV posterior uncertainty.
-        cbf_credible_lower: Lower bound of CBF 95% credible interval.
-        cbf_credible_upper: Upper bound of CBF 95% credible interval.
-        cbv_credible_lower: Reserved lower CBV credible bound.
-        cbv_credible_upper: Reserved upper CBV credible bound.
-        mtt_std: Standard deviation of MTT posterior distribution.
-        mtt_credible_lower: Lower bound of MTT 95% credible interval.
-        mtt_credible_upper: Upper bound of MTT 95% credible interval.
+    cbf : float
+        Relative cerebral blood flow supplied by the estimator.
+    cbv : float
+        Relative cerebral blood volume supplied by the estimator.
+    mtt : float
+        Mean transit time in seconds.
+    ttp : float
+        Tissue-concentration peak time in seconds.
+    psr : float
+        Percent signal recovery, without diagnostic classification.
+    tmax : float
+        Residue-peak time in seconds, without diagnostic classification.
+    auc_raw, auc_corr : float
+        Areas under the uncorrected and leakage-corrected delta-R2-star curves.
+    k2 : float
+        Fitted leakage correction coefficient in s^-1.
+    correction_applied : bool
+        Whether leakage correction was applied.
+    cbf_std, mtt_std : float, optional
+        Posterior standard deviations when supplied by the estimator.
+    cbf_credible_lower, cbf_credible_upper : float, optional
+        Lower and upper CBF 95% credible bounds.
+    mtt_credible_lower, mtt_credible_upper : float, optional
+        Lower and upper MTT 95% credible bounds.
+    cbv_std, cbv_credible_lower, cbv_credible_upper : float, optional
+        Reserved for covariance-aware CBV posterior uncertainty.
     """
 
     # Core perfusion parameters
@@ -102,14 +96,20 @@ class DSCQCMetrics:
 
     Attributes
     ----------
-        cnr: Contrast-to-noise ratio of the bolus passage.
-        motion_max_fd: Maximum framewise displacement during acquisition.
-        motion_mean_fd: Mean framewise displacement during acquisition.
-        outlier_frames: Number of frames flagged as motion outliers.
-        aif_quality: AIF detection quality score (0-1).
-        aif_detection_level: AIF detection method used ('atlas', 'relaxed', 'synthetic').
-        rhat_max: Maximum Gelman-Rubin R-hat for Bayesian fits.
-        ess_min: Minimum effective sample size for Bayesian fits.
+    cnr : float
+        Contrast-to-noise ratio of the bolus passage.
+    motion_max_fd, motion_mean_fd : float
+        Maximum and mean framewise displacement in millimeters.
+    outlier_frames : int
+        Number of frames flagged as motion outliers.
+    aif_quality : float
+        AIF detection quality score (0–1).
+    aif_detection_level : str
+        AIF detection provenance supplied by the caller.
+    rhat_max : float, optional
+        Maximum Gelman-Rubin R-hat when supplied by a sampling estimator.
+    ess_min : int, optional
+        Minimum effective sample size when supplied by a sampling estimator.
     """
 
     cnr: float = 0.0

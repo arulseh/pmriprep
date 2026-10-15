@@ -669,9 +669,9 @@ def init_dsc_deconvolution_wf(
     """Build the DSC deconvolution (perfusion-map computation) sub-workflow.
 
     Wraps :class:`~pmriprep.interfaces.dsc_compute.ComputeDSCMaps`, which performs
-    residue-function deconvolution to produce CBF, CBV, MTT, method-specific
-    timing, and leakage (K2) maps from the leakage-corrected concentration time
-    series and the AIF.
+    concentration-domain deconvolution for SVD methods and original-signal
+    fitting for CPI. Outputs include CBF, CBV, MTT, method-specific timing,
+    and leakage diagnostics, using the supplied AIF and BSW guidance.
 
     Parameters
     ----------
@@ -698,7 +698,7 @@ def init_dsc_deconvolution_wf(
         Arterial input function and detection provenance.
     k2_map_input_file, bsw_guidance_file
         Leakage-correction coefficient map and exact CPI guidance archive.
-    brain_mask_file, enhancing_mask_file, nawm_mask_file
+    brain_mask_file, enhancing_mask_file
         DSC-space brain and enhancing-tumor masks.
     tr, te, fd_values
         Acquisition timing, echo time and framewise displacement.
@@ -1730,6 +1730,15 @@ def init_dsc_preproc_wf(
         BIDS session identifier (without 'ses-' prefix).
     config : DSCConfig, optional
         DSC processing configuration. Uses defaults if not provided.
+    random_seed : int, optional
+        Seed forwarded to the perfusion-map interface.
+    mem_gb : float, optional
+        Memory estimate in GB for heavy processing nodes. None uses the
+        workflow's fallback estimate.
+    mem_limit_gb : float, optional
+        Upper bound in GB for per-node memory requests.
+    gd_multiplicity : int, optional
+        Number of gadolinium ions per contrast-agent molecule for dose scaling.
     name : str
         Workflow name (default: "dsc_preproc_wf").
 
@@ -1754,7 +1763,8 @@ def init_dsc_preproc_wf(
     nawm_mask
         Path to pre-computed NAWM mask for CBV normalization.
     te
-        Echo time in seconds (default from config or 0.03).
+        Echo time in seconds. The master workflow supplies the BIDS value;
+        direct construction initializes this input to 0.035.
     field_strength
         Magnetic field strength in Tesla (default 3.0).
     tr
@@ -1784,8 +1794,8 @@ def init_dsc_preproc_wf(
         Path to AIF detection mask.
     ncbv_map, ncbf_map
         Normalized CBV/CBF maps (if NAWM mask available).
-    smooth_quant_indep, smooth_rel, smooth_abs
-        Smoothed map dictionaries (if smooth_fwhm > 0).
+    smooth_hemodynamic
+        Smoothed hemodynamic-map dictionary (if smooth_fwhm > 0).
     dsc_to_t1w_xfm
         Path to DSC to T1w transform.
     qc_metrics

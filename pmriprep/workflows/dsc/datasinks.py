@@ -1291,16 +1291,39 @@ def init_dsc_datasinks_wf(
 
     Parameters
     ----------
+    output_dir : str
+        Derivatives output directory.
+    bids_dir : str
+        Input BIDS root for source provenance.
+    subject_id : str
+        Participant identifier without the sub- prefix.
+    session_id : str or None
+        Session identifier without the ses- prefix, or None for no session.
     deconvolution_method : str
         Method used to choose the public timing-map name and metadata. CPI
         fits report AIF-relative arrival delay; SVD-family methods report Tmax.
+    present_inputs : set of str, optional
+        Inputnode fields wired by the caller. Sinks for absent optional inputs
+        are omitted; mandatory perfusion inputs are always treated as present.
+    has_smoothing : bool, optional
+        Create sinks for smoothed hemodynamic maps.
+    motion_correct : bool, optional
+        Whether motion correction was applied, for derivative metadata.
+    nawm_needs_transform : bool, optional
+        Whether the NAWM mask was transferred from anatomical space.
+    nawm_source_file : str, optional
+        Source NAWM mask for provenance.
+    user_lesion_source_file : str, optional
+        Source user lesion mask for provenance.
+    roi_source_file : str, optional
+        Source statistics ROI mask for provenance.
+    name : str, optional
+        Workflow name.
 
-    ``present_inputs`` is a set of inputnode field names that will be
-    wired by the caller. Sinks for absent inputs are NOT created (avoids
-    nipype's mandatory-input check failing). The mandatory-perfusion
-    inputs (``mtt_map``, ``tmax_map``, ``psr_map``,
-    ``dsc_moco``, ``dsc_mean``, ``aif_mask``) are always treated as
-    present.
+    Returns
+    -------
+    pe.Workflow
+        Derivative-writing workflow for the declared inputs.
     """
     if present_inputs is None:
         present_inputs = set()

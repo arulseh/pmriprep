@@ -1093,7 +1093,7 @@ def _compute_pool_qc(
     """Run all QC functions a single time on a (scaled) AIF curve.
 
     Wraps ``compute_dce_aif_*`` helpers + ``compute_dce_aif_ratio_30s``
-    + ``detect_dce_aif_multi_bump_tail`` (using the new shoulder=60 s
+    + ``detect_dce_aif_multi_bump_tail`` (using the shoulder=60 s
     and fraction=0.40 constants) into a flat ``GateQC`` dict. Pure;
     safe to call inside a progressive trim loop.
     """
@@ -1416,9 +1416,8 @@ class TierEvaluation:
 class CascadeResult:
     """Aggregated result of ``_run_two_pass_cascade``.
 
-    Replaces the prior positional-tuple return so adding new fields
-    (e.g. per-tier gate-decision logs in this revision) doesn't shift
-    consumers' positional unpacking.
+    Carries selected candidates, atlas-search provenance and per-tier gate
+    decisions for downstream AIF assembly and QC.
     """
 
     candidates: list[tuple[int, int, int]]
@@ -3455,6 +3454,16 @@ class AIFDetection(BaseInterface):
             Number of pre-bolus baseline frames.
         tissue_ttp_frame : float, optional
             Reference tissue time-to-peak frame (brain-wide).
+        brain_mask : ndarray, optional
+            Brain support for per-tier pool QC. All four optional gate inputs
+            must be supplied to enable pool evaluation and trimming.
+        affine : ndarray, optional
+            Voxel-to-world affine for per-tier spatial QC.
+        hct : float, optional
+            Arterial hematocrit for conversion of each pool to plasma units.
+        target_peak : float, optional
+            Explicit blood-scale target peak in mM, or zero for the configured
+            peak-floor policy. Omitting a gate input uses quorum/anchor checks.
 
         Returns
         -------
@@ -4639,9 +4648,7 @@ class AIFDetection(BaseInterface):
                 metrics_list = [metrics_list[keep[0]]]
             else:
                 # No candidates above threshold — fall back to population.
-                # With the two-pass cascade above, this branch is now
-                # only reachable when no tier produced any keeper across
-                # the entire cascade (population is Pass 3).
+                # The final keeper filter can empty a selected cascade pool.
                 best_score = max(scores) if scores else 0.0
                 _detection_attempt = {
                     "auto_detection_attempted": True,

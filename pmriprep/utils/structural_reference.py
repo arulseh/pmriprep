@@ -301,7 +301,7 @@ _FAST_GATE_ISOTROPY = 2.5     # Max isotropy ratio for FAST viability
 # contrast state must not replace the resolution and isotropy assessment.
 _DCE_CONTRAST_MATCH_FACTOR = 1.25
 
-# Physics-validated base confidence table
+# Heuristic base confidence scores for structural-reference selection
 # (image_type, is_high_res) -> base confidence
 _BASE_CONFIDENCE_TABLE: Dict[Tuple[ImageType, bool], float] = {
     # High-resolution (<=1.5mm geometric mean)
@@ -433,7 +433,7 @@ def classify_image_type(path: Union[str, Path]) -> ImageType:
 
 
 def _compute_base_confidence(candidate: StructuralCandidate) -> float:
-    """Compute base confidence from the physics-validated lookup table.
+    """Compute base confidence from the reference-selection score table.
 
     Parameters
     ----------

@@ -63,8 +63,12 @@ def load_bsw_guidance(
     ----------
     path : str or Path
         Archive produced by save_bsw_guidance.
-    affine, shape, tr
-        Expected source affine, full four-dimensional shape and frame interval.
+    affine : ndarray
+        Expected source voxel-to-world affine, shape (4, 4).
+    shape : tuple of int
+        Expected full four-dimensional image shape.
+    tr : float
+        Expected interval between volumes in seconds.
 
     Returns
     -------

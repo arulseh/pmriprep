@@ -333,6 +333,9 @@ def batched_dsc_vi_fit(
         Per-parameter bounds in fitting space, length P.
     mono_prec : npt.NDArray[np.floating], optional
         Structural monotonicity precision matrix, shape (P, P) or None.
+    mono_eta : npt.NDArray[np.floating], optional
+        Structural monotonicity information vector in transformed coordinates,
+        shape (P,). None uses a zero vector.
     nlls_seeds : npt.NDArray[np.floating], optional
         NLLS seed parameters for initialization, shape (N, P) or None.
     prior_means_transformed : npt.NDArray[np.floating], optional
@@ -346,7 +349,7 @@ def batched_dsc_vi_fit(
     weights : npt.NDArray[np.floating], optional
         Per-frame motion weights, shape (T,). None = uniform.
     n_iterations : int, optional
-        Maximum VB iterations (default 20).
+        Maximum VB iterations (default 10).
     sloppy : bool, optional
         Use fast, low-quality settings (8 iterations).
     save_fitted_curves : bool, optional
@@ -359,7 +362,7 @@ def batched_dsc_vi_fit(
     spatial_replaces_parameter_prior : bool, optional
         Replace the independent parameter prior with ``spatial_prec_diag`` and
         ``spatial_eta``, matching FABBER's boundary-corrected M-prior. Structural
-        Structural monotonicity terms remain active. Requires both spatial arrays.
+        monotonicity terms remain active. Requires both spatial arrays.
     spatial_parameter_mask : npt.NDArray[np.bool_], optional
         Boolean parameter selector for M-prior replacement, shape (P,).
     initial_means_transformed : npt.NDArray[np.floating], optional
@@ -382,9 +385,9 @@ def batched_dsc_vi_fit(
     nprocs : int, optional
         Must be one; callers schedule adapter fits externally.
     model_adapter : DSCVIModelAdapter, optional
-        Observation prediction, natural-coordinate Jacobian and mean domain.
-        Overrides the built-in forward model and concentration-specific flow
-        derivative. Requires single-process execution; evaluation remains batched.
+        Required evaluator for observation prediction, the natural-coordinate
+        Jacobian and the mean domain. None raises ValueError. Requires
+        single-process execution; evaluation remains batched.
     return_full_posterior : bool, optional
         Retain full within-voxel covariance and Gamma noise factors for
         diagnostics/model comparison. Requires single-process execution.

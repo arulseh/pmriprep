@@ -484,8 +484,9 @@ class ComputeDSCMaps(BaseInterface):
 
     Notes
     -----
-    CBF/CBV/MTT are in relative units unless the input concentration was
-    computed with absolute r2* values.
+    CBF and CBV are relative measures; supplying an r2* conversion alone does
+    not establish absolute perfusion calibration. MTT and timing maps use
+    seconds, with the acquisition interval supplied by tr.
 
     For CPI with VI or spatial VB, uncertainty maps are also
     generated when method is 'cpi'.
@@ -702,6 +703,8 @@ class ComputeDSCMaps(BaseInterface):
             Detected pre-bolus frame count.
         tail_frames : int
             Number of recovery frames used for PSR.
+        brain_mask : npt.NDArray[np.bool_]
+            Spatial support for the pooled baseline-noise estimate.
 
         Returns
         -------

@@ -74,9 +74,9 @@ def init_dce_pk_modeling_wf(
     """Build the DCE pharmacokinetic-modeling sub-workflow.
 
     Wraps :class:`~pmriprep.interfaces.dce_compute.ComputeDCEMaps`, which fits the
-    configured tracer-kinetic model (Tofts / extended-Tofts / 2CXM, NLLS or
-    Bayesian) to the concentration time series and AIF, producing Ktrans, ve, vp,
-    kep, IAUC, model-free, and uncertainty maps.
+    configured tracer-kinetic model (Tofts, extended Tofts, Patlak or 2CXM) to
+    the concentration time series and AIF using NLLS or VI. Outputs include
+    model-specific parameters and uncertainties, IAUC and model-free maps.
 
     Parameters
     ----------
@@ -102,8 +102,10 @@ def init_dce_pk_modeling_wf(
         detection provenance).
     brain_mask_file, dce_signal_file, baseline_frames, fd_values, bolus_arrival_frame
         DCE brain mask, raw signal (for tSNR), baseline/bolus timing, and motion.
-    tr, volume_tr, dsc_dose, dsc_agent_standard_dose
-        Acquisition timing and DSC dose scaling (defaults apply on DCE-only runs).
+    volume_tr
+        Interval between DCE volumes in seconds.
+    dsc_dose, dsc_agent_standard_dose
+        DSC dose scaling (defaults apply on DCE-only runs).
     dsc_ncbv_file
         NAWM-normalized DSC CBV resampled to DCE space for the vp prior.
     tumor_mask_file
@@ -113,7 +115,7 @@ def init_dce_pk_modeling_wf(
     Outputs
     -------
     PK parameter maps (Ktrans, ve, vp, kep), IAUC, model-free and
-    Bayesian-uncertainty maps, fit diagnostics, and the ``qc_metrics`` dict --
+    parameter-uncertainty maps, fit diagnostics, and the ``qc_metrics`` dict --
     one outputnode field per distinct ``ComputeDCEMaps`` output consumed
     downstream.
     """
@@ -1464,7 +1466,7 @@ def init_dce_preproc_wf(
     afi_tr2
         TR2 value (ms) for AFI B1+ mapping.
     dsc_cbv_file
-        Path to DSC-derived CBV map for vp constraint (DSC native space).
+        Path to NAWM-normalized DSC CBV for the vp prior (DSC native space).
         Will be resampled to DCE space via dsc_to_t1w_xfm + t1w_to_dce_xfm.
     dsc_to_t1w_xfm
         Path to DSC→T1w FLIRT transform matrix (for CBV resampling).
@@ -1473,7 +1475,9 @@ def init_dce_preproc_wf(
     flip_angle
         DCE nominal flip angle in degrees.
     tr
-        DCE repetition time in seconds.
+        Excitation repetition time in seconds for SPGR signal conversion.
+    volume_tr
+        Interval between DCE volumes in seconds for fitting and timing QC.
     te
         DCE echo time in seconds.
     field_strength
@@ -1489,17 +1493,17 @@ def init_dce_preproc_wf(
         Path to mean DCE image (temporal average).
     motion_params
         Path to motion parameters file.
-    b1_map
-        Path to B1+ map from AFI acquisition.
+    b1_qc_plot
+        Path to the B1+ mapping QC plot, when available.
     t1_map
-        Path to T1 map from VFA acquisition.
+        Path to the VFA-derived T1 map resampled to DCE space, when that branch runs.
     ktrans_map
         Path to Ktrans (transfer constant) map.
     ve_map
         Path to ve (extravascular extracellular volume fraction) map.
         Not produced by Patlak model.
     vp_map
-        Path to vp (plasma volume fraction) map (extended Tofts/2CXM).
+        Path to vp (plasma volume fraction) map (extended Tofts, Patlak or 2CXM).
     kep_map
         Path to kep (rate constant) map. Not produced by Patlak model.
     aif_curve
@@ -1511,9 +1515,9 @@ def init_dce_preproc_wf(
     t1w_to_dce_xfm
         Path to the T1w-to-DCE ITK X5 transform.
     ktrans_uncertainty
-        Path to Ktrans uncertainty map (if Bayesian).
+        Path to Ktrans standard error (NLLS) or posterior standard deviation (VI).
     ve_uncertainty
-        Path to ve uncertainty map (if Bayesian).
+        Corresponding ve uncertainty map for models that estimate ve.
     qc_metrics
         Dictionary of QC metrics from all processing steps.
 

@@ -91,8 +91,7 @@ def signal_to_concentration(
         # 4D: mean over first baseline_frames along time axis
         s0 = np.mean(signal[..., :baseline_frames], axis=-1, keepdims=True)
 
-    # Compute signal ratio S(t)/S0, clip to valid range
-    # Clip s0 to prevent division by zero
+    # Floor the baseline denominator before computing S(t)/S0.
     s0_safe = np.maximum(s0, EPSILON_SIGNAL)
     signal_ratio = signal / s0_safe
 
@@ -116,8 +115,7 @@ def signal_to_delta_r2_star(
 ) -> npt.NDArray[np.floating]:
     """Convert DSC signal to ΔR2* (relative concentration).
 
-    Convenience alias for signal_to_concentration, which now always
-    returns ΔR2* in s⁻¹.
+    Alias for signal_to_concentration; returns ΔR2* in s⁻¹.
 
     Parameters
     ----------
@@ -391,16 +389,11 @@ def compute_psr(
 ) -> Union[float, npt.NDArray[np.floating]]:
     """Compute percent signal recovery (PSR).
 
-    PSR quantifies how much signal recovers after the bolus passage,
-    indicating blood-brain barrier integrity.
+    PSR describes signal recovery after the bolus passage. This function
+    returns a signal ratio and does not classify blood-brain barrier integrity.
 
     Formula:
         PSR = 100 × (S_tail - S_min) / (S_baseline - S_min)
-
-    Clinical interpretation:
-        - PSR < 70%: Blood-brain barrier disruption (leakage)
-        - PSR 70-90%: Partial BBB disruption
-        - PSR > 90%: Intact blood-brain barrier
 
     Parameters
     ----------
@@ -418,26 +411,25 @@ def compute_psr(
     Returns
     -------
     float or np.ndarray
-        PSR value(s) as percentage (0-100+ range).
+        Unclipped PSR value(s) as a percentage; values may lie outside 0–100.
         - Scalar float for 1D input
         - 3D array (x, y, z) for 4D input
 
     Raises
     ------
-        ValueError: If signal has invalid dimensions.
-        ValueError: If baseline_frames or tail_frames exceeds signal length.
+    ValueError
+        If signal is not 1D or 4D, or either window is less than one frame
+        or greater than or equal to the signal length.
 
     Notes
     -----
-        - ``compute_psr_legacy`` provides the alternate formula used by
-          validation comparisons.
+        - ``compute_psr_legacy`` uses the same ratio with additional signal,
+          window and noise checks for the production DSC map interface.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
           to avoid baseline contamination.
-        - PSR can exceed 100% in cases where the signal overshoots baseline
-          after bolus passage (rare, usually indicates motion artifact).
-        - PSR can be negative if signal never recovers (very high leakage
-          or signal artifact).
-        - Epsilon is added to denominator to prevent division by zero.
+        - Values above 100% or below zero are retained without assigning a cause.
+        - The denominator magnitude is floored at EPSILON_SIGNAL while
+          preserving its sign.
     """
     # Validate input dimensions
     if signal.ndim not in (1, 4):
@@ -477,7 +469,7 @@ def compute_psr(
 
     # Compute PSR with epsilon guard in denominator
     denominator = s_baseline - s_min
-    # Add small epsilon to prevent division by zero
+    # Floor the denominator magnitude to prevent division by zero.
     denominator_safe = np.maximum(np.abs(denominator), EPSILON_SIGNAL)
     # Preserve sign of denominator
     denominator_safe = np.where(

@@ -36,14 +36,28 @@ def prepare_cpi_acquisition(
 
     Parameters
     ----------
-    signals, aif, time, te, guidance
-        Original measured input and exact optional BSW guidance.
+    signals : ndarray
+        Original measured signal, shape (x, y, z, frame).
+    aif : ndarray
+        Arterial delta-R2-star curve in s^-1, shape (frame,).
+    time : ndarray
+        Acquisition times in seconds, shape (frame,).
+    te : float
+        Echo time in seconds.
+    guidance : BSWGuidance, optional
+        Exact upstream BSW reference and coefficient estimates.
     options : CPIOptions
         Count, timing, transport selection and fallback policy.
     inference_method : {"vi", "svb"}
         Shared ordinary or spatial variational inference.
-    temporal_weights, leakage_method, mask, baseline_frames
-        Likelihood weights, leakage policy, spatial support and baseline window.
+    temporal_weights : ndarray, optional
+        Per-frame likelihood weights.
+    leakage_method : {"bsw", "none"}
+        Leakage policy shared by both transport branches.
+    mask : ndarray, optional
+        Spatial fitting support, shape (x, y, z).
+    baseline_frames : int, optional
+        Pre-bolus window length for acquisition preparation.
     sloppy : bool, optional
         Use the shared fast testing schedule in every branch and spatial sweep.
 

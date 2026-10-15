@@ -44,8 +44,10 @@ class SpatialReadout:
 
         Parameters
         ----------
-        result, prior
-            Local update and the conditional prior used for that update.
+        result : DSCBatchedFitResult
+            Local posterior update.
+        prior : GaussianPrior
+            Conditional prior used for that update.
         adapter : DSCVIModelAdapter
             Worker-local evaluator, with any final-mean derivative cache intact.
         signal : ndarray

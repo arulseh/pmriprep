@@ -54,6 +54,8 @@ def generate_vfa_t1_qc_plot(
         Output path for the PNG file. If None, uses cwd.
     correction_info : dict, optional
         T1 correction info dictionary for annotation.
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------
@@ -380,6 +382,8 @@ def generate_b1_qc_plot(
         Standard deviation of B1+ in brain.
     output_path : str, optional
         Output path for the PNG file. If None, uses cwd.
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------

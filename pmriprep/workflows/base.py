@@ -1149,6 +1149,8 @@ def _init_master_anatomical_preprocessing(
         Discovered anatomical modalities.
     decision : PipelineDecision
         Pipeline selection controlling anatomical construction.
+    modality_plan : _AnatomicalModalityPlan
+        Anatomical modalities needed by the selected pipelines and underlays.
     bids_dir : Path
         Input BIDS root.
     subject_id, session_id : str, optional
@@ -3608,12 +3610,18 @@ def init_pmriprep_wf(
     random_seed : int, optional
         Random seed for reproducibility. Passed to ProcessPoolExecutor
         workers for deterministic Bayesian fitting.
+    mem_limit_gb : float, optional
+        User memory ceiling in GB for workflow scheduling and node estimates.
+    command_string : str, optional
+        Invocation recorded in processing provenance and reports.
     user_specified : dict, optional
         Tracks which parameters were explicitly provided by the user
         (via CLI or config file) vs falling back to pipeline defaults.
         Keys: dce_dose, dsc_dose, dsc_agent_standard_dose, dsc_preload.
     name : str
         Workflow name (default: "pmriprep_wf").
+    layout : BIDSLayout, optional
+        Existing BIDS index reused for discovery. None constructs an index.
 
     Returns
     -------
@@ -3629,7 +3637,7 @@ def init_pmriprep_wf(
     4. DCE perfusion processing (requires anat outputs, uses DSC CBV if available)
 
     When both DSC and DCE are present, DCE runs after DSC to use DSC's CBV
-    for vp constraint (via US-063 QC check). This is handled by connecting
+    for the QC-qualified vp prior. This is handled by connecting
     DSC outputs to DCE inputs.
     """
     context = _prepare_master_workflow_context(

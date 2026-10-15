@@ -1262,6 +1262,8 @@ def _collect_qc_metrics(
         B1+ mapping QC metrics (None if not performed).
     t1_qc : dict or None
         T1 mapping QC metrics (None if external or no_t1).
+    signal_conversion_qc : dict or None
+        Signal-to-concentration conversion settings and validity metrics.
     preprocess_qc : dict or None
         Preprocessing QC metrics.
     brain_extraction_qc : dict or None
@@ -1818,17 +1820,13 @@ def _resample_dsc_ncbv_to_dce(
     t1w_to_dce_xfm: str | None = None,
     dce_reference: str | None = None,
 ) -> str:
-    """Resample DSC nCBV to DCE space and clip trilinear-ringing negatives.
+    """Resample DSC nCBV to DCE space and floor finite negative values at zero.
 
     Nipype executes this helper in an isolated scope, so it contains the full
-    resampling operation before clipping negative interpolation artifacts.
-
-    Trilinear interpolation introduces small negative values near
-    high-contrast boundaries (tumor edges, vessels). nCBV=0 is physically
-    meaningful, but negatives would silently become NaN downstream in
-    ``ncbv_to_vp_prior`` (it NaN-masks negatives); that masks useful
-    voxels and inflates the nan-fraction QC metric. We clip to [0, +inf)
-    and log the affected fraction.
+    transform composition and trilinear resampling operation. The prior-input
+    policy clips finite negative values after resampling and logs their
+    fraction; nonfinite values are preserved. The helper does not determine
+    the cause of negative input values.
     """
     import logging
     import os

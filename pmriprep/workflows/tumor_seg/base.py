@@ -318,6 +318,8 @@ def init_tumor_seg_wf(
         BIDS session identifier (without 'ses-' prefix).
     config : TumorSegConfig, optional
         Tumor segmentation configuration. Uses defaults if not provided.
+    mem_limit_gb : float, optional
+        Upper bound in GB for per-node memory requests.
     name : str
         Workflow name (default: "tumor_seg_wf").
 
@@ -438,7 +440,7 @@ def init_tumor_seg_wf(
     workflow.session_id = session_id  # type: ignore[attr-defined]
 
     # -------------------------------------------------------------------
-    # Step 1: HD-GLIO Preprocessing (US-078)
+    # Step 1: HD-GLIO preprocessing
     # - Minimal preprocessing: brain extraction only (NO bias correction)
     # - Verify all 4 modalities present and dimension-matched
     # -------------------------------------------------------------------
@@ -459,7 +461,7 @@ def init_tumor_seg_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Step 2: HD-GLIO Segmentation (US-079)
+    # Step 2: HD-GLIO segmentation
     # - Run hd_glio_predict with config.device (cuda/mps/cpu)
     # - Output labels: 0=background, 1=non-enhancing, 2=enhancing
     # -------------------------------------------------------------------
@@ -496,7 +498,7 @@ def init_tumor_seg_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Step 3: Mask Extraction (US-080)
+    # Step 3: Mask extraction
     # - Extract enhancing, non-enhancing, and whole tumor masks
     # -------------------------------------------------------------------
     extract_masks = pe.Node(
@@ -557,7 +559,7 @@ def init_tumor_seg_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Step 4: NAWM ROI Creation (US-081)
+    # Step 4: NAWM ROI creation
     # - Create tumor-informed supratentorial NAWM mask for normalization
     # - Use WM probability >= 0.9, exclude tumor + 20mm margin
     # - Apply config.nawm_erosion (default: 2 voxels)

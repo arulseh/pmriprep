@@ -148,9 +148,9 @@ def _select_t1w_by_acquisition(
 ) -> Optional[Path]:
     """Pick best T1w from candidates by acquisition preference.
 
-    Priority: MPRAGE > IR/MP2RAGE > SPGR/GRE > non-SE > SE. SE T1w is
-    typically 2D with thick slices, poor for registration; MPRAGE is the
-    NiPreps gold standard.
+    Filename preference: MPRAGE > IR > MP2RAGE > SPGR > GRE > non-SE > SE.
+    Within a preference, preserve input order. This helper does not inspect
+    image resolution or compare registration quality.
     """
     if not candidates:
         return None
@@ -186,9 +186,8 @@ def _find_t1w_precontrast(
 ) -> Optional[Path]:
     """Find pre-contrast T1w (no ``ce-`` entity) using BIDSLayout.
 
-    Multiple candidates are ranked by acquisition preference (MPRAGE >
-    IR/MP2RAGE > SPGR/GRE > non-SE > SE) to avoid picking thick-slice SE
-    when a 3D MPRAGE is available.
+    Multiple candidates use the filename preference MPRAGE > IR > MP2RAGE >
+    SPGR > GRE > non-SE > SE, preserving input order within each preference.
     """
     from bids.layout import Query
 

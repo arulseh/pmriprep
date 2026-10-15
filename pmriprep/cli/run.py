@@ -901,6 +901,8 @@ def _run_report_only(
         Parsed command line arguments.
     subjects : list of str
         Subject IDs to generate reports for.
+    layout : BIDSLayout, optional
+        Existing BIDS index reused for session discovery.
     """
     from pmriprep.utils.report_utils import (
         _PIPELINE_PRESENCE_PROBES,

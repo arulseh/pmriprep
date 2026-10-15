@@ -111,12 +111,6 @@ def generate_dsc_preprocessing_qc_plot(
         Row 0: Global Signal Time Course (0-1) | Minimum Signal (2) | Signal Drop Map (3)
         Row 1: Signal Intensity Histogram (0-1) | tSNR Map (2) | CNR Map (3)
 
-    Key DSC differences from DCE:
-    - Global signal shows DROP (not rise)
-    - "Minimum Signal Image" replaces "Peak Signal Image"
-    - "Signal Drop Map (%)" replaces "Enhancement Map (%)"
-    - CNR map replaces CV map
-
     Parameters
     ----------
     dsc_signal_4d : npt.NDArray[Any]
@@ -127,12 +121,16 @@ def generate_dsc_preprocessing_qc_plot(
         Number of baseline (pre-bolus) frames.
     volume_tr_s : float
         Temporal resolution between volumes in seconds.
+    te_s : float, optional
+        Echo time in seconds, recorded in the returned metadata as milliseconds.
     subject_id : str, optional
         Subject identifier for title.
     session_id : str, optional
         Session identifier for title.
     output_path : str, optional
         Path to save PNG. If None, uses CWD.
+    voxel_size_mm : tuple of float, optional
+        Three spatial voxel dimensions in millimeters for the returned metadata.
 
     Returns
     -------

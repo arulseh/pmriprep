@@ -343,6 +343,8 @@ def detect_preload_from_signal(
         Expected signal without preload. If None,
         uses the 95th percentile of baseline signal as reference
         (assuming some voxels have minimal preload effect).
+    agent_standard_dose : float, optional
+        Standard agent dose in mmol Gd/kg for scaling the classification thresholds.
 
     Returns
     -------

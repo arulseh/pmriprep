@@ -106,6 +106,8 @@ def _create_brain_mask_filmstrip(
         Path to bias-corrected T1w image (pre-extraction).
     brain_mask_file : str
         Path to brain mask.
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------
@@ -159,6 +161,8 @@ def _create_acpc_registration_filmstrip(
     ----------
     t1w_acpc_file : str
         Path to ACPC-aligned T1w (on MNI 1mm grid).
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------
@@ -236,6 +240,8 @@ def _create_coreg_qc_filmstrip(
         Path to brain mask.
     title : str
         Title for the filmstrip (e.g. "T1w PostCon-to-T1w").
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------
@@ -294,6 +300,8 @@ def _create_tissue_seg_filmstrip(
         Path to gray matter probability map.
     csf_probseg_file : str or None
         Path to CSF probability map.
+    subject_id, session_id : str, optional
+        Participant and session identifiers for the figure title.
 
     Returns
     -------
@@ -887,6 +895,8 @@ def init_anat_preproc_wf(
         Whether pre-contrast FLAIR image is available.
     has_flair_postcon : bool
         Whether post-contrast FLAIR image is available.
+    mem_limit_gb : float, optional
+        Upper bound in GB for per-node memory requests.
     name : str
         Workflow name (default: "anat_preproc_wf").
 

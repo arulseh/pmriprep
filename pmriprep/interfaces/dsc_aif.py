@@ -251,7 +251,7 @@ _CascadeAttempt = tuple[str, Optional[npt.NDArray[Any]], str, bool]
 
 
 # ---------------------------------------------------------------------------
-# Top-level helper functions (backward-compatible with utils/dsc_aif.py)
+# Top-level AIF quality helpers
 # ---------------------------------------------------------------------------
 
 
@@ -1301,9 +1301,11 @@ class AIFDetection(BaseInterface):
         median_s0 : float or None
             Median baseline signal for S0 partial-volume rejection.
         dose : float or None
-            Contrast agent dose multiplier (default 1.0).
+            Contrast agent dose multiplier. None uses the interface setting,
+            or 1.0 if that setting is undefined.
         agent_standard_dose : float or None
-            Standard molecular dose in mmol/kg (default 0.1).
+            Standard molecular dose in mmol/kg. None uses the interface
+            setting, or 0.1 if that setting is undefined.
         gd_multiplicity : int or None
             Gd3+ ions per molecule (1=monomeric, 4=gadoquatrane).
             Falls back to self.inputs.gd_multiplicity if None.
@@ -1326,7 +1328,7 @@ class AIFDetection(BaseInterface):
         if metrics["ttp"] > metrics.get("max_allowed_ttp", float("inf")):
             return float("inf")
 
-        # 2. BRR range check — valid arterial BRR should be 5-35%
+        # 2. Tier-specific baseline-return-ratio acceptance window
         # Negative BRR indicates T1 leakage contamination (tail > baseline)
         brr = metrics.get("baseline_return_ratio", float("nan"))
         brr_range: dict[str, tuple[float, float]] = {
@@ -3269,8 +3271,7 @@ class AIFDetection(BaseInterface):
 
             # Compute tissue-TTP reference once — independent of tier
             # because it operates on the whole brain mask. Used by the
-            # existing per-tier scorer AND by the new post-score
-            # kinetic+anchor filter.
+            # per-tier scorer and post-score kinetic/anchor filter.
             tissue_ttp = self._calculate_tissue_ttp_reference(
                 conc_data, brain_mask, aif_baseline_frames
             )

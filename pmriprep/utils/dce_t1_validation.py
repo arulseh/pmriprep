@@ -241,6 +241,9 @@ def valid_t1_support(
     ----------
     t1_map : array-like
         T1 values in milliseconds.
+    field_strength : float, optional
+        Field strength in Tesla for the tissue-specific upper T1 limit.
+        None applies only the finite-value and lower-bound checks.
 
     Returns
     -------

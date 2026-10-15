@@ -818,6 +818,10 @@ def prepare_vp_constraint_from_data(
         User-specified constraint mode override.
     k2_metrics : dict[str, Any], optional
         K2 leakage correction metrics dict from dsc_preload.
+    dose : float, optional
+        Administered DSC dose as a multiple of the agent's standard dose.
+    agent_standard_dose : float, optional
+        Standard agent dose in mmol Gd/kg for dose-adjusted AIF quality checks.
     dsc_registration_qc : dict[str, Any], optional
         QC for the DSC-to-T1w transform used by the spatial prior.
     dce_registration_qc : dict[str, Any], optional
@@ -836,16 +840,9 @@ def prepare_vp_constraint_from_data(
 
     result = VpConstraintResult()
 
-    # Synthetic-AIF handling: when the AIF cascade exhausts every tier
-    # and the pipeline falls back to a population-average synthetic
-    # gamma variate, the ``rel_cbv_auc`` denominator is not calibrated
-    # against this subject's true arterial amplitude. Any vp number
-    # derived from it is not comparable across subjects, so the DCE vp
-    # constraint is unsafe to anchor on synthetic CBV magnitudes. Emit
-    # an explicit SKIP with a dedicated reason *before* the existing
-    # nCBV-presence check (which happens to fire implicitly today via
-    # the confidence-downgrade + magnitude-gate path, but only
-    # accidentally — this makes the intent auditable).
+    # Synthetic AIFs do not provide a subject-measured arterial amplitude.
+    # The prior policy excludes them before checking for an nCBV file, so
+    # the skip reason records AIF provenance even if that file is absent.
     if aif_qc_data and (
         aif_qc_data.get("detection_method") == "synthetic"
         or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
