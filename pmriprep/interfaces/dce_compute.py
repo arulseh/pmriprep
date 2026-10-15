@@ -1125,6 +1125,7 @@ def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
     n_aif_samples: int,
+    volume_tr: Optional[float] = None,
 ) -> npt.NDArray[np.float64]:
     """Validate the uniformly sampled time axis required by DCE fitting.
 
@@ -1136,6 +1137,9 @@ def _validate_dce_time_axis(
         Number of frames in the DCE concentration series.
     n_aif_samples : int
         Number of samples in the arterial input function.
+    volume_tr : float, optional
+        Volume interval in seconds. When supplied, must be finite, positive
+        and consistent with the time-axis interval.
 
     Returns
     -------
@@ -1146,7 +1150,8 @@ def _validate_dce_time_axis(
     ------
     ValueError
         If the time axis is not one-dimensional, finite, length-matched,
-        strictly increasing, or uniformly spaced.
+        strictly increasing, or uniformly spaced, or if volume_tr is invalid
+        or disagrees with its interval.
 
     Notes
     -----
@@ -1179,6 +1184,15 @@ def _validate_dce_time_axis(
             "Nonuniform DCE time points are unsupported by the current "
             "analytic convolution models."
         )
+    if volume_tr is not None:
+        if not np.isfinite(volume_tr) or volume_tr <= 0.0:
+            raise ValueError("DCE volume_tr must be finite and positive (seconds).")
+        if not np.isclose(volume_tr / 60.0, intervals[0], rtol=1e-5, atol=1e-8):
+            raise ValueError(
+                f"DCE volume_tr ({volume_tr:.9g} seconds) does not match the "
+                f"time-axis interval ({intervals[0] * 60.0:.9g} seconds). "
+                "time_points_file must contain minutes; volume_tr uses seconds."
+            )
     return axis
 
 
@@ -2024,13 +2038,13 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
 
     # Time parameters
     volume_tr = traits.Float(
-        desc="Volume TR in seconds for model auto-selection (RepetitionTime, temporal resolution)",
+        desc="Volume interval in seconds; must agree with time_points_file when both are supplied",
     )
     time_points_file = File(
         exists=True,
         desc=(
             "Optional 1D text file with uniformly spaced time points (minutes); "
-            "if not provided, uses volume TR"
+            "must agree with volume_tr when both are supplied"
         ),
     )
 
@@ -2303,9 +2317,12 @@ class ComputeDCEMaps(BaseInterface):
     model : str
         PK model: auto, tofts, extended_tofts, patlak, or 2cxm. Default: 'auto'.
     volume_tr : float, optional
-        Temporal spacing between DCE volumes in seconds.
+        Temporal spacing between DCE volumes in seconds. Must match the
+        time-file interval when both timing inputs are supplied.
     time_points_file : str, optional
-        Text file with time points in minutes; if not provided, uses volume TR.
+        Text file with uniformly spaced time points in minutes. If omitted,
+        the time axis is generated from volume_tr. The validated axis controls
+        fitting, model eligibility and bolus-arrival alignment.
     inference : str
         Public inference engines: nlls (default, bounded least squares) or
         vi (variational Bayes).
@@ -2584,10 +2601,15 @@ class ComputeDCEMaps(BaseInterface):
         aif = np.loadtxt(self.inputs.aif_file)
         n_timepoints = conc_data.shape[3]
 
+        volume_tr = (
+            float(self.inputs.volume_tr)
+            if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
+            else None
+        )
         if self.inputs.time_points_file:
             time_points = np.loadtxt(self.inputs.time_points_file)
-        elif isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
-            vol_tr_minutes = float(self.inputs.volume_tr) / 60.0
+        elif volume_tr is not None:
+            vol_tr_minutes = volume_tr / 60.0
             time_points = np.arange(n_timepoints, dtype=np.float64) * vol_tr_minutes
         else:
             raise ValueError(
@@ -2600,13 +2622,10 @@ class ComputeDCEMaps(BaseInterface):
             time_points,
             n_dce_frames=n_timepoints,
             n_aif_samples=int(np.size(aif)),
+            volume_tr=volume_tr,
         )
-        # Model eligibility depends on the volume sampling interval, never the
-        # pulse TR. Recover it from an explicit time axis when necessary.
-        if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
-            selection_tr_seconds = float(self.inputs.volume_tr)
-        else:
-            selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
+        # Fitting, model eligibility and BAT alignment share the validated axis.
+        selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
 
         model_name = str(self.inputs.model)
         is_auto = model_name == "auto"

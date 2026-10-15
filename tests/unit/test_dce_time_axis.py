@@ -54,3 +54,17 @@ def test_batched_models_reject_late_nonincreasing_interval() -> None:
     """Every interval, rather than only the first, must be positive."""
     with pytest.raises(ValueError, match="strictly increasing"):
         _validate_uniform_time_points(np.array([0.0, 0.1, 0.05]))
+
+
+@pytest.mark.parametrize("volume_tr", [0.0, -2.0, np.nan, np.inf, -np.inf])
+def test_volume_tr_must_be_finite_and_positive(volume_tr: float) -> None:
+    """A valid explicit axis cannot hide an invalid volume interval."""
+    with pytest.raises(ValueError, match="volume_tr.*finite and positive"):
+        _validate_dce_time_axis([0.0, 0.1, 0.2], 3, 3, volume_tr=volume_tr)
+
+
+def test_volume_tr_rounding_uses_time_axis_tolerance() -> None:
+    """Text-file rounding within the supported axis tolerance is accepted."""
+    axis = np.round(np.arange(4) * 2.0 / 60.0, decimals=8)
+    result = _validate_dce_time_axis(axis, 4, 4, volume_tr=2.0)
+    np.testing.assert_array_equal(result, axis)

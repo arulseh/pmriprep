@@ -11,6 +11,84 @@ from pmriprep.interfaces.dce_compute import ComputeDCEMaps, _DCEFitPreparation
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
 
+@pytest.fixture
+def timing_interface(tmp_path: Path) -> ComputeDCEMaps:
+    """Create valid inputs for checking the interface timing contract."""
+    concentration_file = tmp_path / "concentration.nii.gz"
+    mask_file = tmp_path / "mask.nii.gz"
+    aif_file = tmp_path / "aif.txt"
+    nib.save(
+        nib.Nifti1Image(np.array([[[[0.0, 0.0, 0.2, 0.5]]]]), np.eye(4)),
+        concentration_file,
+    )
+    nib.save(
+        nib.Nifti1Image(np.ones((1, 1, 1), dtype=np.uint8), np.eye(4)),
+        mask_file,
+    )
+    np.savetxt(aif_file, [0.0, 0.0, 1.0, 0.5])
+    return ComputeDCEMaps(
+        concentration_file=str(concentration_file),
+        brain_mask_file=str(mask_file),
+        aif_file=str(aif_file),
+        baseline_frames=2,
+        tsnr_threshold=0.0,
+    )
+
+
+@pytest.mark.parametrize("model", ["auto", "patlak"])
+def test_conflicting_time_inputs_stop_interface(
+    timing_interface: ComputeDCEMaps, tmp_path: Path, model: str,
+) -> None:
+    """Conflicting seconds/minutes inputs fail before automatic or fixed fitting."""
+    time_file = tmp_path / "time.txt"
+    np.savetxt(time_file, np.arange(4) * 2.0 / 60.0)
+    timing_interface.inputs.time_points_file = str(time_file)
+    timing_interface.inputs.volume_tr = 7.5
+    timing_interface.inputs.model = model
+
+    with pytest.raises(ValueError, match=r"volume_tr.*7\.5.*2.*seconds"):
+        timing_interface.run(cwd=str(tmp_path))
+
+
+@pytest.mark.parametrize("spacing", [2.0, 7.5])
+@pytest.mark.parametrize("timing_source", ["volume_tr", "time_file", "both"])
+def test_consistent_time_inputs_share_fitting_and_selection_interval(
+    timing_interface: ComputeDCEMaps, tmp_path: Path,
+    spacing: float, timing_source: str,
+) -> None:
+    """Each supported input route gives the same axis and model eligibility."""
+    axis = np.arange(4) * spacing / 60.0
+    if timing_source != "volume_tr":
+        time_file = tmp_path / "time.txt"
+        np.savetxt(time_file, axis)
+        timing_interface.inputs.time_points_file = str(time_file)
+    if timing_source != "time_file":
+        timing_interface.inputs.volume_tr = spacing
+
+    prepared = timing_interface._prepare_fit_inputs()
+
+    np.testing.assert_allclose(prepared.time_points, axis)
+    assert prepared.selection_tr_seconds == pytest.approx(spacing)
+    assert ("2cxm" in prepared.candidate_names) == (spacing <= 2.0)
+
+
+def test_rounded_time_file_controls_selection_interval(
+    timing_interface: ComputeDCEMaps, tmp_path: Path,
+) -> None:
+    """Accepted timing roundoff still leaves one interval for fitting and BAT."""
+    axis = np.round(np.arange(4) * 2.0 / 60.0, decimals=8)
+    time_file = tmp_path / "time.txt"
+    np.savetxt(time_file, axis)
+    timing_interface.inputs.time_points_file = str(time_file)
+    timing_interface.inputs.volume_tr = 2.0
+
+    prepared = timing_interface._prepare_fit_inputs()
+
+    np.testing.assert_array_equal(prepared.time_points, axis)
+    assert prepared.selection_tr_seconds == float((axis[1] - axis[0]) * 60.0)
+    assert "2cxm" in prepared.candidate_names
+
+
 def test_compute_tsnr_uses_baseline_sample_standard_deviation() -> None:
     """DCE baseline tSNR matches the DSC sample-SD and NaN conventions."""
     data = np.array(
