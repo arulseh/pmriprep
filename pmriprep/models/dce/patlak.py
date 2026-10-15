@@ -1,9 +1,8 @@
-"""Patlak pharmacokinetic model with graphical analysis.
+"""Patlak pharmacokinetic model for negligible contrast-agent backflux.
 
 Implements the Patlak model for DCE-MRI analysis.
-This model assumes irreversible or negligible backflux of contrast agent
-from the extravascular space and is appropriate for tissues with intact
-blood-brain barrier or when only early time points are used.
+This model assumes irreversible uptake or negligible backflux from the
+extravascular space over the fitted interval.
 
 The tissue concentration is given by:
     C_t(t) = vp × Cp(t) + Ktrans × ∫Cp(τ)dτ
@@ -14,10 +13,11 @@ where:
     Cp = plasma concentration (AIF)
     ∫Cp(τ)dτ = cumulative integral of AIF from 0 to t
 
-The graphical analysis form (Patlak plot):
+The graphical analysis form (Patlak plot) is:
     C_t(t) / Cp(t) = vp + Ktrans × [∫Cp(τ)dτ / Cp(t)]
 
-This linear relationship allows fast fitting using linear regression.
+The map interface fits the concentration-domain equation. Graphical fitting
+supplies data-driven starting values for Bayesian initialization.
 """
 
 from typing import Optional, Sequence
@@ -36,11 +36,10 @@ class PatlakModel(PKModel):
 
     The Patlak model describes unidirectional contrast agent transfer from
     the blood plasma to the extravascular space, assuming negligible backflux
-    (kep ≈ 0). This assumption is valid when:
-
-    - BBB is intact (kep << Ktrans)
-    - Only early post-injection time points are used
-    - ve is large relative to Ktrans × t_max
+    over the fitted interval. For a reversible compartment with efflux rate
+    kep, this approximation requires kep × T << 1, where T is the duration
+    of contrast exposure included in the fit. Restricting the interval can
+    reduce backflux effects; the model does not select that interval itself.
 
     Model equation::
 
@@ -57,27 +56,16 @@ class PatlakModel(PKModel):
             - slope = Ktrans
             - intercept = vp
 
-    Parameters
-    ----------
-        Ktrans: Volume transfer constant (min⁻¹), 0-3 min⁻¹
-            - Reflects unidirectional influx rate
-            - For intact BBB: typically < 0.05 min⁻¹
-            - For disrupted BBB: can exceed 0.1 min⁻¹
+    Notes
+    -----
+    The fitted parameters are Ktrans (volume transfer constant, bounded to
+    0–5 min⁻¹) and vp (plasma volume fraction, bounded to 0–1). The model does
+    not estimate ve or kep.
 
-        vp: Plasma volume fraction, 0-1
-            - Fraction of tissue that is blood plasma
-            - Typical brain values: 0.01-0.05
-            - Well-vascularized tumors: can exceed 0.1
-
-    Advantages:
-        - Fast fitting via linear regression (graphical method)
-        - Stable parameter estimates (only 2 parameters)
-        - Appropriate for intact BBB or early enhancement
-
-    Limitations:
-        - Assumes no backflux (kep = 0)
-        - Not valid when significant contrast egress occurs
-        - Should use only early time points if backflux is present
+    The scalar ``fit`` method uses bounded nonlinear least squares by default.
+    The batched map path solves the bounded linear concentration-domain
+    problem for NLLS and uses the same forward equation for Bayesian fitting.
+    Graphical regression supplies a data-driven initialization candidate.
     """
 
     @property
@@ -103,7 +91,7 @@ class PatlakModel(PKModel):
         return [
             ModelParameter(
                 name="Ktrans",
-                bounds=(0.0, 5.0),  # Standard Patlak bounds
+                bounds=(0.0, 5.0),
                 typical_range=(0.001, 0.1),
                 transform=TransformType.LOG,
                 description="Volume transfer constant (influx)",
@@ -112,9 +100,7 @@ class PatlakModel(PKModel):
             ModelParameter(
                 name="vp",
                 bounds=(VP_BOUNDS.min, VP_BOUNDS.max),
-                # Brain vp 0.005-0.04. Match Extended Tofts. Wider prior
-                # (0.01, 0.2) centered ~3× too high vs physiology and
-                # biased Patlak Ki via the Patlak-plot intercept.
+                # Use the same typical vp range as Extended Tofts.
                 typical_range=(0.001, 0.04),
                 transform=TransformType.LOG_LOGIT,
                 description="Plasma volume fraction",
@@ -130,8 +116,9 @@ class PatlakModel(PKModel):
     ) -> list[float]:
         """Estimate initial parameters from Patlak graphical analysis.
 
-        Uses the fast graphical (linear regression) method to provide
-        data-driven starting values for Bayesian MAP multi-start.
+        Supplies a candidate for Bayesian MAP multi-start and a fallback for
+        VI initialization when its scalar least-squares warm-start raises an
+        exception. The returned values are starting points, not final fits.
 
         Parameters
         ----------
@@ -237,7 +224,7 @@ class PatlakModel(PKModel):
             Tuple of (X, Y, valid_mask) where:
                 - X: normalized cumulative AIF (independent variable)
                 - Y: normalized tissue concentration (dependent variable)
-                - valid_mask: boolean mask for valid points (Cp > epsilon)
+                - valid_mask: Cp > max(0.05 * max(Cp), 1e-3 mM)
         """
         n_times = len(time_points)
         if n_times < 2:
@@ -280,11 +267,14 @@ class PatlakModel(PKModel):
     ) -> FitResult:
         """Fit the Patlak model using graphical (linear regression) analysis.
 
-        Uses the Patlak plot linearization:
+        Uses the Patlak plot linearization::
+
             C_t(t) / Cp(t) = vp + Ktrans × [∫Cp(τ)dτ / Cp(t)]
 
-        This is computationally fast and provides robust parameter estimates
-        when the no-backflux assumption is valid.
+        Solves bounded, unweighted least squares on the ratios after AIF
+        amplitude and start-frame filtering. This objective differs from
+        least squares on tissue concentrations. The Bayesian initializer
+        uses the resulting parameters as starting values.
 
         Parameters
         ----------
@@ -296,7 +286,8 @@ class PatlakModel(PKModel):
             Time points (minutes) corresponding to measurements.
         start_index : int, optional
             Optional index to start linear fit (skip early points).
-            If None, uses points after peak AIF.
+            If None, starts one frame after the AIF peak, capped at the
+            penultimate frame. Low-AIF points are excluded independently.
 
         Returns
         -------
@@ -313,10 +304,8 @@ class PatlakModel(PKModel):
             tissue_curve, aif, time_points
         )
 
-        # Determine start index for linear fit
-        # Typically start after AIF peak to ensure steady-state
+        # Start after the peak, capped to leave the final two frames available.
         if start_index is None:
-            # Find peak of AIF and start fitting after it
             peak_idx = int(np.argmax(aif))
             start_index = min(peak_idx + 1, n_obs - 2)
 

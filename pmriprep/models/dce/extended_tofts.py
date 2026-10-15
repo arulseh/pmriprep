@@ -55,7 +55,7 @@ class ExtendedToftsModel(PKModel):
 
     Parameters
     ----------
-        Ktrans: Volume transfer constant (min⁻¹), 0-3 min⁻¹
+        Ktrans: Volume transfer constant (min⁻¹), 0-5 min⁻¹
             - Reflects permeability × surface area per unit tissue volume
             - Typical tumor values: 0.01-0.5 min⁻¹
             - High-grade glioma: can exceed 0.5 min⁻¹

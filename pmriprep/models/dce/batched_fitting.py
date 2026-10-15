@@ -88,8 +88,9 @@ class FitResult:
     model_name : str
         Name of the fitted model.
     uncertainties : dict of str to numpy.ndarray
-        Parameter uncertainties, param_name → (N,).
-        NaN for non-converged voxels.
+        Local NLLS parameter standard errors, param_name → (N,), when
+        requested. Unavailable estimates are NaN, including non-converged
+        fits and Patlak parameters at an active bound.
     """
 
     params: dict[str, npt.NDArray[np.floating]]
@@ -284,7 +285,10 @@ def batched_patlak_lstsq(
 ) -> FitResult:
     """Fit Patlak using linear least squares within physical parameter bounds.
 
-    Uses np.linalg.lstsq (QR-based) for numerical stability.
+    Fits tissue concentration using the AIF and its cumulative trapezoidal
+    integral as regressors. Compares the unconstrained least-squares solution
+    with solutions on each parameter boundary to minimize weighted residuals
+    within the bounds.
 
     Parameters
     ----------

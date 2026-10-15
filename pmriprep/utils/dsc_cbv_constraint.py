@@ -602,19 +602,11 @@ def ncbv_to_vp_prior(
 ) -> npt.NDArray[np.floating]:
     """Convert NAWM-normalized CBV (nCBV) to a vp prior map.
 
-    Anchors NAWM vp at ``NAWM_VP_REFERENCE`` and scales linearly
-    with the per-voxel
-    nCBV ratio. Because nCBV cancels AIF partial-volume, recirculation,
-    and first-pass-truncation biases (all affect numerator and denominator
-    equally), this is the scientifically defensible conversion from a
-    DSC-derived relative volume measure to a DCE vp prior, avoiding the
-    unit ambiguities that preclude direct relative-CBV → vp conversion.
-
-    Hct closure constraint: this anchor uses the same large-vessel Hct =
-    0.42 convention as the AIF-path ``/(1-Hct)`` blood→plasma conversion
-    in ``dce_aif.py``. Mixing capillary-Hct (for the tissue vp anchor) and
-    large-vessel-Hct (for AIF conversion) across a single quantitative
-    chain violates plasma-fraction closure.
+    Scales each voxel's nCBV by the assumed NAWM plasma volume fraction:
+    ``vp = nawm_vp_reference * ncbv_data``. Normalization cancels common
+    multiplicative scaling of voxel and reference CBV. Tissue-dependent
+    recirculation or truncation effects need not cancel, so this conversion
+    supplies a prior anchor rather than an independently measured vp.
 
     Parameters
     ----------
@@ -626,7 +618,8 @@ def ncbv_to_vp_prior(
     Returns
     -------
     npt.NDArray[np.floating]
-        3D vp prior map (dimensionless), clipped to [0, VP_MAX_PHYSIOLOGICAL].
+        3D vp prior map (dimensionless). Negative or nonfinite nCBV inputs
+        and scaled vp values outside [0, VP_MAX_PHYSIOLOGICAL] become NaN.
 
     """
     ncbv_safe = np.where(
@@ -664,7 +657,7 @@ def determine_constraint_mode(
       user ``skip``). Low
       confidence produces SKIP; high/moderate produces SOFT.
     - **σ (prior width, SOFT only)** uses the fixed 0.60 release-policy width.
-      This is the widest qualified existing tier, not a subject-specific
+      This is a fixed relative standard deviation, not a subject-specific
       uncertainty estimate. Signed leakage metrics remain descriptive and do
       not enable, disable, or tune the Bayesian prior.
 
@@ -719,8 +712,7 @@ def determine_constraint_mode(
         )
 
     # The Bayesian prior requires a successfully estimated leakage reference.
-    # Missing and false values both fail closed; there is no legacy unsigned-K2
-    # compatibility path.
+    # Missing and false availability values both disable the prior.
     if _is_auto(user_override) and (k2_metrics or {}).get(
         "k2_reference_available"
     ) is not True:
@@ -758,9 +750,8 @@ def determine_constraint_mode(
     confidence = dsc_quality.confidence
 
     if confidence in ("high", "moderate"):
-        # K2 is descriptive rather than an uncertainty estimator. Use the
-        # widest qualified existing Gaussian-prior tier as a fixed release
-        # policy, not a per-subject calibration claim.
+        # Signed K2 is descriptive. The prior uses a fixed relative standard
+        # deviation rather than a subject-specific uncertainty estimate.
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=SIGMA_SOFT_DSC_PRIOR,

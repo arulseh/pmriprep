@@ -1337,11 +1337,8 @@ class _DCEFitSummary(NamedTuple):
     n_inference_fallback: int
 
 
-# Import-time pickle-safety assertion (S1 from code review round 3):
-# BatchedChunkArgs MUST be defined at module top-level for pickling across
-# ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
-# function) would break multiprocessing silently. Enforce by pinning the
-# qualified name.
+# BatchedChunkArgs must be defined at module scope so process-pool workers
+# can pickle it.
 assert BatchedChunkArgs.__module__ == __name__, (
     "BatchedChunkArgs must be defined at module top-level for pickle safety"
 )
@@ -1362,8 +1359,9 @@ def _compute_motion_weights(
     """Compute per-frame motion weights using phase-adaptive FD thresholds.
 
     Weight function: w_i = (threshold / FD_i)^2 for FD_i > threshold, else 1.0
-    Wash-in frames (bolus ± 4) use 2x stricter threshold.
-    Threshold = min(voxel_dims) * 0.25 (scales with acquisition resolution).
+    Frames from bolus arrival through four frames after arrival, inclusive,
+    use half the threshold. The base threshold is
+    max(min_voxel_dim * 0.25, 0.1) mm.
 
     Parameters
     ----------
@@ -1529,14 +1527,14 @@ def _fit_single_voxel(
             "failure_stage": "prefit",
         }
 
-    # Use baseline-subtracted, clipped concentration for fitting
+    # Preserve the signed concentration supplied by signal conversion.
     prepared_curve = prep.concentration
 
     try:
         result = None
         constrained = False
         prior_vp: Optional[float] = None
-        vp_prior = None  # Hoisted for BIC winner MAP refinement
+        vp_prior = None  # Shared with Bayesian refinement of the BIC winner.
         delta_bic = np.nan
 
         # Determine constraint state
@@ -2266,24 +2264,30 @@ class ComputeDCEMaps(BaseInterface):
     Two-Compartment Exchange models.
 
     Supported models:
+
     - tofts: Standard Tofts model (Ktrans, ve)
     - extended_tofts: Extended Tofts model (Ktrans, ve, vp)
-    - patlak: Patlak model with graphical analysis (Ktrans, vp)
+    - patlak: Patlak model fitted in the concentration domain (Ktrans, vp)
     - 2cxm: Two-Compartment Exchange Model (Fp, PS, ve, vp)
 
     Auto-selection logic (when model='auto'):
+
     - Patlak is always included
     - Extended Tofts is always included
-    - 2CXM included if the recorded TR is <= 2s, with numerical tolerance
-    - Winner selected by BIC (Standard Tofts excluded; vp=0 invalid in brain)
+    - 2CXM included if the volume interval is <= 2 s, with numerical tolerance
+    - Converged candidates compared by BIC; a more complex winner must improve
+      BIC by at least 6 over a converged Patlak fit
+    - Standard Tofts is available through explicit model selection
 
     Output maps:
+
     - Ktrans: Volume transfer constant (min⁻¹)
-    - ve: Extravascular extracellular volume fraction
+    - ve: Extravascular extracellular volume fraction (unavailable for Patlak)
     - vp: Plasma volume fraction (extended_tofts, patlak, 2cxm)
-    - kep: Efflux rate constant (Ktrans/ve, min⁻¹)
+    - kep: Efflux rate constant (Ktrans/ve, min⁻¹; unavailable for Patlak)
 
     For 2CXM additionally:
+
     - Fp: Plasma flow rate (mL/min/100mL)
     - PS: Permeability-surface area product (mL/min/100mL)
     - E: Extraction fraction (PS / (Fp + PS))
@@ -2303,8 +2307,8 @@ class ComputeDCEMaps(BaseInterface):
     time_points_file : str, optional
         Text file with time points in minutes; if not provided, uses volume TR.
     inference : str
-        Inference engine: nlls (default, scipy least_squares),
-        vi (variational Bayes), map (Laplace MAP), or mcmc (emcee).
+        Public inference engines: nlls (default, bounded least squares) or
+        vi (variational Bayes).
     mcmc_samples : int
         MCMC samples for Bayesian. Default: 500.
     tsnr_threshold : float
@@ -2331,15 +2335,22 @@ class ComputeDCEMaps(BaseInterface):
     out_e : str, optional
         Path to E map (2cxm only).
     out_ktrans_std : str, optional
-        Ktrans uncertainty (Bayesian only).
+        Ktrans standard error for NLLS or posterior standard deviation for
+        Bayesian fitting, where available. Not propagated for derived 2CXM
+        Ktrans.
     out_ve_std : str, optional
-        ve uncertainty (Bayesian only).
+        ve standard error or posterior standard deviation, where applicable.
     out_vp_std : str, optional
-        vp uncertainty (Bayesian only).
+        vp standard error or posterior standard deviation, where applicable.
+    out_fp_std : str, optional
+        Fp standard error or posterior standard deviation (2CXM only).
+    out_ps_std : str, optional
+        PS standard error or posterior standard deviation (2CXM only).
     out_r2 : str
         R² goodness-of-fit map.
     out_tsnr : str
-        tSNR map (if threshold > 0).
+        Baseline signal tSNR map; unavailable in-brain values are NaN when
+        raw DCE signal is not supplied.
     out_fitted_curves : str, optional
         Fitted curves (if save_fitted_curves=True).
     qc_metrics : dict
@@ -2352,18 +2363,20 @@ class ComputeDCEMaps(BaseInterface):
     >>> compute.inputs.aif_file = 'aif_curve.txt'
     >>> compute.inputs.brain_mask_file = 'brain_mask.nii.gz'
     >>> compute.inputs.model = 'extended_tofts'
-    >>> compute.inputs.inference = 'map'
+    >>> compute.inputs.inference = 'vi'
     >>> result = compute.run()  # doctest: +SKIP
 
     Notes
     -----
     Time units:
+
     - Time points are in minutes for model fitting
     - Ktrans and kep are in min⁻¹
     - Concentration is in mM (millimolar)
 
-    For Bayesian methods (map, mcmc), uncertainty maps are automatically
-    generated.
+    Uncertainty maps contain NLLS standard errors or Bayesian posterior
+    standard deviations, with parameter-specific AIF-confidence inflation.
+    Unavailable estimates remain NaN within the brain mask.
 
     The tSNR threshold can exclude noisy voxels from fitting. tSNR is
     computed as mean(baseline) / std(baseline). A typical threshold is 4.0.
@@ -2528,13 +2541,10 @@ class ComputeDCEMaps(BaseInterface):
     def _build_candidate_set(self, volume_tr: float) -> list[str]:
         """Build BIC candidate model set gated by temporal resolution.
 
-        Standard Tofts is excluded from auto selection because its vp=0
-        assumption is never valid in brain tissue. The intravascular
-        contribution vp×Cp(t) is absorbed into Ktrans, causing systematic
-        overestimation. Patlak (2 params,
-        has vp) and Extended Tofts (3 params, has vp) form a complete
-        nested hierarchy for brain DCE. Standard Tofts remains available
-        via explicit ``model=tofts`` selection.
+        Auto selection includes Patlak and Extended Tofts, both with an
+        explicit plasma-volume term. It also includes 2CXM when the volume
+        interval is at most 2 s, allowing numerical tolerance at the boundary.
+        Standard Tofts remains available via explicit ``model=tofts`` selection.
 
         Parameters
         ----------

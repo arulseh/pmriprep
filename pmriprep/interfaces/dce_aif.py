@@ -150,32 +150,48 @@ def _inflow_exclusion_mm(
 class ParkerAIFParams:
     """Parameters for Parker population AIF model.
 
-    The Parker model describes AIF as sum of two Gaussians plus exponential decay:
-        C_p(t) = sum_i(A_i * exp(-(t - T_i)^2 / (2*sigma_i^2))) + alpha * exp(-beta*t) / (1 + exp(-s*(t-tau)))
+    For nonnegative time in minutes, blood concentration is the sum of two
+    normalized Gaussians and a sigmoid-modulated exponential tail::
 
-    Where:
-        - A_1, A_2: Amplitudes of the two Gaussian components (mM)
-        - T_1, T_2: Center times (minutes)
-        - sigma_1, sigma_2: Widths of Gaussians (minutes)
-        - alpha, beta, s, tau: Parameters for exponential tail
+        G_i(t) = A_i / (sigma_i * sqrt(2*pi))
+                 * exp(-(t - T_i)^2 / (2*sigma_i^2))
+        C_b(t) = G_1(t) + G_2(t)
+                 + alpha * exp(-beta*t) / (1 + exp(-s*(t-tau)))
 
-    Reference values are for 0.1 mmol/kg dose of Gd contrast at 3T.
+    Parameters correspond to a reference dose of 0.1 mmol/kg.
+
+    Attributes
+    ----------
+    A1, A2 : float
+        Areas under the Gaussian components (mM·min).
+    T1, T2 : float
+        Gaussian center times (minutes).
+    sigma1, sigma2 : float
+        Gaussian standard deviations (minutes).
+    alpha : float
+        Tail amplitude (mM).
+    beta : float
+        Tail decay rate (min⁻¹).
+    s : float
+        Sigmoid steepness (min⁻¹).
+    tau : float
+        Sigmoid midpoint (minutes).
     """
 
     # First Gaussian (first pass)
-    A1: float = 0.809  # mM
+    A1: float = 0.809  # mM·min
     T1: float = 0.17046  # minutes
     sigma1: float = 0.0563  # minutes
 
     # Second Gaussian (recirculation)
-    A2: float = 0.330  # mM
+    A2: float = 0.330  # mM·min
     T2: float = 0.365  # minutes
     sigma2: float = 0.132  # minutes
 
     # Exponential tail
     alpha: float = 1.050  # mM
     beta: float = 0.1685  # min^-1
-    s: float = 38.078  # steepness
+    s: float = 38.078  # min^-1
     tau: float = 0.483  # minutes
 
 
@@ -183,17 +199,13 @@ def parker_population_aif(
     t: npt.NDArray[Any],
     dose_factor: float = 1.0,
 ) -> npt.NDArray[Any]:
-    """Generate Parker population AIF.
+    """Generate sampled Parker population blood concentrations.
 
-    Uses normalized Gaussian components where A1/A2 are areas (mM·min) under
-    the Gaussian curves. Dividing by (sigma * sqrt(2*pi)) converts these to
-    peak amplitudes, producing ~6 mM peak for full dose (0.1 mmol/kg), which
-    matches the population value (6.3 ± 1.5 mM).
-
-    Output is a true-mM concentration curve. Concentration is relaxivity-
-    independent (both tissue and detected AIF are ΔR1/r1_true = true mM), so NO
-    r1 scaling is applied — only the molar-dose factor. The agent's r1 governs
-    signal, which is already divided out upstream.
+    The Gaussian areas A1/A2 (mM·min) are divided by sigma * sqrt(2*pi) to
+    obtain peak amplitudes in mM. The curve is evaluated at the supplied
+    times without frame averaging, so the sampled peak depends on the time
+    grid. Only molar-dose scaling is applied; no relaxivity scaling or
+    blood-to-plasma conversion is performed here.
 
     Parameters
     ----------
@@ -206,7 +218,7 @@ def parker_population_aif(
     Returns
     -------
     np.ndarray
-        Concentration time course in mM.
+        Blood concentration time course in mM.
 
     """
     # Convert time to minutes
@@ -2672,7 +2684,7 @@ class AIFDetection(BaseInterface):
         return [], [], []
 
     # -----------------------------------------------------------------
-    # Candidate Scoring (replaces old _score_dce_candidate)
+    # Candidate Scoring
     # -----------------------------------------------------------------
 
     def _score_dce_candidate(

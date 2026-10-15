@@ -43,17 +43,17 @@ class ModelParameter(BaseModelParameter):
 class FitResult:
     """Result from fitting a PK model to DCE tissue concentration data.
 
-    Contains fitted parameter values, uncertainty estimates (for Bayesian
-    fitting), credible intervals, goodness-of-fit metrics, and model
-    selection criteria.
+    Contains fitted parameter values, available uncertainty estimates and
+    credible intervals, goodness-of-fit metrics, and model selection criteria.
 
     Attributes
     ----------
     parameters : dict
         Dictionary mapping parameter names to fitted values.
     uncertainties : dict
-        Dictionary mapping parameter names to standard deviations.
-        Only populated for MAP with Laplace approximation or MCMC.
+        Available NLLS parameter standard errors or Bayesian posterior
+        standard deviations, keyed by parameter name. VI additionally stores
+        a fitted residual-noise scale under ``noise_std``.
     credible_intervals : dict
         Dictionary mapping parameter names to (lower, upper)
         tuples representing 95% credible intervals. Only populated for
@@ -81,7 +81,7 @@ class FitResult:
     converged : bool
         Whether the fitting algorithm converged.
     fitting_method : str
-        Method used ('nlls', 'map', 'mcmc').
+        Method used ('nlls', 'vi', 'map', 'mcmc', or 'graphical').
     uncertainty_source : str
         Run-time source of uncertainty estimates, such as
         ``"laplace_hessian"``, ``"hessian_unavailable"``, or
@@ -93,7 +93,7 @@ class FitResult:
     # Fitted parameter values
     parameters: dict[str, float] = field(default_factory=dict)
 
-    # Uncertainty estimates (Bayesian)
+    # NLLS standard errors or Bayesian posterior standard deviations.
     uncertainties: dict[str, float] = field(default_factory=dict)
 
     # Credible intervals (Bayesian)
