@@ -64,3 +64,5 @@ def test_help_avoids_stale_or_overstated_method_claims() -> None:
     assert "not yet in the stable BIDS specification" not in help_text
     assert "Gadovist 5.0" not in help_text
     assert "Dynamic Contrast Enhanced" not in help_text
+    normalized = " ".join(help_text.split())
+    assert "bounded weighted least squares; linear for Patlak, nonlinear for other models" in normalized

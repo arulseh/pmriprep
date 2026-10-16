@@ -387,6 +387,51 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
     assert "B1+ transmit field correction" not in rejected_b1
 
 
+@pytest.mark.parametrize(
+    ("model", "candidates", "inference", "expected"),
+    [
+        ("patlak", [], "nlls", "bounded weighted linear least squares."),
+        ("extended_tofts", [], "nlls", "bounded weighted nonlinear least squares."),
+        ("auto", ["patlak"], "nlls", "bounded weighted linear least squares."),
+        ("auto", ["extended_tofts", "2cxm"], "nlls",
+         "bounded weighted nonlinear least squares."),
+        ("auto", ["patlak", "extended_tofts"], "nlls",
+         "bounded weighted linear least squares for Patlak and "
+         "bounded weighted nonlinear least squares for the other candidate models."),
+        ("auto", [], "nlls", "bounded weighted least squares."),
+        ("patlak", [], "vi", "nonlinear variational Bayesian inference [@chappell_2009]."),
+        ("patlak", [], "map", "maximum a posteriori inference "
+         "with Laplace approximation for uncertainty quantification [@woolrich_2009]."),
+    ],
+)
+def test_dce_methods_describe_the_model_specific_solver(
+    model: str, candidates: list[str], inference: str, expected: str,
+) -> None:
+    """Methods distinguish the actual linear and nonlinear inference routes."""
+    text = ru._build_dce_boilerplate({
+        "pk_modeling": {
+            "model": model, "candidate_models": candidates, "inference": inference,
+        },
+    })
+    sentence = next(s for s in text.split(". ") if s.startswith("DCE parameter estimation"))
+    assert sentence.rstrip(".") == f"DCE parameter estimation used {expected}".rstrip(".")
+
+
+@pytest.mark.parametrize("method", ["wlls", "nlls"])
+def test_dce_t1_methods_separate_signal_model_from_fitter(method: str) -> None:
+    """The model citation precedes the separate fitting and B1 description."""
+    text = ru._build_dce_boilerplate({
+        "t1_mapping": {"method": method, "b1_correction": "afi"},
+    })
+    model_sentence, fitting_text = text.split("[@deoni_2003]. ", 1)
+    assert "DESPOT1" in model_sentence
+    assert "weighted linear least squares" not in model_sentence
+    assert fitting_text.startswith("Fitting used weighted linear least squares")
+    fitting_sentence = fitting_text.split(". ", 1)[0]
+    assert ("nonlinear least squares in signal space" in fitting_sentence) == (method == "nlls")
+    assert "actual flip angle imaging method [@yarnykh_2007]" in fitting_sentence
+
+
 def test_render_citations_falls_back_to_markdown(tmp_path: Path, monkeypatch) -> None:
     """When pandoc fails, raw ``@key`` markdown is embedded so Methods is never lost.
 

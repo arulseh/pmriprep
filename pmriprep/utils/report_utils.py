@@ -57,11 +57,14 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
 _T1_METHOD_TEXT: dict[str, str] = {
     "wlls": (
         "DCE baseline T1 was estimated from variable flip angle images using "
-        "linearized DESPOT1 fitting [@deoni_2003]"
+        "the linearized DESPOT1 signal model [@deoni_2003]. "
+        "Fitting used weighted linear least squares"
     ),
     "nlls": (
         "DCE baseline T1 was estimated from variable flip angle images using "
-        "WLLS-initialized nonlinear least squares fitting [@deoni_2003]"
+        "the spoiled gradient-echo signal model underlying DESPOT1 "
+        "[@deoni_2003]. Fitting used weighted linear least squares "
+        "initialization followed by nonlinear least squares in signal space"
     ),
     "external": "a user-supplied T1 map",
     "assumed": "a uniform field-strength-dependent T1",
@@ -715,6 +718,19 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # Inference engine
     inference = pk_info.get("inference", "nlls")
     inference_text = _INFERENCE_TEXT.get(inference, "")
+    if inference == "nlls":
+        fitted_models = pk_info.get("candidate_models", []) if model == "auto" else [model]
+        if not fitted_models:
+            inference_text = "bounded weighted least squares."
+        elif "patlak" not in fitted_models:
+            inference_text = "bounded weighted nonlinear least squares."
+        elif len(fitted_models) == 1:
+            inference_text = "bounded weighted linear least squares."
+        else:
+            inference_text = (
+                "bounded weighted linear least squares for Patlak and "
+                "bounded weighted nonlinear least squares for the other candidate models."
+            )
     if inference_text:
         sentences.append(f"DCE parameter estimation used {inference_text}")
 

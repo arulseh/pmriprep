@@ -547,8 +547,9 @@ Examples:
         choices=["nlls", "vi", "map"],
         metavar="{nlls,vi}",
         default=None,
-        help="Inference engine for DCE: nlls (default, nonlinear least "
-        "squares), vi (variational Bayes).",
+        help="Inference engine for DCE: nlls (default, bounded weighted least "
+        "squares; linear for Patlak, nonlinear for other models), "
+        "vi (variational Bayes).",
     )
     dce_group.add_argument(
         "--dce-aif-method",
