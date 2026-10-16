@@ -1896,7 +1896,7 @@ def _resample_dsc_ncbv_to_dce(
         frac = n_neg / max(1, int(np.sum(finite)))
         _log.info(
             "Resampled nCBV had %d voxels (%.2f%%) with negative values "
-            "from trilinear ringing; clipped to 0.",
+            "among finite voxels; clipped to 0.",
             n_neg, 100.0 * frac,
         )
     clipped = np.where(finite, np.maximum(data, 0.0), data)

@@ -1984,10 +1984,10 @@ def init_dsc_preproc_wf(
     ])
 
     # -------------------------------------------------------------------
-    # Node 1b: HD-BET Brain Extraction (for registration quality)
-    # HD-BET extracts DSC brain so registration uses brain-extracted
-    # images on both sides. The final processing mask comes from
-    # transforming the T1w brain mask through the registration.
+    # Node 1b: Native DSC brain extraction for processing and registration
+    # The extraction node supplies the processing mask from the DSC image,
+    # including when an extraction fallback is used. The transformed T1w
+    # mask is used separately for registration QC.
     # -------------------------------------------------------------------
     from pmriprep.interfaces.dsc_brain import DSCBrainExtract
     from pmriprep.utils.device import resolve_device_uses_gpu

@@ -54,14 +54,14 @@ class TestMinMeaningfulEnhancement:
     """The AIF minimum-meaningful-enhancement floor is its own named role."""
 
     def test_value_pinned(self) -> None:
-        """Value is 0.01 mM (noise floor, ~13x below the smallest real bolus)."""
+        """The AIF amplitude guard is 0.01 mM."""
         assert MIN_MEANINGFUL_ENHANCEMENT_MM == 0.01
 
     def test_distinct_symbol_from_near_zero_guards(self) -> None:
         """It is a distinct constant from the near-zero concentration guards.
 
-        The numeric coincidence with MIN_SIGNAL_STD / the vacated EPSILON_T1 use
-        is incidental; these are different physical roles and different values.
+        AIF amplitude, voxel enhancement and numerical concentration guards
+        have separate roles and values.
         """
         assert "MIN_MEANINGFUL_ENHANCEMENT_MM" in dir(dce_constants)
         assert MIN_MEANINGFUL_ENHANCEMENT_MM != MIN_ENHANCEMENT_MM  # 0.01 vs 1e-8

@@ -2006,7 +2006,7 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 4b3: Transform MNI atlas cascade to DCE space (Gap 6) - optional
+    # Node 4b3: Transform MNI atlas cascade to DCE space - optional
     # ==========================================================================
     # Atlas-guided AIF search with tiered cascade (MCA_ACA → CoW → full)
     # for reduced tissue contamination compared to a single broad mask.
@@ -2295,7 +2295,7 @@ def init_dce_preproc_wf(
         (create_aif_mask, aif_detection, [
             ("out_file", "brain_mask_file"),
         ]),
-        # Connect atlas cascade for tiered AIF search (Gap 6)
+        # Connect atlas cascade for tiered AIF search
         (dce_atlas_transform_wf, aif_detection, [
             ("outputnode.out_files", "atlas_mask_files"),
         ]),

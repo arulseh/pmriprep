@@ -85,27 +85,19 @@ EPSILON_RATIO: Final[float] = 1e-10
 #: Below this, baseline is effectively noiseless — return max CNR
 EPSILON_CONCENTRATION: Final[float] = 1e-6
 
-#: Minimum signal standard deviation for voxel to be considered valid
-#: Value is in mM (concentration units), not raw signal units
-#: Normal tissue concentration std is 0.01-0.5 mM; 0.01 filters noise-only voxels
+#: Concentration standard-deviation cutoff (mM) for the voxel variation check.
 MIN_SIGNAL_STD: Final[float] = 0.01
 
 #: Minimum enhancement in mM for voxel to be considered valid
 MIN_ENHANCEMENT_MM: Final[float] = 1e-8
 
-#: Minimum meaningful contrast enhancement / bolus amplitude (mM). Below this a
-#: curve is noise, not a bolus; real tissue enhancement is >= ~0.1 mM (measured
-#: p50 0.13, p99 0.9 mM). Used to reject degenerate AIF/washout/FWHM curves. The
-#: 0.01 value coincides numerically with MIN_SIGNAL_STD and the (now-vacated)
-#: EPSILON_T1 use in the AIF code; that coincidence is incidental — the point of
-#: this constant is to de-conflate the roles.
+#: Bolus-amplitude floor (mM) for AIF scaling and shape calculations.
+#: Guards weak peaks and small washout denominators.
 MIN_MEANINGFUL_ENHANCEMENT_MM: Final[float] = 0.01
 
 
-#: Maximum number of slices for 2D per-slice erosion.
-#: 3D VIBE thin slabs (≤30 slices) have well-defined slice profile —
-#: through-plane partial volume is minimal, so only in-plane erosion
-#: is physically motivated. Whole-brain volumes (>30 slices) use 3D erosion.
+#: Maximum slice count for per-slice T1 edge erosion when CSF QC support is
+#: unavailable. Volumes above this count use 3D erosion.
 SLAB_EROSION_MAX_SLICES: Final[int] = 30
 
 #: Minimum flow rate to prevent division by zero in 2CXM eigenvalue calculations
@@ -292,28 +284,24 @@ class AIFThresholds(NamedTuple):
     baseline_frames: int        # Number of frames for baseline
 
 
-#: Strict AIF quality thresholds (standard clinical quality)
+#: Strict AIF acceptance thresholds.
 AIF_THRESHOLDS_STRICT: Final[AIFThresholds] = AIFThresholds(
     washout_min=0.20,           # At least 20% washout from peak
     fwhm_min_seconds=8.0,       # FWHM at least 8 seconds
     fwhm_max_seconds=25.0,      # FWHM at most 25 seconds
-    baseline_frames=5,          # 5 frames for stable baseline
+    baseline_frames=5,          # 5 baseline frames
 )
 
-#: Relaxed AIF quality thresholds (for difficult cases, e.g., GBM with preload)
+#: Relaxed AIF acceptance thresholds.
 AIF_THRESHOLDS_RELAXED: Final[AIFThresholds] = AIFThresholds(
-    washout_min=0.10,           # At least 10% washout (reduced for preload)
+    washout_min=0.10,           # At least 10% washout
     fwhm_min_seconds=5.0,       # FWHM at least 5 seconds
-    fwhm_max_seconds=35.0,      # FWHM at most 35 seconds (wider for preload)
-    baseline_frames=3,          # 3 frames for baseline (shorter for preload)
+    fwhm_max_seconds=35.0,      # FWHM at most 35 seconds
+    baseline_frames=3,          # 3 baseline frames
 )
 
-#: Permissive AIF quality thresholds (for very difficult cases)
-#: Note: ``washout_min`` matches the relaxed value (0.10) — physics review
-#: showed the CNR relaxation (5.0→2.0) is
-#: sufficient for the sensitivity gain on low-dose/preloaded protocols, and
-#: lowering washout below 0.10 admits tissue voxels without proportional
-#: arterial-detection benefit.
+#: Permissive AIF acceptance thresholds: the relaxed washout floor with
+#: a wider FWHM interval.
 AIF_THRESHOLDS_PERMISSIVE: Final[AIFThresholds] = AIFThresholds(
     washout_min=0.10,           # ≥10% washout (matches relaxed; tissue rejection)
     fwhm_min_seconds=3.0,       # FWHM at least 3 seconds
@@ -338,38 +326,26 @@ DCE_AIF_PEAK_RATIO_WARN_THRESHOLD: Final[float] = 1.5
 #: post-peak local maximum is counted as a "bump."
 DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.40
 
-#: Time (seconds) to skip immediately after the first-pass peak before
-#: searching for secondary maxima. Skips the physiologic recirculation
-#: hump (~25-35 s post-peak) plus its
-#: descending shoulder (~45-60 s). True late-tail anomalies (motion,
-#: inflow, venous mixing) live beyond 60 s post-peak.
+#: Time (seconds) to skip after the first-pass peak before counting tail maxima.
 DCE_AIF_TAIL_SHOULDER_SECONDS: Final[float] = 60.0
 
-#: Minimum time (seconds) between detected secondary peaks
-#: (~1/3 of the typical recirculation period; ``scipy.signal.find_peaks``
-#: ``distance`` parameter, converted to frames using AIF tr).
+#: Minimum secondary-peak separation (seconds), converted to frames for
+#: the ``scipy.signal.find_peaks`` distance parameter.
 DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
 
 # =============================================================================
 # DCE AIF acceptance gates (G1-G6 + G6 escape)
 # =============================================================================
 
-#: G1 — AIF amplitude-scaling floor. Scaling factor above this threshold
-#: triggers HARD reject; G6 escape allows up to G6_SCALE_CEILING.
-#: Plasma peak ~10 mM at 1.5T full-dose Gd-DTPA; scale_factor is
-#: dimensionless against the dose-corrected
-#: target so the threshold is field-strength and dose independent.
+#: G1 — maximum amplitude-floor scale factor before rejection, unless the
+#: G6 exception's shape and spatial-consensus conditions are met.
 DCE_AIF_GATE_SCALE_HARD: Final[float] = 3.0
 
-#: G6 (a) — escape ceiling for amplitude floor when shape gates pass.
-#: 8x corresponds to partial-volume fill fraction of about 0.12
-#: (0.8-1.5 mm caliber branch artery in 5 mm slab at oblique
-#: orientation). Blood AIF peaks of 1-12 mM at 1.5T; partial-volume
-#: dilution of 2-10x is typical.
+#: G6 (a) — upper scale-factor limit for the amplitude-floor exception.
 DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 8.0
 
-#: G6 graded uncertainty threshold — above this scale factor,
-#: AIF noise amplification warrants population-equivalent uncertainty.
+#: Scale-factor threshold selecting the larger uncertainty-inflation setting
+#: for a G6-admitted AIF.
 DCE_AIF_GATE_SCALE_G6_HIGH: Final[float] = 6.0
 
 #: Pass-2 fallback amplitude-scaling WARN thresholds (report-only; unlike the
@@ -382,48 +358,29 @@ DCE_AIF_SCALE_WARN_SUBSTANTIAL: Final[float] = 3.4
 #: UNRELIABLE: detected peak below ~1/5.2 (~19%) of the population target.
 DCE_AIF_SCALE_WARN_UNRELIABLE: Final[float] = 5.2
 
-#: G2 — late-tail/peak ratio HARD reject threshold.
-#: Persistent late-tail signal above this level indicates non-arterial mixing.
+#: G2 — late-tail/peak ratio rejection threshold.
 DCE_AIF_GATE_LATE_TAIL_RATIO_MAX: Final[float] = 0.35
 
-#: G3 — FWHM HARD reject threshold (seconds).
-#: Assumes power injection >=2 mL/s. For hand-injection cohorts,
-#: override to ~28 s. Distal-ACA
-#: broadens FWHM by 2-4 s relative to M1.
+#: G3 — FWHM rejection threshold (seconds).
 DCE_AIF_GATE_FWHM_MAX_SECONDS: Final[float] = 22.0
 
-#: G4 — multi-bump tail HARD reject threshold (count).
-#: Smooth Reynolds-regime arterial flow has exactly one secondary
-#: maximum (recirculation hump at ~30 s post-peak); more than 2 bumps
-#: in the late tail indicates motion, inflow, or venous mixing.
+#: G4 — maximum accepted count of late-tail secondary peaks.
 DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
 
-#: G5' — ratio_30 thresholds (post-peak frame at max(4, ceil(30/TR))).
-#: The hard threshold allows distal-ACA broadening, Hct correction, and
-#: recirculation pickup. The warning tier identifies borderline cases.
+#: G5' — rejection and warning thresholds for the post-peak ratio_30 measure.
 DCE_AIF_GATE_RATIO30_HARD: Final[float] = 0.50
 DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
 
-#: G6 (g) — minimum voxel count and spatial consensus for amplitude-
-#: floor escape. Bilateral n>=5 OR unilateral n>=10 with >=2 distinct
-#: z-slabs provides independent-spatial-consensus rule-out of
-#: localized artifact. n>=10 is the empirical reliability floor for
-#: individual AIFs.
+#: G6 (g) — minimum candidate count for the amplitude-floor exception.
+#: Bilateral support uses the first count; unilateral support requires the
+#: second count and the minimum number of distinct z-slabs.
 DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL: Final[int] = 5
 DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL: Final[int] = 10
 DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL: Final[int] = 2
 
-#: G6-admitted reduced-confidence AIF: per-parameter PK posterior sigma
-#: multiplier reflecting Tofts/2CXM AIF-peak sensitivity hierarchy.
-#: ve is uninflated because ve fits late-
-#: phase washout slope, decoupled from AIF peak amplitude. Workflow
-#: base inflation=2.0 propagates per-parameter via this map; base=1.0
-#: (standard AIF) yields all 1.0x regardless of map.
-#:
-#: kep is omitted because it is not a directly-fitted parameter; it is
-#: derived downstream as Ktrans/ve and inherits Ktrans's inflation
-#: through that derivation. Add explicit kep_std propagation here only
-#: if the pipeline begins emitting a separate kep uncertainty map.
+#: Per-parameter uncertainty multipliers for base inflation=2.0. For larger
+#: base inflation, the excess above 1.0 is scaled proportionally; base<=1.0
+#: leaves all uncertainties unchanged. This policy leaves ve uninflated.
 DCE_AIF_G6_SIGMA_INFLATION: Final[dict[str, float]] = {
     "Ktrans": 2.0,
     "vp": 1.5,
@@ -555,10 +512,8 @@ B1_MAX_STD: Final[float] = 0.3
 class B1Thresholds(NamedTuple):
     """Field-strength-dependent B1+ thresholds.
 
-    AFI B1+ inhomogeneity increases with field strength due to shorter RF
-    wavelength relative to head size.  At 7 T dielectric focusing can push
-    B1+ to 1.8 or higher in the brain centre while temporal lobes may drop
-    to 0.3. Thresholds widen accordingly.
+    Processing bounds for AFI, VFA T1 mapping and DCE conversion are stored
+    separately from the QC thresholds for each nominal field strength.
 
     Attributes
     ----------
@@ -647,8 +602,8 @@ def get_b1_thresholds(field_strength: float) -> B1Thresholds:
     """Get B1+ thresholds for the nearest known field strength.
 
     Uses the same nearest-field-strength lookup pattern as
-    :func:`get_tissue_t1_ranges`.  No interpolation — thresholds are
-    inherently discrete (literature-validated per field strength).
+    :func:`get_tissue_t1_ranges`. Selects a catalogued threshold set without
+    interpolation; values outside the table use the nearest endpoint.
 
     Parameters
     ----------
@@ -767,10 +722,8 @@ SSS_EXCLUSION_MM: Final[float] = 15.0
 #: RAS+ reorientation upstream, so z=0 is always the inferior partition.
 INFLOW_EXCLUSION_MM_INFERIOR_BASE: Final[float] = 20.0
 
-#: Cap on inflow exclusion as a fraction of total slab depth.
-#: Guarantees ≥65% of slab survives bilaterally for AIF search even on
-#: thick-slab acquisitions (e.g. 8 slices × 8mm = 64mm slab where a
-#: naive 4×slice = 32mm exclusion would zero half the slab).
+#: Cap on inferior inflow exclusion as a fraction of total slab depth.
+#: Other search-mask exclusions are applied separately.
 INFLOW_EXCLUSION_MAX_SLAB_FRACTION: Final[float] = 0.35
 
 #: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
@@ -779,11 +732,6 @@ LESION_EXCLUSION_FLOOR_MM: Final[float] = 10.0
 
 #: Recommended minimum distance (mm) from lesion for AIF candidate voxels.
 LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
-
-#: Parker AIF reference relaxivity (s^-1 mM^-1) for Gd-DTPA at 1.5T.
-#: Used for relaxivity correction when contrast agent differs from original model.
-PARKER_R1_REFERENCE: Final[float] = 4.1
-
 
 # =============================================================================
 # AIF Spatial Exclusion Filters
@@ -862,15 +810,13 @@ AIF_FWHM_NOISE_SCORE: Final[float] = 0.1
 # =============================================================================
 # TR-Adaptive AIF Detection
 # =============================================================================
-#: Constants and helpers for TR-adaptive AIF detection.
-#: At low temporal resolution (TR > 5s), frame-based thresholds become
-#: unphysiological (e.g., 2 frames at TR=8s = 16s, far beyond arterial-tissue
-#: transit time of 3-5s). These helpers adapt thresholds to work at any TR.
+#: Constants and helpers for adapting AIF timing thresholds to the interval
+#: between dynamic volumes.
 
-#: Target arterial-tissue transit time in seconds (physiology-based).
+#: Target timing margin in seconds, rounded to at least one frame.
 AIF_TIMING_TARGET_SECONDS: Final[float] = 4.0
 
-#: TR threshold above which timing-based discrimination is unreliable.
+#: Temporal-resolution cutoff (seconds) for the low-resolution policy.
 AIF_LOW_TR_THRESHOLD: Final[float] = 5.0
 
 
@@ -878,27 +824,19 @@ AIF_LOW_TR_THRESHOLD: Final[float] = 5.0
 # DCE Signal Quality QC Thresholds
 # =============================================================================
 
-#: Minimum peak enhancement for reliable DCE quantification (%)
-#: 5% ≈ 2σ above noise floor; failed injection shows <3%
-#: Subtle WM BBB enhancement occurs in normal aging
+#: Lower peak-enhancement cutoff (%) for signal-quality QC.
 QC_PEAK_ENHANCEMENT_MIN: Final[float] = 5.0
 
-#: Peak enhancement below this triggers REVIEW (%)
-#: Half-dose standard Gd-DTPA shows 10-20% in WM
+#: Peak-enhancement warning threshold (%).
 QC_PEAK_ENHANCEMENT_WARN: Final[float] = 20.0
 
-#: Minimum baseline tSNR for reliable PK fitting
-#: Below tSNR ~3, Ktrans precision degrades severely (CV >50%)
+#: Lower baseline-tSNR cutoff for signal-quality QC.
 QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
 
-#: Baseline tSNR below this triggers REVIEW
-#: Below tSNR ~8, Ktrans precision is reduced.
+#: Baseline-tSNR warning threshold.
 QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
 
-#: B1+ mean acceptable range for QC gating
-#: Values outside this range trigger REVIEW (not EXCLUDE — B1 bias is correctable)
-#: Uses 1.5T extreme thresholds as conservative bound across field strengths
-#: Ref: B1_THRESHOLDS_BY_FIELD extreme_low/extreme_high at 1.5T
+#: Mean B1+ warning bounds for report QC, shared across field strengths.
 QC_B1_MEAN_LOW: Final[float] = 0.7
 QC_B1_MEAN_HIGH: Final[float] = 1.3
 
@@ -915,53 +853,31 @@ AIF_IDEAL_FWHM_SECONDS: Final[float] = 12.0
 #: averaged-AIF fidelity scorer.
 AIF_FWHM_BAND_HALFWIDTH_SECONDS: Final[float] = 8.0
 
-#: Averaged-AIF fidelity scorer — physiologic first-pass arterial washout fraction
-#: (peak vs late-tail-mean), the two-sided band center. The true DCE AIF sits ~0.78
-#: A tail-collapsed /
-#: partial-volume AIF over-washes (>~0.90) and is penalized; a tissue-diluted AIF
-#: under-washes (<~0.6) and is penalized. NOT the thin-tailed pure-Parker-template
-#: value (~0.90), which would reward collapse.
+#: Center of the averaged-AIF washout scoring band (peak versus late-tail mean).
 AIF_WASHOUT_PHYSIOLOGIC_CENTER: Final[float] = 0.78
 
-#: Lower half-width of the washout acceptance band (strict). An under-washed AIF
-#: (washout < center) is the strong contamination signal — persistent enhancement
-#: from tissue / venous / partial-volume-with-parenchyma — so penalize it steeply.
+#: Lower half-width of the washout scoring band.
 AIF_WASHOUT_BAND_HALFWIDTH: Final[float] = 0.13
 
-#: Upper half-width of the washout band (lenient). An over-washed AIF (washout >
-#: center) is mostly the benign consequence of a long acquisition: the fixed
-#: last-frames tail is sampled deeper into renal clearance, so a genuine sharp
-#: artery reads ~0.85-0.91 on an 8-10 min scan. Tail-collapse contamination is not
-#: distinguished by washout magnitude (peak/FWHM/upslope/multi-bump catch it), so
-#: the upper penalty is soft — this keeps long-acquisition arteries above the
-#: candidate accept gate (generalizability across 2-8+ min DCE).
+#: Upper half-width of the washout scoring band.
 AIF_WASHOUT_BAND_HALFWIDTH_UPPER: Final[float] = 0.20
 
-#: Averaged-AIF fidelity scorer — physiologic late-tail persistence (late-tail-mean
-#: / peak). Recirculation plus renal clearance sustain a plateau ~0.2-0.3 of peak;
-#: below the floor is a collapsed (over-washed / partial-volume-diluted) tail.
+#: Target and lower bound for the late-tail-mean/peak persistence score.
 AIF_TAIL_PERSISTENCE_TARGET: Final[float] = 0.25
 AIF_TAIL_PERSISTENCE_FLOOR: Final[float] = 0.15
 
-#: Averaged-AIF fidelity scorer — CNR reward saturates here (peak-SNR beyond ~15-20
-#: adds no reliability), so a multi-voxel average cannot buy back a degraded tail
-#: through CNR alone.
+#: CNR value at which the averaged-AIF scorer's CNR contribution saturates.
 AIF_CNR_SATURATION: Final[float] = 17.5
 
-# NOTE: the averaged-AIF fidelity composite (interfaces/dce_aif.py) is a QC /
-# regression-sentinel scalar, NOT a runtime accept/reject gate. Real detected AIFs
-# cluster low (they systematically under-recover the real-MCA late tail, which is
-# second-order for Ktrans), so no threshold on this scalar cleanly separates a good
-# detection from gross contamination. Contamination is gated on the specific
-# signatures (DCE_AIF_GATE_LATE_TAIL_RATIO_MAX, washout floors, peak band, FWHM,
-# causality); no fidelity threshold constant is defined by design.
+# The averaged-AIF fidelity composite is diagnostic. Runtime acceptance uses
+# the individual shape, amplitude and timing gates.
 
 
 def compute_timing_margin_frames(tr: float) -> int:
     """Compute TR-adaptive timing margin in frames.
 
     At TR=2s, returns 2 frames (4s / 2s). At TR>=4s, returns 1 frame.
-    Ensures the timing margin is physiologically meaningful at any TR.
+    Nonpositive intervals return the one-frame minimum.
 
     Parameters
     ----------
@@ -981,12 +897,10 @@ def compute_timing_margin_frames(tr: float) -> int:
 def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
     """Compute the max-FWHM ("narrow bolus") threshold in frames.
 
-    The ceiling is intrinsically a TIME (the maximum physiological arterial
-    FWHM), so it is expressed in seconds and converted to frames at the given
-    TR. A small integer floor keeps it numerically usable at very coarse TR; it
-    must never pull the effective seconds-ceiling below real arterial FWHM.
+    Converts the configured seconds ceiling to frames, with a two-frame
+    minimum. Nonpositive intervals return 5 strict or 8 relaxed frames.
     - At TR=2s: 25/2 = 12.5 frames (= 25 s)
-    - At TR=0.5s: 25/0.5 = 50 frames (= 25 s) — sub-second TR no longer collapses
+    - At TR=0.5s: 25/0.5 = 50 frames (= 25 s)
     - At TR=15s: max(2, 25/15=1.7) = 2 frames (resolution floor)
 
     Parameters
@@ -1009,10 +923,9 @@ def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
 
 
 def is_low_temporal_resolution(tr: float) -> bool:
-    """Check if TR is too high for reliable timing-based AIF discrimination.
+    """Check whether the volume interval exceeds the low-resolution cutoff.
 
-    At TR > 5s, the 2-frame timing margin exceeds physiological
-    arterial-tissue transit time, making timing criteria unreliable.
+    The low-resolution policy applies above ``AIF_LOW_TR_THRESHOLD``.
 
     Parameters
     ----------
@@ -1033,31 +946,15 @@ def is_low_temporal_resolution(tr: float) -> bool:
 # Governs how DSC-derived CBV maps into DCE vp priors via NAWM
 # normalization instead of absolute-CBV conversion.
 
-#: Maximum physiological vp value. Absolute upper bound on plasma volume
-#: fraction in any brain voxel; a vp > 0.2 indicates pure-vessel or
-#: catastrophic fit failure, not tissue. Used by ``ncbv_to_vp_prior`` and
-#: ``cbv_to_vp`` to NaN-out out-of-range entries before they enter DCE
-#: fitting. Centralized here alongside the other vp gates so all vp
-#: thresholds live in one module.
+#: Upper supported vp for DSC-derived prior inputs. Larger scaled values
+#: are withheld by ``ncbv_to_vp_prior``.
 VP_MAX_PHYSIOLOGICAL: Final[float] = 0.2
 
-#: Physiological plasma volume fraction assumed for contralateral NAWM.
-#: Used as the anchor for converting nCBV → vp prior in the DSC→DCE
-#: cross-modality constraint.
-#:
-#: Hct closure constraint: this anchor uses the same large-vessel Hct =
-#: 0.42 convention as the AIF-path /(1-Hct) conversion at ``dce_aif.py``.
-#: Mixing capillary-Hct and large-vessel-Hct across the AIF→tissue chain
-#: violates plasma-fraction closure.
+#: Assumed NAWM plasma-volume fraction used to scale nCBV into the DCE vp prior.
 NAWM_VP_REFERENCE: Final[float] = 0.010
 
-#: Physiological plausibility range for DCE vp prior (plasma volume fraction).
-#: With vp = NAWM_VP_REFERENCE × nCBV and physiological whole-brain nCBV
-#: medians ~0.4–3.0, vp_median is algebraically pinned near 0.005–0.03.
-#: A scale error in nCBV or a corrupted NAWM mask breaches this range.
-#: WM vp ≈ 0.005–0.015, GM ≈ 0.015–0.025, tumor ≈ 0.02–0.05.
-#: Factor-of-3 band around the NAWM anchor preserves the
-#: gross-miscalibration semantics of the gate.
+#: Accepted median range for the DSC-derived vp prior. A median outside this
+#: range disables the prior through the cross-modality quality gate.
 VP_MEDIAN_MIN: Final[float] = 0.005
 VP_MEDIAN_MAX: Final[float] = 0.03
 
