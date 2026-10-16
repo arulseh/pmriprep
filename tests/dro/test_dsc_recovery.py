@@ -326,9 +326,6 @@ DSC_PARAMS = [
 # pinning the numerical behavior of this deconvolution on the broad (default
 # alpha=2.5/beta=3.0, FWHM ~10 s) DRO AIF. Zero-noise rows are the per-tissue
 # max (deterministic, n=1/tissue).
-# They are NOT physiology-derived tolerances. Physiological realism (arterial
-# AIF, delay, dispersion) and literature comparison live in the published DRO
-# generator and the OI threshold sweep, not in these method-recovery guards.
 SSVD_NOISE_LEVELS = [
     pytest.param(0.0, 0.001, 0.04, 0.11, id="zero"),
     pytest.param(0.02, 0.02, 0.33, 1.15, id="low"),
@@ -434,9 +431,8 @@ class TestOSVDRecovery:
         _assert_param_recovery(result.mtt, periodic_mtt, 0.10, param_name="Residue MTT")
 
     # MC-derived regression guards (mean + 3*sigma, N=100) on the broad-AIF
-    # operating point, not physiology-derived tolerances; the wide MTT bands
-    # absorb the intrinsic oSVD MTT inflation at clinical noise. Realism and
-    # literature comparison live in the published DRO and the OI sweep.
+    # operating point; the wide MTT bands
+    # characterize recovery on this synthetic input and noise construction.
     OSVD_NOISY_LEVELS = [
         pytest.param(0.02, 0.005, 0.50, 1.45, id="low"),
         pytest.param(0.05, 0.01, 0.65, 2.25, id="medium"),
@@ -595,14 +591,10 @@ class TestTikhonovRecovery:
         )
 
     def test_modified_penalty_beats_l1_on_dispersed(self) -> None:
-        """The production modified penalty recovers CBF better than pure L₁.
+        """Compare modified and pure first-difference penalties on dispersed fixtures.
 
-        This is the assertion that justifies the production operator: on the
-        dispersed regime the modified penalty frees the rising edge from the
-        derivative penalty and no longer shrinks a t=0 peak, so CBF = max(R) is
-        recovered closer to truth than with the pure first-difference L₁. The
-        comparison can fail; if it does, the modified operator does not belong
-        in production.
+        The modified operator penalizes leading-sample magnitudes and later
+        differences. Count CBF-error wins over the four sampled tissue cases.
         """
         aif, time_sec = generate_dsc_aif_dro(
             n_timepoints=60, dt_sec=1.5, baseline_frames=10, peak_delta_r2=40.0,

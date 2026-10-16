@@ -26,7 +26,7 @@ from pmriprep.models.dce import (
 )
 from pmriprep.models.dce.base import EPSILON_RSS
 
-# New complexity-ordered label encoding
+# Complexity-ordered label encoding
 _MODEL_SELECTION_CODES: dict[str, int] = {
     "patlak": 1,
     "tofts": 2,
@@ -406,7 +406,7 @@ class TestDeltaBIC:
         assert np.isnan(delta_bic)
 
     def test_delta_bic_evidence_thresholds(self) -> None:
-        """Delta-BIC thresholds per Kass & Raftery 1995."""
+        """Check the example delta-BIC evidence categories."""
         # >2 = positive, >6 = strong, >10 = very strong
         assert 2.5 > 2, "Positive evidence"
         assert 7.0 > 6, "Strong evidence"

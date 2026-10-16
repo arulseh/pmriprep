@@ -1,23 +1,10 @@
-"""Ground-truth-anchored DCE AIF fidelity gate (regression sentinel).
+"""Test DCE AIF score ordering on synthetic curve perturbations.
 
-This is the can-fail test that ends the "audit-20x" cycle for the DCE AIF
-quality scorer. It pins two properties that a prior version of the code
-violated (the monotonic per-candidate washout term ``min(1, washout/0.7)``
-*rewarded* a collapsed tail, so a partial-volume-diluted AIF out-scored a
-faithful one):
-
-1. The per-candidate scorer prefers a physiologic-washout arterial curve over
-   an over-washed (tail-collapsed) one — the exact inversion that let the
-   diluting voxels into the pooled AIF in a synthetic validation case (AIF
-   3->10 voxels, Ktrans overestimate +66% -> +111%).
-2. The averaged-AIF fidelity scalar rank-orders the true AIF above both
-   contamination modes: tail-collapse (V1) and genuine tissue partial-volume
-   (V2), which move the tail in *opposite* directions.
-
-The fidelity scalar is a QC / regression-sentinel number, NOT a runtime
-accept/reject gate (real detected AIFs cluster low because they systematically
-under-recover the real-MCA late tail, a second-order effect for Ktrans), so the
-assertions are rank-orderings, not absolute thresholds.
+The reference is a sampled Parker curve with an imposed tail plateau.
+Compare it with a reduced tail and a mixture with a synthetic tissue curve.
+These fixtures check score ordering; they are not measured arterial truth
+or independent validation of the scoring thresholds. The pooled fidelity
+score is diagnostic, while candidate scores participate in selection.
 """
 
 from __future__ import annotations
@@ -31,18 +18,12 @@ from pmriprep.interfaces.dce_aif import (
     score_averaged_aif_fidelity,
 )
 
-TR = 4.8  # OSIPI DCE synthetic temporal resolution (Shalom 2024)
+TR = 4.8  # Synthetic volume interval in seconds
 BASELINE_FRAMES = 5
 N_FRAMES = 65
 
 def _clean_arterial() -> np.ndarray:
-    """Build a physiologic arterial AIF: Parker first pass + a recirculation tail.
-
-    Pure ``parker_population_aif`` is thin-tailed (washout ~0.92); a real MCA AIF
-    (the OSIPI DRO ground truth) carries a heavier recirculation tail (washout
-    ~0.78). Floor the post-peak curve at ~0.22x peak so the reference reflects a
-    faithful artery, not the idealized thin Parker form.
-    """
+    """Build a Parker-shaped reference with a post-peak floor of 22% of its peak."""
     curve = np.zeros(N_FRAMES)
     t = np.arange(N_FRAMES - BASELINE_FRAMES) * TR
     bolus = parker_population_aif(t, 1.0)
@@ -54,11 +35,7 @@ def _clean_arterial() -> np.ndarray:
 
 
 def _tail_collapse(curve: np.ndarray) -> np.ndarray:
-    """V1: same first-pass peak, tail attenuated toward baseline (over-washout).
-
-    Reproduces the e745c05 3->10-voxel signature: peak preserved, washout up,
-    normalized tail down.
-    """
+    """Preserve the peak while progressively attenuating the post-peak tail."""
     v1 = curve.copy()
     peak_idx = int(np.argmax(curve))
     v1[peak_idx:] = curve[peak_idx:] * np.linspace(1.0, 0.35, N_FRAMES - peak_idx)
@@ -66,11 +43,7 @@ def _tail_collapse(curve: np.ndarray) -> np.ndarray:
 
 
 def _partial_volume(curve: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-    """V2: genuine tissue partial-volume, alpha*arterial + (1-alpha)*tissue.
-
-    A tissue mixture *lowers* the peak and *raises* the tail (tissue does not
-    wash out) — the opposite direction to V1. The gate must catch both.
-    """
+    """Mix the reference AIF with a slowly rising synthetic tissue curve."""
     tissue = np.zeros(N_FRAMES)
     ramp = np.linspace(0.0, 0.9, N_FRAMES - BASELINE_FRAMES) ** 0.6
     tissue[BASELINE_FRAMES:] = ramp * 3.0
@@ -78,15 +51,11 @@ def _partial_volume(curve: np.ndarray, alpha: float = 0.5) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# 1. Per-candidate scorer: the ranking inversion is fixed (can-fail vs old code)
+# Per-candidate washout score ordering
 # ---------------------------------------------------------------------------
 
 class TestPerCandidateWashoutRanking:
-    """The two-sided washout term must prefer physiologic over over-washed.
-
-    Under the old monotonic ``min(1, washout/0.7)`` the over-washed curve scored
-    >= the physiologic one; this asserts the corrected ordering.
-    """
+    """Compare candidate scores for the reference and attenuated-tail fixtures."""
 
     def test_physiologic_beats_over_washed(self) -> None:
         """Asymmetric washout: a physiologic candidate out-scores an over-washed one."""
@@ -97,7 +66,7 @@ class TestPerCandidateWashoutRanking:
         s_ow, m_ow = det._score_dce_candidate(over_washed, TR, BASELINE_FRAMES, "relaxed")
         # The over-washed candidate has the HIGHER washout fraction...
         assert m_ow["washout"] > m_clean["washout"]
-        # ...but must NOT be rewarded for it (the old bug did exactly that).
+        # A larger washout fraction does not imply a larger score.
         assert s_clean > s_ow, (
             f"over-washed candidate out-scored physiologic: {s_ow:.3f} >= {s_clean:.3f}"
         )
@@ -105,8 +74,7 @@ class TestPerCandidateWashoutRanking:
     def test_over_wash_penalized_leniently(self) -> None:
         """Over-washing is penalized less than under-washing.
 
-        The asymmetric band is lenient above centre (benign long-scan drift) and
-        strict below (contamination).
+        The configured upper half-width exceeds the lower half-width.
         """
         from pmriprep.interfaces.dce_aif import _asymmetric_band_score
         from pmriprep.utils.dce_constants import (

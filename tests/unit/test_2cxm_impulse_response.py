@@ -1,11 +1,7 @@
-"""Can-fail test: the 2CXM bi-exponential impulse response must match a
-direct ODE integration of the two-compartment exchange system.
+"""Compare the 2CXM impulse response with direct ODE integration.
 
-This guards the residue amplitude coefficients (A1, A2). A prior bug omitted
-the ``k_pe = PS/vp`` term, which preserves I(0) = Fp but collapses the slow
-(extravascular) amplitude toward zero and breaks the Tofts limit; that bug
-leaves this test failing by 1-2 orders of magnitude while a correct
-implementation matches the ODE to ~1e-8.
+Checks both exponential amplitude coefficients, the vascular response at
+time zero and limiting exchange behavior against independent ODE solutions.
 """
 from __future__ import annotations
 

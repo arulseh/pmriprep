@@ -99,7 +99,7 @@ def get_preload_thresholds(
 ) -> PreloadThresholds:
     """Get preload classification thresholds for field strength and agent.
 
-    Thresholds are in ΔR2* units (s⁻¹) and were calibrated for standard
+    Thresholds are in ΔR2* units (s⁻¹), with reference settings for standard
     Gd-DOTA-class agents (``agent_standard_dose = 0.1 mmol Gd/kg``). Agents
     with different standard doses (e.g., gadopiclenol/Vueway at 0.05,
     gadoquatrane at 0.04) produce systematically different ΔR2* per
@@ -150,7 +150,7 @@ def get_preload_thresholds(
 
 
 #: Administered-dose bin edges for user-specified ``preload`` float.
-#: Clinically calibrated:
+#: Dose-class policy:
 #:   quarter-dose preload (0.25) → HALF_DOSE class
 #:   half-dose preload (0.5)      → HALF_DOSE class
 #:   full-dose preload (1.0)      → SIGNIFICANT class
@@ -431,21 +431,17 @@ def detect_preload_from_signal(
 
     # Anatomical CV is retained as a separate QC detail and measures
     # tissue heterogeneity (WM/GM/CSF T2* spread), NOT detection uncertainty.
-    # Renamed ("signal_cv" → "tissue_heterogeneity_cv") so consumers don't
-    # confuse it with measurement confidence.
     tissue_heterogeneity_cv = (
         float(np.std(baseline_values, ddof=1) / mean_baseline)
         if mean_baseline > 0 and baseline_values.size >= 2
         else float("inf")
     )
 
-    # Confidence = P(ΔR2* truly lies in the reported classification bin).
+    # Approximate bin probability under independent Gaussian voxel sampling.
     # Error propagation: ΔR2* = -ln(S/S_ref) / TE, so
     #   d(ΔR2*)/dS = -1 / (TE × S)  → SEM_ΔR2* ≈ SEM_S / (TE × mean_baseline)
-    # S_ref (p95 of same baseline) treated as fixed — simplification with
-    # <10% confidence bias for typical brain masks. Assumes voxels are
-    # independent Gaussian samples; spatial correlation inflates reported
-    # confidence by a small amount at typical SNR (DSC baseline >30).
+    # S_ref (p95 of the same baseline) is treated as fixed. Reference
+    # uncertainty and spatial correlation are not propagated into this score.
     n_vox = int(baseline_values.size)
     if mean_baseline <= 0 or n_vox < 2:
         confidence = 0.0
@@ -866,8 +862,7 @@ def _select_bsw_reference(
     """
     # Reference support floors target a p95 whole-brain median-K2 perturbation
     # below 0.001 s^-1. The warning level additionally targets a p95 relative
-    # reference-curve error of approximately 5-6%. These are stability
-    # safeguards, not physiological thresholds.
+    # reference-curve error of approximately 5-6%.
     _MIN_VOXELS = 250
     _WARN_VOXELS = 1000
 

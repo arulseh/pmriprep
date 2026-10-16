@@ -225,14 +225,9 @@ class TestToftsRecovery:
 
 
 class TestVIPriorShrinkage:
-    """Verify that VI exhibits expected prior shrinkage direction.
+    """Check the direction and size of VI prior effects in selected fixtures.
 
-    When the true parameter is far from the prior mean, the VI posterior
-    mean should be pulled toward the prior. This is a fundamental property
-    of Bayesian estimation (Lindley & Smith, 1972, JRSS-B).
-
-    These are not recovery tests — they validate a statistical identity
-    of the algorithm: estimates shrink toward the prior mean.
+    The assertions bound parameter shifts in these synthetic Tofts cases.
     """
 
     def test_low_ktrans_overestimated(

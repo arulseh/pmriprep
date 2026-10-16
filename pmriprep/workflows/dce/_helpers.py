@@ -214,7 +214,7 @@ def _transform_probseg_to_dce(
     ]
     subprocess.run(cmd, check=True, capture_output=True)
 
-    # Clip to [0, 1] — FLIRT trilinear can produce slight over/undershoot
+    # Enforce probability bounds after resampling.
     tmp_img = nib.load(tmp_file)
     data = tmp_img.get_fdata()  # type: ignore[attr-defined]
     data = np.clip(data, 0.0, 1.0).astype(np.float32)
@@ -1076,9 +1076,9 @@ def _dsc_dce_validation_node(
 def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
     """Compute mean of first N DCE volumes for brain extraction.
 
-    Provides a pre-contrast structural image for HD-BET before motion
-    correction. The first few frames are guaranteed pre-contrast,
-    producing clean gray/white contrast without gadolinium effects.
+    Supplies an early-frame reference for HD-BET before motion correction.
+    This assumes acquisition starts before contrast arrival; the helper
+    averages the requested frames without detecting bolus timing.
 
     Parameters
     ----------

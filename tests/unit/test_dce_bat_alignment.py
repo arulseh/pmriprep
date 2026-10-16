@@ -197,8 +197,7 @@ class TestSubFrameDetection:
     def test_integer_frame_snap(self):
         # The applied shift is snapped to a whole number of frames -- an exact
         # translation on the uniform grid (no sub-frame regridding). A 1-frame
-        # step difference at TR=2 snaps to exactly one frame; the soft-ramp
-        # provenance keys are gone.
+        # step difference at TR=2 snaps to exactly one frame.
         n, tr = 30, 2.0
         t = _minutes(n, tr)
         d, prov = compute_aif_tissue_delay(

@@ -1,4 +1,4 @@
-"""Phase 1: DSC signal-domain round-trip tests.
+"""DSC signal-domain round-trip tests.
 
 Tests the full chain: concentration -> signal -> noise -> signal_to_concentration
 -> deconvolution -> parameter recovery. Validates that signal_to_concentration()
@@ -279,12 +279,8 @@ class TestSignalDomainRoundTrip:
             assert np.isnan(result.mtt)
 
 
-#: Physics-derived oSVD CBF-recovery envelope: per-SNR |bias| ceiling taken from
-#: the validated OSVD_NOISY_LEVELS in TestOSVDRecovery (MC mean+3sigma: low-noise
-#: 0.46, medium 0.52). SVD deconvolution systematically underestimates CBF (the
-#: regularized residue peak is clipped); the signal-domain roundtrip's Rician/log
-#: conversion bias stays within this envelope, so it is the physically-correct
-#: bound here rather than the old 0.20/0.35.
+#: Empirical relative-CBF error limits for these signal-roundtrip fixtures.
+#: They bound the combined noise, signal-conversion and regularization effects.
 OSVD_CBF_ENVELOPE = {50: 0.46, 20: 0.52}
 
 

@@ -1,9 +1,4 @@
-"""PR1 (BIDS arc finishing): anat per-image sidecar flat-key enrichment.
-
-Asserts that the rewritten Phase 1 anat enrich helpers produce flat-prefixed
-PascalCase top-level keys (no nested blocks) per bids-spec-expert round 3
-(DSC) + round 1 (PR1).
-"""
+"""Test flat PascalCase QC enrichment of anatomical image sidecars."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,13 +37,13 @@ class TestBrainMaskFlatKeys:
         }
         out = enrich_brain_mask_sidecar(dict(base_sidecar), qc)
         assert out["BrainExtractionTool"] == "hdbet"
-        # Retired per-file key; tool version now lives in dataset-level GeneratedBy.
+        # Tool versions belong in dataset-level GeneratedBy.
         assert "BrainExtractionVersion" not in out
         assert out["BrainExtractionVolume"] == pytest.approx(1500.0)
         assert out["BrainExtractionVolumeMm3"] == pytest.approx(1_500_000.0)
         # No nested block (regression guard)
         assert "BrainExtraction" not in out
-        # No unit-suffix key (round-3 anti-suffix rule)
+        # Units are separate from metric keys.
         assert "BrainExtractionVolume_mL" not in out
         # Base fields preserved
         assert out["SkullStripped"] is True

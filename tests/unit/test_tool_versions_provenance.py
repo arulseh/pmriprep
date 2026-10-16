@@ -3,7 +3,7 @@
 Covers Part A (per-suite GeneratedBy entries + idempotency across the 4 datasink
 calls), Part B (version rendering in the boilerplate, unknown-safe), and Part C
 (retirement of the non-idiomatic per-file SoftwareVersions/BrainExtractionVersion
-custom keys). See the v0.78.0 plan for rationale.
+custom keys).
 """
 from __future__ import annotations
 

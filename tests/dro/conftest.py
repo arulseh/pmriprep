@@ -147,8 +147,8 @@ def generate_dsc_aif_dro(
     arterial first-pass shape is alpha=3.0/beta=1.5 (FWHM ~5 s). For a narrow
     AIF on a coarse axis, oversample>1 builds the curve on a fine grid
     (dt_sec/oversample) and block-averages forward from each reported frame time.
-    That is an explicit box-window sampling assumption, not a universal MRI
-    acquisition model; it is different from the point samples at oversample=1.
+    This applies box-window averaging at oversample>1 and point sampling at
+    oversample=1.
 
     Parameters
     ----------
@@ -242,11 +242,8 @@ def apply_recirculation(
     return np.asarray(aif + recirc, dtype=np.float64)
 
 
-#: Pre-committed moderate dispersion severity (log-normal VTF sigma, mu) for the
-#: dispersed DSC DRO: mean transit E = exp(mu + sigma**2/2) = 1.14 s, a physiological
-#: arterial-to-tissue bolus dispersion. The middle of the mild/moderate/severe
-#: presets, fixed independent of any deconvolution result (not tuned to favour an
-#: operator).
+#: Moderate dispersion preset (log-normal VTF sigma, mu) for the dispersed DSC
+#: DRO: mean transit E = exp(mu + sigma**2/2) = 1.14 s.
 DSC_DRO_VTF_MODERATE = (0.75, -0.15)
 
 
@@ -824,7 +821,7 @@ def dsc_forward_model_circulant(
 ) -> npt.NDArray[np.floating]:
     """Compute tissue concentration via block-circulant convolution.
 
-    Matched forward model for oSVD and cSVD deconvolution (Wu 2003).
+    Matched circulant forward model for oSVD and cSVD deconvolution.
     Uses the (1, 4, 1)/6 stencil, consistent with the circulant inverse.
 
     Parameters
@@ -860,11 +857,9 @@ def fine_grid_forward(
 
     Approximates C(t) = ∫ AIF(τ)·R(t-τ) dτ by resampling both the AIF and the
     residue onto a ``dt/oversample`` grid, convolving with ``np.convolve``, and
-    downsampling back to frames. No deconvolution matrix is called, but the
-    piecewise-linear reconstruction shares assumptions with fitted operators.
-    Increasing ``oversample`` reduces integration error, not the interpolation
-    error already introduced by the frame samples. This is a sampled-curve
-    regression fixture, not a claim of operator-independent physical truth.
+    downsampling back to frames. The piecewise-linear reconstruction shares
+    assumptions with fitted operators. Increasing ``oversample`` refines the
+    integration of these reconstructed curves.
     Use ``tests.dro.dsc_reference.continuous_tissue`` when the continuous input
     and residue functions are available for independent recovery evaluation.
 
@@ -1039,13 +1034,11 @@ def make_cbf_mtt_grid(
     cbv_min_pct: float = 1.0,
     cbv_max_pct: float = 14.0,
 ) -> List[Tuple[float, float, float]]:
-    """Build a CBF x MTT factorial grid of physiological tissue conditions.
+    """Build a CBF x MTT grid restricted by a configured CBV interval.
 
-    Returns every (CBF, MTT, CBV%) triple whose CBV = CBF*MTT/60 falls within
-    [cbv_min_pct, cbv_max_pct], the physiological cerebral blood volume range.
-    Combinations outside that range (e.g. high CBF with long MTT giving
-    supra-physiological CBV) are dropped, so the grid holds only realisable
-    tissues. Units: CBF in mL/100g/min, MTT in s, CBV in mL/100g (== % by mass).
+    Returns (CBF, MTT, CBV) triples with CBV = CBF*MTT/60 inside
+    [cbv_min_pct, cbv_max_pct]. Units are mL/100g/min for CBF, seconds
+    for MTT and mL/100g for CBV. The bounds define the synthetic fixture.
 
     Parameters
     ----------

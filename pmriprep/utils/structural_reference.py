@@ -1,6 +1,6 @@
 """Physics-based structural reference selection for PMRIPrep.
 
-This module provides utilities for selecting the optimal structural reference
+This module provides utilities for selecting a structural reference
 image based on resolution quality metrics and application-specific requirements.
 
 Resolution quality is determined by:
@@ -750,7 +750,7 @@ def select_structural_reference_v2(
     application: ApplicationType = "default",
     perfusion_path: Optional[Union[str, Path]] = None,
 ) -> Optional[StructuralReferenceSelection]:
-    """Select the optimal structural reference using confidence scoring.
+    """Select a structural reference using the configured preference scores.
 
     Chains base confidence -> isotropy adjustment -> application overrides,
     selects the highest confidence, then reports pre-registration FOV overlap.

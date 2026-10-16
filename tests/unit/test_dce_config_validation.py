@@ -78,7 +78,7 @@ class TestSERConfigValidation:
 
 @pytest.mark.parametrize("config_cls", [DCEConfig, DSCConfig])
 class TestUnderlayValidation:
-    """``underlays`` takes the split FLAIR tokens; legacy ``flair`` is rejected."""
+    """``underlays`` accepts the split FLAIR tokens and rejects unsplit ``flair``."""
 
     def test_legacy_flair_token_rejected(self, config_cls) -> None:
         with pytest.raises(ValueError, match="Invalid underlay"):

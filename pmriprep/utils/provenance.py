@@ -235,8 +235,7 @@ def enrich_provenance_from_qc(
     Parameters
     ----------
     sidecar : dict
-        Existing sidecar dict (must contain PerfusionProcessing
-        from Phase 1 static provenance).
+        Existing sidecar dict containing the PerfusionProcessing namespace.
     qc_metrics : dict
         QC metrics dict from the writer's qc_metrics input.
     modality : {"DCE", "DSC"}

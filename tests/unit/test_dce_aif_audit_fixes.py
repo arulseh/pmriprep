@@ -1,8 +1,4 @@
-"""Regression tests for the DCE AIF audit fixes (P1/P2/P4/P5/C1/C5/C6/C7).
-
-Each locks a specific latent bug found in the AIF audit so it cannot silently
-return. See docs plan `plan-the-change-fuzzy-lobster.md`.
-"""
+"""Test DCE AIF amplitude gates, temporal metrics and source handling."""
 from __future__ import annotations
 
 import re
@@ -22,10 +18,10 @@ from tests.unit.test_dce_aif import _make_qc
 
 
 class TestP1ParkerNoRelaxivity:
-    """Population AIF is relaxivity-independent true mM (dose-only)."""
+    """The sampled population AIF scales with dose and has no scan-r1 argument."""
 
     def test_no_r1_argument(self) -> None:
-        """The r1_actual parameter is gone — concentration is r1-independent."""
+        """The population-AIF API rejects an r1_actual argument."""
         with pytest.raises(TypeError):
             parker_population_aif(np.arange(60.0), 1.0, r1_actual=11.6)  # type: ignore[call-arg]
 

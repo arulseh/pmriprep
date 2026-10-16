@@ -1,11 +1,8 @@
-"""Can-fail test: the AFI B1 interface must recover a known flip angle from
-physically-generated AFI signals.
+"""Check AFI flip-angle recovery from generated steady-state signals.
 
-Guards the AFI signal-ratio orientation. The ratio must be r = S2/S1
-(long-TR over short-TR) for cos(alpha) = (r*n - 1)/(n - r); the reciprocal
-r = S1/S2 drives cos(alpha) out of [-1, 1] for normal-flip voxels, collapsing
-B1 toward zero. Prior detection-only tests never fed physical signals through
-the interface, so that orientation error was latent.
+The interface uses the long-TR / short-TR signal ratio in its approximate
+AFI inversion. Tests compare the recovered B1 ratio with the supplied flip
+angle and exercise input validation.
 """
 from __future__ import annotations
 

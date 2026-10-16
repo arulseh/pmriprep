@@ -40,13 +40,9 @@ def test_ci_bounds_scale_with_cbf():
 
 
 def test_ci_center_matches_cbf():
-    """Verify CI center matches point estimate after conversion.
-
-    This was the original bug: CI center was ~0.16 while CBF was ~9.6.
-    After fix, CI center should match CBF (within estimation noise).
-    """
-    # Simulate values from the bug report
-    cbf_raw = 0.160  # s⁻¹ (this was "CI_center / 60" in the report)
+    """The converted interval midpoint matches the converted CBF point estimate."""
+    # Use a CBF of 9.6 and an SD in native inverse-second units
+    cbf_raw = 0.160  # s⁻¹
     ci_lower_raw = 0.140  # s⁻¹
     ci_upper_raw = 0.180  # s⁻¹
 
@@ -56,5 +52,5 @@ def test_ci_center_matches_cbf():
 
     ci_center_converted = (ci_lower_converted + ci_upper_converted) / 2
 
-    # Now CI center (~9.6) should match CBF (~9.6), not CBF/60 (~0.16)
+    # CI center (~9.6) should match CBF (~9.6), not CBF/60 (~0.16)
     assert np.isclose(ci_center_converted, cbf_converted, rtol=0.15)

@@ -465,7 +465,7 @@ def _apply_dsc_leakage_policy(
     mask_img = nib.load(brain_mask_file)
     brain_mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
-    # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
+    # Check spatial array dimensions before applying the native DSC mask.
     if brain_mask.shape[:3] != conc_data.shape[:3]:
         raise RuntimeError(
             f"Brain mask shape {brain_mask.shape[:3]} does not match "
@@ -875,8 +875,7 @@ def _normalize_cbv(
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
-    Returns ("", None) when NAWM mask is not available - normalization
-    requires NAWM reference for clinically valid results.
+    Returns ("", None) when no usable NAWM reference is available.
 
     Parameters
     ----------
@@ -949,8 +948,7 @@ def _normalize_cbf(
 ) -> tuple[str, float | None]:
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
-    Returns ("", None) when NAWM mask is not available - normalization
-    requires NAWM reference for clinically valid results.
+    Returns ("", None) when no usable NAWM reference is available.
 
     Parameters
     ----------

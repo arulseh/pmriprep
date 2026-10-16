@@ -49,7 +49,7 @@ class EnsembleConvolution:
         Maximum parameter vectors evaluated in one integration block. This is
         a memory setting, not a model parameter or an accuracy setting.
     reuse_gamma_geometry : bool, optional
-        Must remain False; optional shared gamma geometry is not connected.
+        Must be False. A True value raises ValueError during construction.
 
     Notes
     -----

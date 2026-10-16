@@ -145,13 +145,8 @@ def _bat_montecarlo(
 
 
 def test_bat_reduces_ktrans_bias_with_real_delay_coarse_tr():
-    # Delay-bearing DRO at coarse (clinical) TR: a real arterial->tissue delay
-    # biases the uncorrected ('off') Ktrans, and BAT (snapped to whole frames)
-    # reduces total Ktrans RMSE vs ground truth and improves vp -- the accuracy
-    # side of the accuracy/repeatability trade. With no injected delay BAT is a
-    # no-op. Thresholds are physics/direction criteria with margin (the campaign
-    # and this DRO put off bias at ~50% of GT and the BAT/off RMSE ratio at ~0.3),
-    # not tuned to pass.
+    # Compare Ktrans bias and Ktrans/vp RMSE with and without a six-second delay
+    # at 4.76-second sampling. Applied BAT shifts are snapped to whole frames.
     model = ExtendedToftsModel()
     tr_s, kt_true = 4.76, 0.05
     delayed = _bat_montecarlo(model, tr_s, delay_true_s=6.0, kt=kt_true)
@@ -170,12 +165,8 @@ def test_bat_reduces_ktrans_bias_with_real_delay_coarse_tr():
 
 
 def test_detector_subframe_but_applied_shift_is_frame_snapped():
-    # The 10%-of-peak detector returns a sub-frame (non-integer) raw delay, but
-    # the APPLIED shift is snapped to a whole number of frames -- an exact
-    # translation on the uniform grid. The redesign deliberately trades the
-    # sub-frame detector's visit-to-visit smoothness for this honest integer
-    # shift (removing the fractional-regrid artifact); the near-boundary
-    # repeatability cost is documented and accepted.
+    # The 10%-of-peak detector returns a sub-frame raw delay. The applied shift
+    # is snapped to a whole number of frames on the uniform grid.
     tr_s = 4.0
     dt = tr_s / 60.0
     n = 80

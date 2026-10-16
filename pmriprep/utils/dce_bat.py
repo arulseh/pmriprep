@@ -272,9 +272,9 @@ def compute_aif_tissue_delay(
     AIF curve must be the measured AIF — never a brain-mean surrogate, which
     measures tissue transit rather than arterial arrival.
 
-    A series of physics guards return ``0.0`` (no shift) whenever the delay is
-    unreliable or below what the temporal resolution can resolve, so applying
-    the result is always safe.
+    Input, amplitude and timing guards return ``0.0`` (no shift) when a
+    configured acceptance condition fails. Accepted delays are snapped to
+    whole frames and checked against the allowed delay bound.
 
     Parameters
     ----------

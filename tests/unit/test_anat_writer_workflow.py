@@ -94,7 +94,7 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     assert mask_out.exists()
     assert mask_json.exists()
 
-    # M3 sidecar fields
+    # Required sidecar fields
     sidecar = json.loads(t1w_json.read_text())
     assert isinstance(sidecar["Sources"], list) and sidecar["Sources"]
     assert sidecar["Sources"][0].startswith("bids:raw:")
@@ -131,7 +131,7 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
 
 
 def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> None:
-    """Cross-check every produced sidecar carries M3-mandated fields."""
+    """Cross-check every produced sidecar carries required provenance fields."""
     from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
 
     out_root = tmp_path / "out"
@@ -186,7 +186,7 @@ def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> N
 
 
 def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
-    """Regression for B1: postcon-only mode must still write t1w_preproc, brain_mask, acpc_xfm."""
+    """Postcon-only mode must still write t1w_preproc, brain_mask, acpc_xfm."""
     from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
 
     # Build a minimal raw BIDS source — only the postcon T1w exists.

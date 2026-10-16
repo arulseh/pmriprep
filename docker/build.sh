@@ -5,7 +5,7 @@
 # Build the PMRIPrep Docker image and print Apptainer conversion instructions.
 #
 # Usage:
-#   ./docker/build.sh        # Build the validated linux/amd64 CUDA image
+#   ./docker/build.sh        # Build the linux/amd64 CUDA image
 #   ./docker/build.sh --push # Build and push to registry
 #
 # Environment variables:
@@ -103,7 +103,7 @@ Options:
   -h, --help          Show this help message
 
 Examples:
-  # Build the validated linux/amd64 CUDA image locally
+  # Build the linux/amd64 CUDA image locally
   ./docker/build.sh
 
   # Build and push to Docker Hub
@@ -161,7 +161,7 @@ check_docker() {
     fi
 }
 
-# Build the validated release architecture.
+# Build the configured release architecture.
 build_image() {
     local version="$1"
     local image_base="${REGISTRY}/${REPO}"

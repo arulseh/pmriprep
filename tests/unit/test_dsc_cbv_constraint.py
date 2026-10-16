@@ -198,7 +198,7 @@ class TestAssessDSCCBVQuality:
         assert result.gamma_peak_ratio == pytest.approx(0.95)
 
     def test_missing_gamma_peak_ratio_no_downgrade(self) -> None:
-        """Missing gamma_fit_auto_metrics does not downgrade (backward compat)."""
+        """Missing gamma_fit_auto_metrics does not downgrade confidence."""
         aif_qc_data = {
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
             "aif_peak_height": 0.4,
@@ -322,7 +322,7 @@ class TestNormalizeAifQcKeys:
         assert result["aif_peak_height"] == pytest.approx(0.946, rel=1e-6)
         assert result["baseline_return_ratio"] == pytest.approx(0.0717, rel=1e-6)
         assert "cnr_whole_brain" in result
-        # Default is now MODERATE (conservative) when CNR is not wired
+        # Missing CNR uses MODERATE confidence
         assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
 
     def test_already_normalized_passthrough(self) -> None:
@@ -416,7 +416,7 @@ class TestQcReportSchema:
         """prepare_vp_constraint_from_data returns qc_report with 'mode'/'reason' keys."""
         import nibabel as nib
 
-        # nCBV ≈ 1 (NAWM reference) → vp ≈ 0.02, squarely physiological.
+        # nCBV ≈ 1 gives vp ≈ 0.010, inside the configured median interval.
         ncbv_data = np.ones((5, 5, 5), dtype=np.float64)
         mask_data = np.ones((5, 5, 5), dtype=np.uint8)
         affine = np.eye(4)
@@ -763,7 +763,7 @@ class TestDoseAwareCnrGate:
         assert _bolus_gd_fraction(1.0, 0.1) == pytest.approx(1.0)
 
     def test_half_dose_gddota_half_thresholds(self) -> None:
-        """dose=0.5 × agent=0.1 → eff=0.5; coverage 0.55 now passes SKIP."""
+        """dose=0.5 × agent=0.1 → eff=0.5; coverage 0.55 clears the SKIP threshold."""
         # Full-dose thresholds: SKIP=0.70, MODERATE=0.84, HIGH=0.95
         # At eff=0.5, SKIP becomes 0.35. Coverage=0.55 clears it.
         result = assess_dsc_cbv_quality(
@@ -803,11 +803,11 @@ class TestDoseAwareCnrGate:
         assert result.confidence == "low"
 
     def test_double_dose_tightens_thresholds(self) -> None:
-        """dose=2.0 → eff=2.0; coverage 0.80 (passes at full-dose) now SKIPs."""
+        """dose=2.0 → eff=2.0; coverage 0.80 (passes at full dose) triggers SKIP."""
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
 
         # Double dose bumps SKIP threshold from 0.70 → 1.4 (clamped implicit at 1.0).
-        # Sub with coverage 0.80 hits SKIP now where it cleared at full-dose.
+        # Coverage 0.80 triggers SKIP at double dose but passes at full dose.
         assert _bolus_gd_fraction(2.0, 0.1) == pytest.approx(2.0)
 
     def test_very_low_effective_dose_clamp(self) -> None:
@@ -964,11 +964,7 @@ class TestFixedPriorWidth:
 
 
 class TestNAWMVpReferenceAnchor:
-    """NAWM_VP_REFERENCE = 0.010 from Larsson MRM 2009;62:1270.
-
-    Regression guard — pinning the anchor value ensures any future retuning
-    carries an explicit test update + citation.
-    """
+    """Pin the configured NAWM plasma-volume prior anchor at 0.010."""
 
     def test_nawm_vp_reference_value(self) -> None:
         from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
@@ -1038,7 +1034,7 @@ class TestPrepareVpConstraintSyntheticAif:
         assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
 
     def test_skip_on_cbv_auc_denominator_is_synthetic(self, tmp_path) -> None:
-        """Legacy flag (``cbv_auc_denominator_is_synthetic``) also fires."""
+        """The cbv_auc_denominator_is_synthetic flag causes the prior to be skipped."""
         from pmriprep.utils.dsc_cbv_constraint import (
             prepare_vp_constraint_from_data,
             SKIP_REASON_SYNTHETIC_AIF,

@@ -216,7 +216,7 @@ class TestCompositeMotionStatus:
 
 
 class TestNewMotionThresholds:
-    """Tests for new motion threshold constants."""
+    """Tests for motion threshold constants."""
 
     def test_outlier_pct_thresholds(self) -> None:
         """MOTION_OUTLIER_PCT_THRESHOLDS has expected values."""

@@ -121,7 +121,7 @@ def test_dispersion_refinement_failure_is_not_returned_as_verified() -> None:
 
 
 def _observations(**overrides: Any) -> Any:
-    """Small shared input, not a clinical noise or absolute-flow calibration."""
+    """Generate paired observations from a shared eight-frame signal fixture."""
     settings = dict(
         time_seconds=np.arange(8) * 1.5,
         tissue_delta_r2=np.array([0, 0, 0, 2, 8, 5, 3, 1], dtype=float),

@@ -339,7 +339,7 @@ class TestComputeNAWMReference:
 
 
 class TestSliceNawmForMap:
-    """Phase 1a: per-map NAWM slicing avoids cross-map qc_notes contamination."""
+    """per-map NAWM slicing avoids cross-map qc_notes contamination."""
 
     def test_pass_map_does_not_carry_sibling_warning_notes(self) -> None:
         """A PASSing map must not ship modality-level notes about sibling violations."""
@@ -630,15 +630,8 @@ class TestNormalizeHelpersReturnEmptyString:
 
 
 class TestLesionStatsAcceptsEmptyMapTrait:
-    """Dispatch-time invariant: setting ``""`` on a normalized-map trait must not
-    raise TraitError.
-
-    The plain pure-function tests above lock the producer contract; this test
-    locks the consumer contract. If a future refactor widens a DSC normalization
-    helper to return ``None`` while the consumer trait is still strict
-    ``traits.Str``, the silent MultiProc
-    hang documented in 0.50.4's commit message resurfaces. This guards
-    against that regression.
+    """Normalized-map traits accept the empty-string sentinel emitted when
+    no normalization reference is available.
     """
 
     def test_dsc_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
@@ -696,7 +689,7 @@ class TestMapStatisticsDistributionMetrics:
 
 
 class TestCohensDAugmentation:
-    """Phase 2b: pooled-SD Cohen's d vs NAWM."""
+    """pooled-SD Cohen's d vs NAWM."""
 
     def test_pooled_d_attached_when_nawm_matches(self) -> None:
         result = LesionStatisticsResult(
@@ -751,7 +744,7 @@ class TestCohensDAugmentation:
 
 
 class TestExtractPerMapLesionStatsEnrichment:
-    """Phase 1a: extract_per_map_lesion_stats forwards modality context."""
+    """extract_per_map_lesion_stats forwards modality context."""
 
     @pytest.fixture
     def aggregate(self):

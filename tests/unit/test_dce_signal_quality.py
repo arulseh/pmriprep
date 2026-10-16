@@ -21,12 +21,12 @@ class TestDCESignalQualityConstants:
     """Verify DCE signal quality constants are set correctly."""
 
     def test_peak_enhancement_thresholds(self) -> None:
-        """Peak enhancement thresholds match physics-validated values."""
+        """Peak enhancement thresholds match configured policy values."""
         assert QC_PEAK_ENHANCEMENT_MIN == 5.0
         assert QC_PEAK_ENHANCEMENT_WARN == 20.0
 
     def test_baseline_tsnr_thresholds(self) -> None:
-        """Baseline tSNR thresholds match physics-validated values."""
+        """Baseline tSNR thresholds match configured policy values."""
         assert QC_DCE_BASELINE_TSNR_MIN == 3.0
         assert QC_DCE_BASELINE_TSNR_WARN == 8.0
 

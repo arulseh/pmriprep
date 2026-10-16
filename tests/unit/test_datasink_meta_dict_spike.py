@@ -1,10 +1,7 @@
-"""R3 spike: validate niworkflows DerivativesDataSink preserves caller-supplied
-``meta_dict`` keys (``Sources``, ``SpatialReference``, ``Resolution``,
-``VoxelSize``) without overwriting them.
+"""Check that DerivativesDataSink preserves supplied metadata.
 
-Architectural gating test for B2/M3 PR-C. If this passes, the per-output
-``meta_dict``-based sidecar enrichment pattern is viable for the four
-``init_*_datasinks_wf`` factories.
+The caller's Sources, SpatialReference, Resolution and VoxelSize fields
+must survive writing without being overwritten.
 """
 from __future__ import annotations
 

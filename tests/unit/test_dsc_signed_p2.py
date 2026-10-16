@@ -320,7 +320,7 @@ def test_production_dispatch_preserves_signed_area(
 def test_selection_qc_separates_active_and_excluded_voxels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """All P2 outcomes are counted, with fractions over active in-mask fits only."""
+    """All L-curve selection outcomes are counted, with fractions over active in-mask fits only."""
     def fits(*args: object, **kwargs: object) -> tuple[np.ndarray, ...]:
         residues = np.ones((5, 4))
         ones = np.ones(5)

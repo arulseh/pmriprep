@@ -733,7 +733,7 @@
     "base_perf_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "base_perf_no_ktrans_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
-    "dce_mean_meta": "a44a6ea06e8531a974dba250d97ef7a405462f31fe12100774fc318f8607d861",
+    "dce_mean_meta": "cec1c05f8a5b90f226aa7d6d145296b7b8fa8d0e78171964e165b968bb4abfd9",
     "dce_mean_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
     "dce_moco_meta": "5bbcf6e98686b06f51b99c164dc9eb5cb1d9dccb2b86321ea806312fc3a3431d",
     "dce_moco_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
@@ -849,7 +849,7 @@
       "pk_dependent": false
     },
     "dce_mean_meta": {
-      "function_str": "def _build_dce_mean_meta(\n    base: dict,\n    qc_metrics: dict | None = None,\n    motion_correct: bool = True,\n) -> dict:\n    \"\"\"Describe the all-volume DCE temporal mean without implying baseline contrast.\"\"\"\n    out = dict(base)\n    out.update({\n        \"Description\": \"Temporal mean across all acquired DCE volumes\",\n        \"TemporalAggregation\": \"arithmetic_mean_all_acquired_volumes\",\n        \"IncludesPostContrastVolumes\": True,\n        \"MotionCorrectionApplied\": bool(motion_correct),\n        \"SkullStripped\": False,\n    })\n    preprocessing = (qc_metrics or {}).get(\"preprocessing\", {})\n    if isinstance(preprocessing, dict):\n        n_volumes = preprocessing.get(\"n_volumes\")\n        if n_volumes is not None:\n            out[\"NumberOfVolumes\"] = int(n_volumes)\n        baseline_frames = preprocessing.get(\n            \"baseline_frames_used\", preprocessing.get(\"baseline_frames\")\n        )\n        if baseline_frames is not None:\n            out[\"BaselineFrames\"] = int(baseline_frames)\n    return out\n",
+      "function_str": "def _build_dce_mean_meta(\n    base: dict,\n    qc_metrics: dict | None = None,\n    motion_correct: bool = True,\n) -> dict:\n    \"\"\"Build metadata for the temporal mean across all acquired DCE volumes.\"\"\"\n    out = dict(base)\n    out.update({\n        \"Description\": \"Temporal mean across all acquired DCE volumes\",\n        \"TemporalAggregation\": \"arithmetic_mean_all_acquired_volumes\",\n        \"IncludesPostContrastVolumes\": True,\n        \"MotionCorrectionApplied\": bool(motion_correct),\n        \"SkullStripped\": False,\n    })\n    preprocessing = (qc_metrics or {}).get(\"preprocessing\", {})\n    if isinstance(preprocessing, dict):\n        n_volumes = preprocessing.get(\"n_volumes\")\n        if n_volumes is not None:\n            out[\"NumberOfVolumes\"] = int(n_volumes)\n        baseline_frames = preprocessing.get(\n            \"baseline_frames_used\", preprocessing.get(\"baseline_frames\")\n        )\n        if baseline_frames is not None:\n            out[\"BaselineFrames\"] = int(baseline_frames)\n    return out\n",
       "motion_correct": false
     },
     "dce_mean_sink": {

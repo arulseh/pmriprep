@@ -966,7 +966,7 @@ def _collect_pipeline_images(
 
         # Perfusion figures retain source entities (for example acq, ce,
         # rec, and run) between the subject/session prefix and desc. Keep
-        # accepting the historical entity-free name above, then discover
+        # accepting the exact entity-free name above, then discover
         # the entity-rich form by its exact desc/suffix tail.
         tail = fname[len(prefix):]
         matches = sorted(figures_dir.glob(f"{prefix}*{tail}"))

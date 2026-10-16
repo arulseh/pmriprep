@@ -111,7 +111,7 @@ class LeakageSignalModel:
     Notes
     -----
     Reference nuisance coordinates have independent unit Gaussian priors.
-    Numerical mean guards on the leakage exponent are not physiological bounds.
+    Mean validation bounds the leakage exponent to protect signal evaluation.
     """
 
     def __init__(self, vascular: MovingLayoutSignalCPI, reference: LeakageReference,
@@ -264,12 +264,12 @@ def readout_state(
     order, restart : int
         Acquisition count and initialization identifier.
     converged : bool
-        Unchanged solver convergence flag, not an accuracy claim.
+        Solver convergence flag, passed through unchanged.
     weights : ndarray, optional
         Frame likelihood weights used by the solver.
     prior : GaussianPrior, optional
         Actual final conditional prior for spatial fitting. Defaults to the
-        model's independent prior. The local score is not global SVB evidence.
+        model's independent prior. The score uses this voxel's conditional prior.
 
     Returns
     -------

@@ -21,10 +21,9 @@ def assess_two_cxm_suitability(
 ) -> dict[str, Any]:
     """Screen 2CXM use for established acquisition and QC concerns.
 
-    This assessment is intentionally non-fatal and does not claim biological
-    validity. It warns only from an existing pipeline policy or an unequivocal
-    absence of usable output. Other potentially informative metrics are exposed
-    without introducing unvalidated subject-level thresholds.
+    Returns warning reasons for an explicit 2CXM run outside automatic sampling
+    eligibility, zero quantitatively accepted voxels, or reduced AIF confidence.
+    Acquisition, fitting, T1 and prior metrics accompany the status for reporting.
 
     Parameters
     ----------

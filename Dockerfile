@@ -90,7 +90,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install bids-validator (legacy JS CLI; the Deno v2 rewrite would require Deno 2)
+# Install the Node.js bids-validator CLI
 RUN npm install -g bids-validator@1.14.10 && npm cache clean --force
 
 # Install Python 3.11, FSL, and ANTs via mamba (fast solver)
@@ -123,8 +123,8 @@ RUN mkdir -p ${nnUNet_raw_data_base}/nnUNet_raw_data \
     chmod -R 777 ${nnUNet_raw_data_base} ${nnUNet_preprocessed} ${RESULTS_FOLDER}
 
 # Install PyTorch with CUDA 12.1 support (GPU-accelerated tumor segmentation)
-# The preflight check in decide_pipelines() auto-skips tumor seg at runtime
-# if no GPU is detected, so shipping GPU PyTorch is always safe.
+# The preflight check in decide_pipelines() skips tumor segmentation
+# when no supported accelerator is detected.
 RUN pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
     --index-url https://download.pytorch.org/whl/cu121
 

@@ -5,7 +5,7 @@ These functions build the per-output ``meta_dict`` that is passed to
 stateless — no ``self.inputs`` reads — so the per-pipeline factory
 workflows can call them from inside ``pe.Node(Function(...))`` nodes.
 
-Sidecar field strategy (M3):
+Sidecar field strategy:
 
 - **Sources**: per-output list of BIDS URIs (``bids:raw:sub-X/ses-Y/...``) to
   the immediate raw inputs that produced the derivative.
@@ -1430,7 +1430,7 @@ def build_aif_timeseries_sidecar(
 
 
 # ---------------------------------------------------------------------------
-# DSC preprocessed-4D sidecar enrichment (Phase 2a)
+# DSC preprocessed-4D sidecar enrichment
 # ---------------------------------------------------------------------------
 
 
@@ -1680,8 +1680,7 @@ def enrich_recommendation_keys(
 # Enriches the sidecar with QC metrics read from the
 # producer-shape ``qc_metrics`` sub-blocks (``t1_mapping``, ``b1_mapping``,
 # ``preprocessing``, ``pk_modeling``, ``dsc_dce_validation``,
-# ``cbv_constraint``) and writes flat top-level PascalCase keys per
-# bids-spec-expert (round 1, PR1).
+# ``cbv_constraint``) and writes flat top-level PascalCase keys.
 # ---------------------------------------------------------------------------
 
 

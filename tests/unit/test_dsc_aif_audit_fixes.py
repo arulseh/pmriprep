@@ -1,14 +1,4 @@
-"""Unit tests for five DSC AIF audit fixes (D1-D5).
-
-Each ``Test*`` class targets one fix in ``pmriprep.interfaces.dsc_aif`` (or,
-for D4, ``pmriprep.utils.dsc_aif``):
-
-D1  ``_score_candidate_cost`` peak-ΔR2* bounds are B0- and dose-scaled.
-D2  ``_score_and_select_candidates`` tissue-TTP gate compares in seconds.
-D3  ``_calculate_candidate_metrics`` FWHM is the contiguous first pass.
-D4  ``compute_aif_fwhm_frames`` returns 0 when the max lies in the baseline.
-D5  single-best fallback records provenance of exactly one voxel.
-"""
+"""Test DSC AIF dose scaling, peak width and emitted-pool provenance."""
 
 from typing import Any
 
@@ -79,7 +69,7 @@ def _valid_metrics(**overrides: float) -> dict[str, float]:
 
 
 class TestPeakConcBoundsDoseScaled:
-    """D1: peak-concentration floor/ceiling ride B0·dose, not a fixed 5.0."""
+    """Peak-concentration floor/ceiling ride B0·dose, not a fixed 5.0."""
 
     def test_reduced_dose_lowers_floor_admits_low_peak(self) -> None:
         """At 3T, dose=0.75 → floor 3.75, so peak_conc=4.0 scores finite."""
@@ -100,7 +90,7 @@ class TestPeakConcBoundsDoseScaled:
         assert cost == float("inf")
 
     def test_reference_regime_unchanged(self) -> None:
-        """3T full-dose keeps the legacy 5.0 floor: 4.0 rejected, 40.0 finite."""
+        """3T full-dose uses a 5.0 floor: 4.0 rejected, 40.0 finite."""
         det = AIFDetection()
         cost_low = det._score_candidate_cost(
             _valid_metrics(peak_conc=4.0), criteria="strict", median_s0=200.0,
@@ -274,10 +264,10 @@ class TestTissueTTPGateSeconds:
 
 
 class TestContiguousFirstPassFWHM:
-    """D3: a recirculation lobe above half-max no longer inflates FWHM."""
+    """FWHM measures the contiguous first-pass lobe, excluding separate recirculation."""
 
     def test_recirculation_above_half_max_not_counted(self) -> None:
-        """Narrow first pass + tall recirc → FWHM stays narrow, below old span."""
+        """Narrow first pass + tall recirc → FWHM stays narrow, below the full above-half-maximum span."""
         tr = 1.0
         baseline_frames = 20
         curve = _make_aif_curve(
@@ -296,7 +286,7 @@ class TestContiguousFirstPassFWHM:
         assert m is not None
         new_fwhm = m["fwhm"]
 
-        # Old behaviour: first-to-last frame above half-max across the whole
+        # Comparison: first-to-last frame above half-max across the whole
         # curve — the recirculation lobe would stretch this far past the peak.
         half_max = m["peak_conc"] / 2.0
         above = np.where(curve > half_max)[0]
@@ -306,7 +296,7 @@ class TestContiguousFirstPassFWHM:
         assert new_fwhm < old_span
 
     def test_genuinely_broad_first_pass_still_wide(self) -> None:
-        """A real broad contiguous bolus keeps a large FWHM (fix is not a cap)."""
+        """A real broad contiguous bolus keeps a large FWHM."""
         tr = 1.0
         baseline_frames = 20
         curve = _make_aif_curve(
@@ -378,11 +368,8 @@ class TestSingleBestProvenance:
         ``>= MIN_AIF_CANDIDATES_ACCEPT`` = 3 voxels) cannot fire, so the cascade
         falls through to the single-best branch, which emits ONE voxel.
 
-        This discriminates the fix: unfixed code leaves the full pre-fallback
-        pool in ``union_tier_provenance`` (``{'brain_relaxed': 2}`` → sum 2);
-        the fix overwrites it with ``{detection_level: 1}`` (sum 1). The
-        ``n_aif_voxels_available == 2`` assertion proves the union was
-        multi-voxel, so ``sum(...) == 1`` genuinely requires the collapse.
+        The available pool contains two voxels, but emitted provenance must
+        count only the single selected voxel.
         """
         import nibabel as nib  # type: ignore[import-untyped]
 
@@ -435,5 +422,5 @@ class TestSingleBestProvenance:
         # genuinely multi-voxel pre-fallback union.
         assert detection_level not in ("synthetic", "external")
         assert qc["n_aif_voxels_available"] == 2
-        # The fix collapses provenance to the single emitted voxel.
+        # Provenance describes the single emitted voxel.
         assert sum(qc["aif_tier_provenance"].values()) == 1

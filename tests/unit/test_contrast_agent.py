@@ -462,7 +462,7 @@ class TestBuildDscProvenance:
         assert "OriginalString" not in agent
 
     def test_backward_compat_no_new_params(self) -> None:
-        """Existing callers without new params get identical output."""
+        """Omitted optional arguments preserve the default output."""
         prov = build_dsc_provenance(
             dose_multiplier=0.5,
             dose_source=ParameterSource.USER_SPECIFIED,

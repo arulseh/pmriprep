@@ -92,7 +92,7 @@ def test_validate_workdir_accepts_dedicated_path(tmp_path: Path) -> None:
 def test_workflow_cache_manifest_is_scoped_to_subject_session(
     tmp_path: Path,
 ) -> None:
-    """Unrelated legacy caches do not block a new subject/session namespace."""
+    """Unrelated caches do not block the selected subject/session namespace."""
     work_root = tmp_path / "work"
     unrelated = work_root / "pmriprep_sub_02_ses_01_wf"
     unrelated.mkdir(parents=True)

@@ -227,7 +227,7 @@ class TestTRAdaptiveFunctions:
         assert compute_fwhm_threshold_frames(2.0, strict=True) == pytest.approx(12.5)
         # TR=8s strict: 25/8 = 3.125 frames (seconds-based, above the 2-frame floor)
         assert compute_fwhm_threshold_frames(8.0, strict=True) == pytest.approx(3.125)
-        # Sub-second TR must NOT collapse the ceiling (was min(5,50)=5 -> now 50 = 25 s)
+        # A 0.5 s interval gives a 50-frame ceiling, corresponding to 25 seconds.
         assert compute_fwhm_threshold_frames(0.5, strict=True) == pytest.approx(50.0)
         # Very coarse TR floored at 2 frames for numerical resolution
         assert compute_fwhm_threshold_frames(20.0, strict=True) == pytest.approx(2.0)

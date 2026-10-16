@@ -17,7 +17,6 @@ def compute_kep(ktrans: float, ve: float) -> float:
     -------
     float
         Ktrans/ve in inverse minutes, or NaN for invalid inputs or map overflow.
-        A finite value does not establish parameter identifiability.
     """
     if not np.isfinite(ktrans) or ktrans < 0 or not np.isfinite(ve) or ve <= 0:
         return float("nan")

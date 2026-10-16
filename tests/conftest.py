@@ -668,7 +668,7 @@ def generate_dce_tofts_curve(
     extended_model : bool
         Use Extended Tofts (with vp) vs Standard Tofts.
     aif_peak : float
-        Peak AIF concentration (mM).
+        Amplitude of the first Gaussian component (mM).
     noise_std : float
         Noise standard deviation (mM).
     random_seed : Optional[int]
@@ -686,7 +686,7 @@ def generate_dce_tofts_curve(
     t_sec = np.arange(n_timepoints) * tr
     t_min = t_sec / 60.0
 
-    # Generate AIF using Parker population model (simplified)
+    # Generate the synthetic two-component AIF
     arrival_time_min = baseline_frames * tr / 60.0
     aif = generate_parker_aif(
         t_min=t_min,
@@ -729,9 +729,10 @@ def generate_parker_aif(
     arrival_time_min: float = 0.0,
     peak_concentration: float = 5.0,
 ) -> npt.NDArray[Any]:
-    """Generate a synthetic AIF using Parker population model (simplified).
+    """Generate a synthetic AIF from two Gaussian components.
 
-    Based on Parker et al. (2006) population-averaged AIF.
+    The first component starts at its maximum after arrival; the second
+    is delayed and broader. These are fixture-specific parameters.
 
     Parameters
     ----------
@@ -740,7 +741,7 @@ def generate_parker_aif(
     arrival_time_min : float
         Bolus arrival time in minutes.
     peak_concentration : float
-        Peak AIF concentration (mM).
+        Amplitude of the first Gaussian component (mM).
 
     Returns
     -------
@@ -753,7 +754,7 @@ def generate_parker_aif(
     if np.any(mask):
         dt = t_min[mask] - arrival_time_min
 
-        # Simplified Parker model: sum of two Gaussians
+        # Sum the two Gaussian components
         # First pass (early peak)
         sigma1 = 0.1  # minutes
         A1 = peak_concentration
@@ -974,7 +975,7 @@ def generate_synthetic_dce_aif(
     baseline_frames : int
         Number of baseline frames.
     peak_concentration : float
-        Peak AIF concentration (mM).
+        Amplitude of the first Gaussian component (mM).
     dose_level : float
         Dose multiplier (0.5=half, 1.0=full, 2.0=double).
     random_seed : Optional[int]
@@ -996,7 +997,7 @@ def generate_synthetic_dce_aif(
     t_min = t_sec / 60.0
     arrival_time_min = baseline_frames * tr / 60.0
 
-    # Generate Parker-style AIF
+    # Generate the synthetic two-component AIF
     aif = generate_parker_aif(
         t_min=t_min,
         arrival_time_min=arrival_time_min,

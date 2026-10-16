@@ -3,7 +3,7 @@
 With ``disable_aif_fallback=True`` a real AIF whose gamma fit is below the floor
 (R² < 0) is retained rather than swapped for synthetic. These tests cover the
 three surfaces that make that non-silent: the interface flag, the rendered
-processing warning, and the QC recommendation. See the v0.78.1 plan.
+processing warning, and the QC recommendation.
 """
 from __future__ import annotations
 

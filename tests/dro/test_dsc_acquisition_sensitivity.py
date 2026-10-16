@@ -1,4 +1,4 @@
-"""Phase 6: Acquisition parameter sensitivity tests.
+"""Acquisition parameter sensitivity tests.
 
 Validates that recovered perfusion parameters behave correctly across
 TE, TR, and field strength variations. TE should cancel algebraically

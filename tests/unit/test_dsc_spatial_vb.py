@@ -158,7 +158,7 @@ class TestSpatialContributions:
 
 
 class TestUpdateAKPenny:
-    """Tests for FABBER M-prior aK closed-form update (Penny 2005)."""
+    """Tests for the FABBER M-prior aK closed-form update."""
 
     def test_homogeneous_field_high_aK(self) -> None:
         """Uniform posterior field produces high aK (strong coupling)."""

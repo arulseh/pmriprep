@@ -162,7 +162,7 @@ def automatic_count(
     baseline_frames: int | None = None,
     family: Model = "cpi",
 ) -> CountDecision:
-    """Choose one supported count from measured signals without ground truth.
+    """Choose a supported control-point count from measured signal decay.
 
     Parameters
     ----------
@@ -174,10 +174,9 @@ def automatic_count(
         Echo time in seconds.
     baseline_frames : int, optional
         Acquisition-supplied prebolus window. Without it, use the AIF-based
-        window employed by the existing research initializer.
+        window employed by the signal initializer.
     family : {"cpi", "cpi_vtf"}, optional
         Declared model, accounting for gamma transport's two extra coordinates.
-        This does not select a family using the observations or ground truth.
 
     Returns
     -------
@@ -186,9 +185,9 @@ def automatic_count(
 
     Notes
     -----
-    Concentration is used only by the scan-level decay heuristic, not as the
-    fitting target. A count restriction is an experimental support limit,
-    not a demonstration that this is the optimal number of parameters.
+    The scan-level decay heuristic uses concentration; the model fits signal.
+    The selected count is the nearest supported count with feasible prior
+    geometry for the acquisition and declared model family.
     """
     signals = np.asarray(signals, dtype=float)
     if signals.ndim != 2 or signals.shape[0] == 0:
@@ -263,7 +262,7 @@ def assess_fit(
     *,
     weights: np.ndarray | None = None,
 ) -> FitAssessment:
-    """Assess a complete ordinary-VI state without certifying its accuracy.
+    """Check a returned VI state for numerical failures and descriptive warnings.
 
     Parameters
     ----------

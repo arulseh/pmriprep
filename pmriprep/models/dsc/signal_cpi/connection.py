@@ -79,7 +79,7 @@ class GuidedVoxel:
     compute interface's scaling; MTT and arrival delay are seconds. K2 is s^-1.
     Rejected measurements are NaN; diagnostics retain the candidate endpoint.
     No fallback is executed here, and a provisional fit is not automatically
-    rejected. Numerical acceptance does not establish biological accuracy.
+    rejected.
     The assessment uses the image's flat index; detailed restart diagnostics
     retain their single-voxel local ownership coordinates.
     CBF standard deviation uses the same native units as CBF. The owned signal
@@ -322,11 +322,9 @@ def requested_count(decision: CountDecision | None, count: int) -> CountDecision
 def classify_result(index: int, bsw_k2: float, result: LeakageBatch) -> GuidedVoxel:
     """Convert a checked selection to native units without discarding its diagnostics.
 
-    Flow within one float64 epsilon of zero in native inverse-second units is
-    numerical boundary contact, not a positive perfusion measurement. This
-    output-only tolerance is about 1.3e-12 in the model's scaled CBF units; it
-    is not a physiological flow floor or an uncertainty threshold. At that
-    boundary, the residue shape does not supply a measured transit time.
+    Positive flow at or below float64 epsilon in native inverse-second units
+    receives the ``flow_at_zero_bound`` reason. This requests fallback and
+    leaves the perfusion measurements as NaN while retaining diagnostics.
     """
     if result.leakage_method == "none":
         bsw_k2 = np.nan

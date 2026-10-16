@@ -57,7 +57,7 @@ class ContinuousResidue:
     Parameters
     ----------
     family : str
-        Shape label, not a claim of in-vivo prevalence.
+        Residue shape label.
     mtt_seconds : float
         Integral over the full residue support, independent of scan length.
     evaluate : callable
@@ -147,7 +147,7 @@ class DispersedTissue:
     intrinsic_flow, intrinsic_mtt_seconds : float
         Primary flow and full tissue MTT truths, unchanged by transport.
     effective_peak : float
-        Grid-estimated response peak, not the physiological flow truth.
+        Maximum of the flow-scaled dispersed response on the fine lag grid.
     step_seconds, refinement_error : float
         Accepted numerical grid step and maximum relative refinement check.
     kernel_mass_in_scan, residue_area_in_scan_seconds : float

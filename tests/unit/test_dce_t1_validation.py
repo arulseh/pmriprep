@@ -253,7 +253,7 @@ class TestApplyT1CorrectionAuto:
     def test_coverage_loss_never_switches_auto_estimator(
         self, brain_mask: np.ndarray, missing_fraction: float,
     ) -> None:
-        """Auto mode retains measured support across formerly gated coverage."""
+        """Auto mode retains measured support across the tested coverage fractions."""
         t1_map = np.full((10, 10, 10), 1100.0)
         t1_map[~brain_mask] = np.nan
         corrected, result = apply_t1_correction(
@@ -282,7 +282,7 @@ class TestApplyT1CorrectionAuto:
         assert result.correction_applied == "none"
 
     def test_offset_mode_removed(self, brain_mask: np.ndarray) -> None:
-        """Additive T1 offset correction is no longer accepted."""
+        """Additive T1 offset correction is rejected."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
         wm = np.full((10, 10, 10), 0.6)
@@ -1189,7 +1189,7 @@ class TestExternalT1:
         try:
             from pmriprep.workflows.dce.base import _transform_external_t1_to_dce
             result = _transform_external_t1_to_dce(t1_file, ref_file)
-            # Load result and check values are now in ms
+            # Load the result and check its millisecond units
             result_img = nib.load(result)
             result_data = result_img.get_fdata()
             median_val = float(np.nanmedian(result_data[result_data > 0]))
@@ -1833,7 +1833,7 @@ class TestVFAFitLossGate:
     def test_nrmse_gate_bypassed_not_in_dict(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """nrmse_gate_bypassed field is removed from to_dict() output."""
+        """to_dict() omits nrmse_gate_bypassed."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
 

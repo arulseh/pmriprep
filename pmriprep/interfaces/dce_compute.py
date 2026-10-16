@@ -753,8 +753,7 @@ def _evaluate_dce_qc_mask(
     )
     ktrans_ok = np.isfinite(ktrans) & (ktrans > 0) & (ktrans < KTRANS_BOUNDS.max)
 
-    # R² > 0 requires the fitted curve to outperform its temporal mean. This
-    # is a minimal fit-adequacy screen, not evidence of parameter reliability.
+    # R² > 0 requires the fitted curve to outperform its temporal mean.
     r_squared_ok = np.isfinite(r_squared) & (r_squared > 0.0)
     patlak_volume_ok = (
         np.isfinite(vp)
@@ -2661,8 +2660,7 @@ class ComputeDCEMaps(BaseInterface):
 
         # Admit only brain voxels with finite inputs, configured signal quality,
         # and a positive concentration enhancement.
-        # Raw MR signal has arbitrary scanner units, so an absolute raw-signal
-        # standard-deviation threshold is not a valid cross-site criterion.
+        # Signal quality uses baseline tSNR, a dimensionless signal/noise ratio.
         mask_bool = mask > 0
         if tsnr_threshold > 0:
             if not np.any(mask_bool & np.isfinite(tsnr_map)):
@@ -3391,12 +3389,9 @@ class ComputeDCEMaps(BaseInterface):
             )
         )
 
-        # FXL-suspect whole-brain flag. Tissue Ct peaks above ~0.8 mM
-        # violate the Tofts fast-exchange-limit assumption. conc_data is
-        # already baseline-subtracted
-        # (C_t = (R1(t) - R1(0))/r1). Tumor-mask-stratified fraction
-        # emitted in _generate_dce_pk_fit_qc. Shutter-speed model is not
-        # viable at this pipeline's clinical TR_vol — report only.
+        # Report the fraction of finite tissue peaks above the 0.8 mM FXL-risk
+        # cutoff within the fitting mask. _generate_dce_pk_fit_qc also reports
+        # the fraction stratified by the tumor mask.
         qc_metrics["frac_fxl_risk_whole_brain"] = _fraction_fxl_risk(
             conc_data,
             fitting_mask,
@@ -3779,8 +3774,8 @@ class ComputeDCEMaps(BaseInterface):
         tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
         coords = np.stack(mask_coords, axis=1)  # (N, 3)
 
-        # The batched NLLS stage is always unconstrained. DSC-derived vp enters
-        # only the Bayesian refinement through ``voxel_data_list``.
+        # The bounded batched least-squares stage does not use the DSC vp prior.
+        # That prior enters Bayesian refinement through ``voxel_data_list``.
 
         results: list[dict[str, Any]] = []
 

@@ -1,4 +1,4 @@
-"""Phase 5: Derived metrics accuracy tests.
+"""Derived metrics accuracy tests.
 
 Tests PSR, TTP, and AUC on realistic synthetic signals. These metrics
 are computed from signal or concentration curves and feed into clinical

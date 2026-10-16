@@ -1,16 +1,7 @@
-"""Sanity tests for Phase 1 foundation pieces of the per-image QC distribution
-refactor. These guard the new helpers against regressions during the Phase 2
-wiring work, where a silent bug here would surface as a Phase 6 integration
-test failure with a much harder root-cause trace.
+"""Tests for per-image QC and sidecar helpers.
 
-Coverage targets the critical paths only:
-- ``write_tumor_dseg_tsv``: round-trip + label validation + line endings
-- ``extract_per_map_lesion_stats``: empty-input cases + happy path
-- ``enrich_brain_mask_sidecar`` / ``enrich_preproc_anat_sidecar``:
-  empty-qc no-op + happy path
-- ``build_aif_timeseries_sidecar``: per-modality units (DSC vs DCE) +
-  invalid-modality ValueError
-- ``build_tumor_seg_dseg_sidecar``: ``Columns`` block present
+Covers tumor label tables, per-map lesion statistics, flat anatomical QC
+metadata, modality-specific AIF columns and tumor segmentation sidecars.
 """
 from __future__ import annotations
 
@@ -61,8 +52,7 @@ def test_write_tumor_dseg_tsv_round_trip(tmp_path: Path) -> None:
 
     text = out.read_text()
     lines = text.split("\n")
-    # Header per bids-spec-expert PR1: abbreviation column added,
-    # redundant volume_ml dropped (consumers can divide volume_mm3/1000).
+    # The label table includes abbreviations and volume in mm³.
     assert lines[0] == "index\tname\tabbreviation\tvoxel_count\tvolume_mm3"
     assert "non_enhancing_tumor\tNET\t27" in text
     assert "contrast_enhancing_tumor\tET\t8" in text
@@ -175,10 +165,9 @@ def test_enrich_brain_mask_sidecar_happy_path() -> None:
     qc = {"brain_extraction": {"tool": "hdbet", "version": "v1.0"}}
     out = enrich_brain_mask_sidecar({}, qc)
     assert out["BrainExtractionTool"] == "hdbet"
-    # Tool version is no longer stamped per-file — it lives in the dataset-level
-    # GeneratedBy (BIDS-Derivatives idiom); the custom key was retired.
+    # Tool versions belong in dataset-level GeneratedBy.
     assert "BrainExtractionVersion" not in out
-    # No nested block (regression guard against round-1 convention)
+    # QC fields are flat.
     assert "BrainExtraction" not in out
 
 
@@ -302,7 +291,7 @@ def test_aif_sidecar_canonical_block_populated(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_tumor_seg_dseg_sidecar — Columns block was added to describe TSV
+# build_tumor_seg_dseg_sidecar — Columns metadata describes the TSV
 # ---------------------------------------------------------------------------
 
 
@@ -321,8 +310,7 @@ def test_tumor_seg_dseg_sidecar_describes_tsv_columns(tmp_path: Path) -> None:
         session="01",
     )
     assert "Columns" in sc
-    # Per bids-spec-expert PR1: abbreviation column added, redundant
-    # volume_ml dropped (consumers can divide volume_mm3/1000).
+    # Column metadata covers abbreviations and volume in mm³.
     expected_cols = {"index", "name", "abbreviation", "voxel_count", "volume_mm3"}
     assert set(sc["Columns"].keys()) == expected_cols
     # Per-column metadata follows BIDS Columns convention

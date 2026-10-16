@@ -167,7 +167,7 @@ class TestInterfacePrecomputed:
         assert out.qc_metrics["encoding"] == "percent"
 
     def test_deci_deg_locks_tfl_numbers(self, tmp_path):
-        """The legacy Siemens tfl path (735 px, FA=70) still yields ratio 1.05."""
+        """A 735 deci-degree value with a 70-degree nominal angle gives ratio 1.05."""
         out = self._run(tmp_path, 735.0, "actual_flip_deci_deg", fa=70.0)
         assert out.mean_b1 == pytest.approx(1.05, abs=1e-3)
         assert out.qc_metrics["encoding"] == "actual_flip_deci_deg"
@@ -232,11 +232,11 @@ class TestInterfacePrecomputed:
 class TestReportBoilerplate:
     """Guard against the silent B1-sentence drop after the token rename.
 
-    The renamed 'precomputed' token must key the Methods B1+ correction sentence.
+    The 'precomputed' token must key the Methods B1+ correction sentence.
     """
 
     def test_precomputed_token_yields_b1_sentence(self):
-        """The renamed token keys a non-empty B1+ correction sentence."""
+        """The precomputed token keys a non-empty B1+ correction sentence."""
         from pmriprep.utils.report_utils import _B1_CORRECTION_TEXT
 
         # QC-present path (qc_metrics["method"]) and QC-absent path (enum value)

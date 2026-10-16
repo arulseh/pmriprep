@@ -195,12 +195,10 @@ def _fine_gt_model(model, params: list[float], oversample: int = 100) -> np.ndar
     [(0.05, 0.02), (0.10, 0.05), (0.02, 0.01)],
 )
 def test_patlak_recovers_from_fine_grid(ktrans: float, vp: float) -> None:
-    """Patlak Ktrans/vp recovered from a fine-grid (dt/100) Patlak forward.
+    """Check Patlak recovery from a dt/100 forward evaluation sampled at coarse times.
 
-    Validates the trapezoidal ∫₀ᵗCp regressor against a continuous truth the
-    coarse fit did not generate; prior Patlak coverage was structural /
-    inverse-crime only. Tolerances are pinned to the measured zero-noise
-    coarse-vs-fine ∫Cp floor (Ktrans -0.5%, vp within 3e-4), not to a wide band.
+    The fitter uses the coarse AIF. Assertions allow 2% relative Ktrans error
+    and 0.002 absolute vp error for these noiseless fixtures.
     """
     aif, t = _coarse()
     model = PatlakModel()
@@ -221,21 +219,17 @@ def test_patlak_recovers_from_fine_grid(ktrans: float, vp: float) -> None:
 def test_2cxm_recovers_from_fine_grid(
     fp: float, ps: float, ve: float, vp: float
 ) -> None:
-    """2CXM parameter recovery from a fine-grid (dt/100) bi-exponential forward.
+    """Check 2CXM recovery from a dt/100 bi-exponential forward evaluation.
 
-    The only end-to-end neutral 2CXM accuracy test: the IRF coefficients are
-    validated against an ODE elsewhere, and the shared expconv is validated for
-    Tofts, but the full bi-exp-IRF ⊗ AIF → fit composition was inverse-crime
-    only. Asserts on the robust quantities (derived Ktrans, ve, vp) at zero
-    noise; PS carries a wider IQR (F3) and is not pinned tightly here.
+    The fitter uses the coarse AIF. Assertions check derived Ktrans, ve and vp
+    for two noiseless fixtures; they do not directly bound Fp or PS error.
     """
     aif, t = _coarse()
     model = TwoCompartmentExchangeModel()
     gt = _fine_gt_model(model, [fp, ps, ve, vp])
     fit = model.fit(gt, aif, t).parameters
 
-    # Tolerances pinned to the measured zero-noise recovery (Ktrans -1.2 to
-    # -1.8% from 2CXM conditioning; ve/vp within 7e-4), not a wide band.
+    # Compare derived transfer rate and volume fractions with their inputs.
     ktrans_true = (ps / (fp + ps)) * fp / 100.0
     assert fit["Ktrans"] == pytest.approx(ktrans_true, rel=0.04), (
         f"2CXM derived Ktrans {fit['Ktrans']:.4f} vs {ktrans_true:.4f}"

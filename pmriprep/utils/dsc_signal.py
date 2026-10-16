@@ -576,7 +576,7 @@ def compute_ttp_legacy(
 
     Finds time to peak concentration using unsmoothed post-bolus argmax.
     Returns unclipped acquisition-referenced peak time so callers can derive
-    AIF-arrival-referenced TTP before applying output clipping.
+    AIF-arrival-referenced TTP.
 
     Parameters
     ----------
@@ -797,7 +797,7 @@ def normalize_cbv(
 
     # Compute normalization factor
     # An explicitly requested tissue reference must yield a valid factor.
-    # Keep the historical identity behavior only when no reference was supplied.
+    # Return the input unchanged only when no reference was supplied.
     normalization_factor = (
         float("nan")
         if effective_mask is not None or brain_mask is not None

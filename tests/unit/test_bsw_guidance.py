@@ -36,7 +36,7 @@ def inputs(dtype: Any = np.float64) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 
 
 def assert_correction_equal(left: Any, right: Any) -> None:
-    """Require exact legacy arrays, scalar flags and QC, including missing values."""
+    """Require identical correction arrays, scalar flags and QC, including missing values."""
     for field in ("concentration_corrected", "k2_map", "auc_tissue"):
         np.testing.assert_array_equal(getattr(left, field), getattr(right, field))
     assert left.correction_applied == right.correction_applied

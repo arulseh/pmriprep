@@ -24,7 +24,7 @@ class TestR2StarTissue:
     """Tests for field-strength-dependent R2* tissue relaxivity lookup."""
 
     def test_r2_star_tissue_known_fields(self) -> None:
-        """Known field strengths return Kjølby 2006 / Calamante 2007 values."""
+        """Known field strengths return the configured tissue r2-star values."""
         assert get_r2_star_tissue(1.5) == 87.0
         assert get_r2_star_tissue(3.0) == 174.0
         assert get_r2_star_tissue(7.0) == 400.0
@@ -44,7 +44,7 @@ class TestR2StarTissue:
         assert get_r2_star_tissue(10.0) == 400.0
 
     def test_r2_star_legacy_alias(self) -> None:
-        """get_r2_star is a legacy alias for get_r2_star_tissue."""
+        """get_r2_star aliases get_r2_star_tissue."""
         assert get_r2_star(3.0) == get_r2_star_tissue(3.0)
         assert get_r2_star(1.5) == get_r2_star_tissue(1.5)
         assert get_r2_star(7.0) == get_r2_star_tissue(7.0)

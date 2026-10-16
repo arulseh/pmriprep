@@ -530,8 +530,6 @@ def plot_aif_candidates_glass_brain(
     cb_height = 0.6
     cb_bottom = (1.0 - cb_height) / 2.0
     cb_ax = fig.add_axes((0.92, cb_bottom, 0.012, cb_height))
-    # matplotlib.colormaps[...] is the non-deprecated accessor (>=3.7).
-    # cm.get_cmap was scheduled for removal in matplotlib 3.11.
     import matplotlib as mpl
     sm = cm.ScalarMappable(
         cmap=mpl.colormaps["autumn"],

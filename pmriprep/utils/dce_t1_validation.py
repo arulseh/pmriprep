@@ -441,7 +441,7 @@ def apply_t1_correction(
     brain_mask : ndarray, optional
         Brain mask for calculating median T1.
     has_lesion : bool
-        Whether a lesion mask is present (affects auto-mode thresholds).
+        Whether a lesion is present, retained as descriptive context.
     b1_qc_pass : bool
         B1 QC pass status retained as descriptive acquisition state.
     nan_fraction : float, optional

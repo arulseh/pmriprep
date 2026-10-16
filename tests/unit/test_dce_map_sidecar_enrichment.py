@@ -162,13 +162,7 @@ class TestPKMapKeyDriftGuard:
 
 
 class TestBATCorrectionProvenance:
-    """Regression: BATCorrection must surface from the MERGED qc dict.
-
-    ``_collect_qc_metrics`` nests the PK node qc under ``pk_modeling``, so
-    ``bat_correction`` lives at ``qc_metrics["pk_modeling"]["bat_correction"]``,
-    not the top level. The enricher must read both levels (this is the bug
-    that left BATCorrection off every PK-map sidecar in v0.62.0).
-    """
+    """BATCorrection is read from either top-level or nested PK QC metrics."""
 
     def test_surfaces_from_merged_pipeline_qc(self, base_sidecar, pk_qc_metrics):
         out = enrich_dce_pk_map_sidecar(

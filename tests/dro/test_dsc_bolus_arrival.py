@@ -1,4 +1,4 @@
-"""Phase 3: Bolus arrival detection tests.
+"""Bolus arrival detection tests.
 
 Tests detect_bolus_arrival() accuracy against known ground truth arrival
 times. This function feeds n_baseline_frames into signal_to_concentration,

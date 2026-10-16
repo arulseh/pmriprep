@@ -440,16 +440,13 @@ class TestK2RecoveryWithTransitMismatch:
     clean reference isolates regression sign and scale while retaining mismatch
     between the tissue forward model and the fitted instantaneous term. The
     absolute tolerance covers that model mismatch. The leakage itself uses
-    the fitted reference-integral equation; this is not an independent
-    extravasation validation.
+    the fitted reference-integral equation.
 
-    This deliberately does NOT probe the rectangular->trapezoidal cumulative
-    switch: the BSW K2 estimate is provably quadrature-invariant. The rect-trap
-    difference of the cumulative integral equals 0.5*dt*C_bar, which is collinear
+    For this zero-baseline reference, the rectangular-minus-trapezoidal
+    cumulative integral equals 0.5*dt*C_bar, which is collinear
     with the C_bar column of the [C_bar, integral(C_bar)] design matrix, so it is
     absorbed into that coefficient and leaves the K2 (integral) coefficient
-    unchanged. The quadrature choice therefore has no measurable effect on K2,
-    and no test can be can-fail for it here.
+    unchanged.
     """
 
     @pytest.mark.parametrize("k2_true", [0.02, 0.05, 0.1])

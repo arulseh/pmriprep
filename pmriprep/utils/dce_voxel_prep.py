@@ -125,7 +125,7 @@ def prepare_voxel_for_fitting(
 
     # Concentration conversion owns baseline subtraction. Preserve signed
     # baseline noise so CPU Bayesian paths and batched NLLS consume the same
-    # unbiased curve.
+    # baseline-subtracted curve.
     prepared = tissue_curve
 
     enhancement_max = float(np.max(prepared))

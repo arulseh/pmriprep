@@ -79,7 +79,7 @@ def test_only_single_coordinate_stencil_neighbors_seed() -> None:
 
 
 def test_uncertified_seed_retries_cold_before_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A warm-start failure cannot make a formerly certified input fail."""
+    """A failed warm start retries cold and recovers the reference convolution."""
     base = artery()
     convolution = AssociatedConvolution(base)
     convolution.cache[(.15, 1.5)] = DispersedAIF(base, .15, 1.5, 25.)

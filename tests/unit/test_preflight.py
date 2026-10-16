@@ -1033,7 +1033,7 @@ class TestDSCAgentGuardrails:
         assert "without confirmed preload" in msg.message
 
     def test_high_fa_user_no_preload_omits_cta(self):
-        # Same fix for the high-FA advisory.
+        # The high-FA advisory uses the same effective dose.
         sc = _valid_dsc_sidecar()
         sc["flip_angle"] = 60.0
         cfg = _make_dsc_config(preload=0.0)

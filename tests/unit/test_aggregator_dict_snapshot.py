@@ -145,13 +145,13 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
 
     assert out["preprocessing"]["denoising"] is True
     assert out["brain_extraction"]["tool"] == "hdbet"
-    # BrainExtractionVersion retired: tool version now lives in dataset-level
+    # Brain-extraction tool version belongs in dataset-level
     # GeneratedBy, not the per-file sidecar, so it is not surfaced here.
     assert "version" not in out["brain_extraction"]
     assert set(out["tissue_segmentation"].keys()) == {"WM", "GM", "CSF"}
     assert out["tissue_segmentation"]["WM"] == {}
 
-    # Boilerplate generator now picks up the real values
+    # Boilerplate generator uses the recorded values
     from pmriprep.utils.report_utils import _build_anat_boilerplate
 
     text = _build_anat_boilerplate(out)
@@ -207,7 +207,7 @@ def test_anat_boilerplate_coregistration_is_conditional() -> None:
 
 
 def test_anat_boilerplate_denoising_cites_manjon() -> None:
-    """The optional ANTs DenoiseImage step names + cites Manjón 2010."""
+    """The optional ANTs denoising step includes its method citation."""
     from pmriprep.utils.report_utils import _build_anat_boilerplate
 
     off = _build_anat_boilerplate({})

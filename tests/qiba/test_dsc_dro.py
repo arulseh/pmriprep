@@ -1,19 +1,9 @@
-"""QIBA DSC-MRI DRO parameter recovery tests.
+"""DSC parameter recovery with synthetic fixtures and optional TCIA data.
 
-Tests deconvolution methods against QIBA-representative synthetic data with:
-- Recirculation AIF (kappa=0.35)
-- CTH gamma-variate residue
-- Published tissue parameters
-
-Phase 1: Code-generated data (this file).
-Phase 4: TCIA GBM-DSC-MRI-DRO for external validation.
-
-Key differences from Tier 1 (tests/dro/test_dsc_recovery.py):
-1. AIF has SCR recirculation tail (harder deconvolution)
-2. CTH gamma-variate residue (non-exponential shapes)
-3. QIBA tissue parameter tables (8 tissue types)
-4. 80 timepoints (vs 60) to accommodate recirculation
-5. Cross-method comparison on identical data
+Synthetic cases use a gamma first pass with Gaussian-dispersed recirculation,
+exponential or gamma-survival residues, and chosen tissue/noise presets.
+They compare methods on the same generated data. Separate conditional tests
+load the external TCIA GBM-DSC-MRI-DRO.
 """
 
 from typing import Tuple
@@ -123,7 +113,7 @@ def _make_qiba_exponential_data(
     float,
     float,
 ]:
-    """Generate QIBA test data with exponential residue.
+    """Generate synthetic test data with exponential residue.
 
     Returns
     -------
@@ -164,7 +154,7 @@ def _make_qiba_cth_data(
     float,
     float,
 ]:
-    """Generate QIBA test data with CTH gamma-variate residue.
+    """Generate synthetic test data with CTH gamma-variate residue.
 
     beta = mtt / alpha (from gamma distribution mean = alpha * beta).
 
@@ -234,7 +224,7 @@ SSVD_QIBA_NOISE = [
 
 
 class TestQIBASSVDExponential:
-    """sSVD recovery with QIBA AIF (recirculation) and exponential residue."""
+    """sSVD recovery with synthetic AIF (recirculation) and exponential residue."""
 
     @pytest.mark.parametrize("noise_key,threshold,cbf_tol,mtt_tol", SSVD_QIBA_NOISE)
     @pytest.mark.parametrize("tissue_key", SVD_TISSUES)
@@ -246,7 +236,7 @@ class TestQIBASSVDExponential:
         cbf_tol: float,
         mtt_tol: float,
     ) -> None:
-        """Test sSVD recovery with QIBA recirculation AIF."""
+        """Test sSVD recovery with synthetic recirculation AIF."""
         if tissue_key == "low_perfusion" and noise_key != "zero":
             pytest.xfail(
                 "SVD regularization inflates MTT for low-CBF (12) residues"
@@ -268,7 +258,7 @@ class TestQIBASSVDExponential:
 
 
 class TestQIBACSVD:
-    """cSVD delay preservation with QIBA AIF."""
+    """cSVD delay preservation with synthetic AIF."""
 
     @pytest.mark.parametrize(
         "tissue_key,delay_frames",
@@ -282,7 +272,7 @@ class TestQIBACSVD:
     def test_csvd_delay_preserves_shape(
         self, tissue_key: str, delay_frames: int
     ) -> None:
-        """Test that cSVD recovers reasonable residue with delayed QIBA data."""
+        """Test that cSVD recovers reasonable residue with delayed synthetic data."""
         tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
             tissue_key, "zero"
         )
@@ -312,7 +302,7 @@ OSVD_QIBA_NOISY = [
 
 
 class TestQIBAOSVDExponential:
-    """oSVD recovery with QIBA AIF (recirculation) and exponential residue.
+    """oSVD recovery with synthetic AIF (recirculation) and exponential residue.
 
     oSVD uses an OI-regularized block-circulant matrix. Tissue is generated
     from frame-interpolated AIF/residue curves, whose interpolation assumptions
@@ -349,7 +339,7 @@ class TestQIBAOSVDExponential:
         cbf_tol: float,
         mtt_tol: float,
     ) -> None:
-        """Test oSVD recovery with QIBA recirculation AIF and noise."""
+        """Test oSVD recovery with synthetic recirculation AIF and noise."""
         if tissue_key == "low_perfusion":
             pytest.xfail(
                 "SVD regularization inflates MTT for low-CBF (12) residues"
@@ -373,16 +363,16 @@ class TestQIBAOSVDExponential:
 
 
 class TestQIBATikhonovExponential:
-    """Tikhonov recovery with QIBA AIF, zero noise — the non-dispersed corner.
+    """Tikhonov recovery with synthetic AIF, zero noise — the non-dispersed corner.
 
     These exact-data fixtures have no interior L-curve curvature maximum.
-    P2 selects its upper-endpoint default, strongly suppressing the peak.
+    The L-curve rule selects its upper-endpoint default, strongly suppressing the peak.
     """
 
     @P2_NO_CORNER
     @pytest.mark.parametrize("tissue_key", SVD_TISSUES)
     def test_tikhonov_zero_noise(self, tissue_key: str) -> None:
-        """Test Tikhonov recovery at zero noise with QIBA AIF."""
+        """Test Tikhonov recovery at zero noise with synthetic AIF."""
         tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
             tissue_key, "zero"
         )
@@ -405,7 +395,7 @@ SSVD_CTH_NOISE = [
 
 
 class TestQIBASSVDCTH:
-    """sSVD recovery with QIBA AIF and CTH gamma-variate residue.
+    """sSVD recovery with synthetic AIF and CTH gamma-variate residue.
 
     MTT tolerances ~2x exponential because SVD bias increases with
     non-exponential residue shapes.
@@ -444,7 +434,7 @@ OSVD_CTH_NOISY = [
 
 
 class TestQIBAOSVDCTH:
-    """oSVD recovery with QIBA AIF and CTH gamma-variate residue.
+    """oSVD recovery with synthetic AIF and CTH gamma-variate residue.
 
     Evaluated against frame-interpolated fine-grid reference curves. Full-period
     residue MTT combines the signed area and regularized peak. The fixed recovery
@@ -497,7 +487,7 @@ class TestQIBATikhonovCTH:
     """Tikhonov recovery with CTH residue, zero noise only.
 
     The CTH residues are gamma-distributed transit-time mixtures. These
-    exact-data fixtures select P2's upper endpoint without an interior corner.
+    exact-data fixtures select the upper lambda endpoint without an interior corner.
     """
 
     @P2_NO_CORNER
@@ -522,7 +512,7 @@ class TestQIBATikhonovCTH:
 
 
 class TestQIBACrossMethodComparison:
-    """Compare deconvolution methods on identical QIBA data.
+    """Compare deconvolution methods on identical synthetic data.
 
     Documents relative performance without asserting ranking
     (method performance is tissue/noise dependent).
@@ -592,7 +582,7 @@ class TestQIBACrossMethodComparison:
 
 
 # =============================================================================
-# Phase 4: TCIA GBM-DSC-MRI-DRO
+# TCIA GBM-DSC-MRI-DRO
 # =============================================================================
 
 # Deconvolution methods to test
@@ -1147,7 +1137,7 @@ class TestTCIAGBMDSCDRO:
 
 
 # =============================================================================
-# Phase 4b: TCIA Preload / Leakage Correction Validation
+# TCIA Preload / Leakage Correction Validation
 # =============================================================================
 
 

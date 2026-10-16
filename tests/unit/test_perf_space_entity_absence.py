@@ -1,26 +1,8 @@
-"""Regression: BIDS space-entity compliance for derivatives.
+"""Test the project's derivative space-entity policy.
 
-Two rules enforced here:
-
-1. **Native-acquisition-space outputs in ``perf/`` MUST NOT carry a
-   ``space-`` entity.** Per BIDS-Common-Derivatives + ASLPrep precedent,
-   the ``perf/`` directory implies native acquisition space; an explicit
-   ``space-`` entity is therefore redundant and non-canonical.
-
-2. **The pmriprep-invented ``space-anat`` / ``from-anat`` / ``to-anat``
-   values are forbidden in source code.** ``anat`` is not a registered
-   BIDS space identifier (the registered individual-reference value is
-   ``T1w``). Per fmriprep/aslprep precedent and bids-spec-expert review,
-   pmriprep uses ``space-T1w`` (and ``from-T1w`` / ``to-T1w``) uniformly
-   for the chosen anat reference space; pre- vs post-contrast
-   disambiguation lives in the JSON ``SpatialReference`` field.
-   No producer writes ``space-anat_desc-lesionStats.json``; only a
-   documentation reference remains, captured by the allowlist below.
-
-Cross-modality outputs in ``anat/`` (T1w/FLAIR/T2w resampled to DCE/DSC
-space, masks describing anatomy in perf-space) DO carry
-``space-dceref``/``space-dscref`` — that is the canonical use of the entity
-and is intentionally NOT covered by this test.
+Native perfusion outputs omit a space entity. Anatomical-reference outputs
+use T1w, while structural images resampled into perfusion space use dceref
+or dscref. SpatialReference identifies the corresponding reference image.
 """
 from __future__ import annotations
 
@@ -40,7 +22,7 @@ _SPACE_ENTITY = re.compile(r"_space-")
 _PMRIPREP_ROOT = Path(__file__).resolve().parents[2] / "pmriprep"
 
 # Files where the forbidden tokens may legitimately appear in
-# *documentation* describing the historical anti-pattern. Each entry is
+# documentation examples. Each entry is
 # (relative_path, allowed_substring, justification).
 _ALLOWLIST: list[tuple[str, str, str]] = [
     (
@@ -162,12 +144,7 @@ def _scan_source_files() -> list[tuple[str, int, str, str]]:
 
 
 def test_no_pmriprep_invented_anat_space_tokens() -> None:
-    """``space-anat``/``from-anat``/``to-anat`` are pmriprep inventions.
-
-    Use ``space-T1w`` / ``from-T1w`` / ``to-T1w`` for the anat reference
-    space (per fmriprep precedent + bids-spec-expert review). One known
-    deferred exception is allowlisted (orphan stats JSON at session root).
-    """
+    """Anatomical-reference entities use T1w rather than the generic anat token."""
     findings = _scan_source_files()
     if findings:
         msg = "\nForbidden BIDS-non-canonical tokens found in pmriprep/ source:\n"

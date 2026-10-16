@@ -1,10 +1,7 @@
-"""Tests for the 3T B1+ clip harmonization (Finding 3).
+"""Test consistent 3 T B1+ bounds in T1 mapping and concentration conversion.
 
-The VFA T1 fit and the signal->concentration inversion consume the same B1+ field
-but historically clipped it to different ceilings at 3T (VFA 1.7, concentration
-1.5). For a voxel with true B1 in (1.5, 1.7] the concentration path then inverted
-C(t) at the wrong (clipped) flip while the T1 map used the true flip, biasing
-Ktrans. Raising 3T ``dce_clip_high`` to 1.7 harmonizes the two paths.
+Both paths use an upper B1+ ratio of 1.7. Synthetic comparisons with a 1.5
+conversion ceiling measure the effect of mismatched effective flip angles.
 """
 from __future__ import annotations
 
@@ -52,18 +49,18 @@ def _invert(signal: np.ndarray, b1: float) -> np.ndarray:
 
 
 class TestHighB1Harmonization:
-    """True B1 in the newly-included (1.5, 1.7] band."""
+    """Concentration recovery for a true B1+ ratio between 1.5 and 1.7."""
 
     def test_new_clip_recovers_peak_and_beats_old(self, monkeypatch) -> None:
-        """NEW (1.7) recovers the known peak C; OLD (1.5) is more biased."""
+        """A 1.7 ceiling recovers the peak more closely than a 1.5 ceiling."""
         c_peak = 0.5
         signal, c_curve = _forward_signal(true_b1=1.6, c_peak=c_peak)
 
-        # NEW: production constants (dce_clip_high == 1.7 == vfa_clip_high).
+        # Production constants (dce_clip_high == 1.7 == vfa_clip_high).
         c_new = _invert(signal, b1=1.6)
         err_new = abs(c_new[-1] - c_peak)
 
-        # OLD: restore the split ceiling (dce_clip_high == 1.5).
+        # Compare with a lower conversion ceiling (dce_clip_high == 1.5).
         old_entry = dce_constants.B1_THRESHOLDS_BY_FIELD[3.0]._replace(
             dce_clip_high=1.5
         )
@@ -71,15 +68,15 @@ class TestHighB1Harmonization:
         c_old = _invert(signal, b1=1.6)
         err_old = abs(c_old[-1] - c_peak)
 
-        assert err_new == pytest.approx(0.0, abs=5e-3)  # flip now matches the T1 map
+        assert err_new == pytest.approx(0.0, abs=5e-3)  # Effective flip matches the T1 map
         assert err_new < err_old  # harmonization removes the high-B1 bias
 
 
 class TestLowB1Unchanged:
-    """True B1 <= 1.5 is below both ceilings: no behaviour change."""
+    """B1+ ratios at or below 1.5 fall below both comparison ceilings."""
 
     def test_b1_below_old_ceiling_is_identical(self, monkeypatch) -> None:
-        """B1 = 1.4 gives byte-identical C under the old and new clip."""
+        """A B1+ ratio of 1.4 produces equal concentration arrays with either ceiling."""
         signal, _ = _forward_signal(true_b1=1.4, c_peak=0.5)
         c_new = _invert(signal, b1=1.4)
 

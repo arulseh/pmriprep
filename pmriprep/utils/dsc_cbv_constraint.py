@@ -482,7 +482,7 @@ def assess_dsc_cbv_quality(
     # --- AIF Candidate Count ---
     # Single-voxel AIF has no noise averaging; AIF SNR < 20 degrades
     # SVD deconvolution.  Default 3 when key is
-    # absent for backward compatibility (no penalty).
+    # absent without a quality penalty.
     n_candidates = int(aif_qc_data.get("n_aif_voxels_selected", 3))
     result.n_aif_voxels = n_candidates
 
@@ -604,9 +604,7 @@ def ncbv_to_vp_prior(
 
     Scales each voxel's nCBV by the assumed NAWM plasma volume fraction:
     ``vp = nawm_vp_reference * ncbv_data``. Normalization cancels common
-    multiplicative scaling of voxel and reference CBV. Tissue-dependent
-    recirculation or truncation effects need not cancel, so this conversion
-    supplies a prior anchor rather than an independently measured vp.
+    multiplicative scaling of voxel and reference CBV.
 
     Parameters
     ----------
@@ -751,7 +749,7 @@ def determine_constraint_mode(
 
     if confidence in ("high", "moderate"):
         # Signed K2 is descriptive. The prior uses a fixed relative standard
-        # deviation rather than a subject-specific uncertainty estimate.
+        # deviation.
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=SIGMA_SOFT_DSC_PRIOR,
@@ -799,7 +797,7 @@ def prepare_vp_constraint_from_data(
     2. nCBV→vp prior conversion via ``ncbv_to_vp_prior``
        (vp = NAWM_VP_REFERENCE × nCBV)
     3. Constraint mode determination
-    4. Magnitude gate: SKIP downgrade when derived vp is non-physiological
+    4. Magnitude gate: SKIP when the derived vp median is outside policy bounds
 
     If ``ncbv_file`` is None or does not exist, returns a SKIP result with
     ``qc_report["skip_reason"] = "no_nawm_mask"``. This is the expected
@@ -1002,13 +1000,8 @@ def prepare_vp_constraint_from_data(
         )
 
         # Step 4: Magnitude gate (undershoot + overshoot).
-        # Physiological plausibility: WM vp ≈ 0.005–0.015,
-        # GM ≈ 0.015–0.025, tumor up to ~0.05. Values outside
-        # [VP_MEDIAN_MIN, VP_MEDIAN_MAX] indicate a gross calibration
-        # failure — downgrade to SKIP rather than feeding biased priors
-        # into DCE fitting. The existing scale-mismatch guard in
-        # dce_compute only catches overshoot, so this gate adds the
-        # undershoot protection.
+        # Withhold the prior when its median falls outside the configured
+        # interval. This gate tests scale plausibility, not calibration truth.
         if not (VP_MEDIAN_MIN <= vp_median <= VP_MEDIAN_MAX):
             logger.warning(
                 "Derived vp median %.4f outside physiological range "

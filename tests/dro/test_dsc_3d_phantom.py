@@ -1,4 +1,4 @@
-"""Phase 7: Multi-tissue 3D phantom full-chain tests.
+"""Multi-tissue 3D phantom full-chain tests.
 
 Capstone integration test exercising signal -> concentration -> AIF detection
 -> K2 correction -> deconvolution -> normalization on a single phantom.

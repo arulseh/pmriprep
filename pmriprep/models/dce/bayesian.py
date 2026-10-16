@@ -41,7 +41,7 @@ from pmriprep.models.dce.base import (
 )
 from pmriprep.utils.dce_constants import VP_BOUNDS, VP_VE_TOTAL_MAX
 
-# Re-export BayesianPrior for backward compatibility
+# Expose the shared BayesianPrior through this module
 __all__ = [
     "BayesianPKFitter",
     "BayesianPrior",
@@ -69,7 +69,7 @@ QC_RHAT_MAX: float = 1.1
 #: Minimum acceptable effective sample size
 QC_ESS_MIN: int = 100
 
-#: Physiological noise floor for DCE concentration (~0.001 mM at tSNR=50).
+#: Minimum concentration noise SD (mM) used by the Bayesian fitting policy.
 #: Prevents profile likelihood sigma from collapsing to near-zero when
 #: the model fits data very well, which would make log-likelihood overwhelm
 #: the prior and reduce MAP to unconstrained MLE.
@@ -551,18 +551,9 @@ class BayesianPKFitter:
                 # (e.g., ve + vp > 1.0) causing objective to return inf
                 if all(np.isfinite([f_pp, f_pm, f_mp, f_mm])):
                     h_ij = (f_pp - f_pm - f_mp + f_mm) / (4 * eps[i] * eps[j])
-                    # Reject extreme Hessian entries that would make
-                    # covariance near-singular, producing unreliable
-                    # Laplace approximation uncertainties.
-                    # With profile-likelihood objectives (30-120 time points,
-                    # sigma ~ 0.001-0.01), individual entries are typically
-                    # O(10^3-10^6). The 1e8 threshold provides ~100x headroom
-                    # above expected maxima.
-                    # Caveat: at very low permeability (NAWM, Ktrans~0.001
-                    # with σ~0.001 mM and N≈100), the diagonal can sit close
-                    # to 1e8; uncertainties for those voxels are dominated
-                    # by the prior fallback. Acceptable: NAWM is a reference
-                    # region, not a clinical-decision target.
+                    # Keep Hessian entries with magnitude below 1e8. For a
+                    # rejected diagonal entry, use inverse prior variance,
+                    # or 1.0 if the supplied prior SD is nonpositive.
                     if abs(h_ij) < 1e8:
                         hessian[i, j] = h_ij
                     elif i == j:
@@ -818,8 +809,7 @@ class BayesianPKFitter:
                     )
                 uncertainty_source = "laplace_hessian"
             except np.linalg.LinAlgError:
-                # A prior width is not a posterior uncertainty estimate. Keep
-                # the fitted parameters, but mark their local spread undefined.
+                # Retain fitted parameters and mark local uncertainty undefined.
                 names = self.model.get_parameter_names()
                 uncertainties = {
                     name: float("nan") for name in names
@@ -919,14 +909,11 @@ class BayesianPKFitter:
         -----
         Finite rate bounds constrain each local quadratic mean update.
         Covariance remains a local Gaussian approximation, with reported
-        marginal intervals intersected with model support; this is not an
-        exact truncated-posterior uncertainty calculation at an active bound.
+        marginal intervals intersected with model support.
         Backtracking trials are evaluated before acceptance. Convergence
         requires an accepted trial and either a small full proposed mean
         update or absolute free-energy changes below ``VI_FREE_ENERGY_TOL``
-        for both the full proposal and accepted trial. Shrinking an update
-        alone cannot establish convergence. An exhausted line search without
-        accepted progress is not itself evidence of convergence.
+        for both the full proposal and accepted trial.
 
         """
         if sloppy:

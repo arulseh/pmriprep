@@ -1,20 +1,10 @@
-"""Golden characterization harness for ``AIFDetection._run_interface``.
+"""Characterize DCE AIF interface outputs on deterministic fixtures.
 
-This pins the end-to-end behaviour of the DCE AIF detection interface across a
-config matrix BEFORE the ~790-line ``_run_interface`` is decomposed into phase
-methods, and is the byte-identity gate for every extraction step. It also closes
-a real coverage gap: the interface was previously exercised end-to-end only by
-``TestDetectedAIFEmissionInSitu``.
-
-Each matrix cell runs ``_run_interface`` (via ``iface.run()``), canonicalises
-``self._results`` at FULL float precision (``float.hex``) plus the on-disk AIF
-mask (nonzero count + coords — the mask is not in ``self._results``), and diffs
-against a committed baseline. Set ``PMRIPREP_REGEN_DCE_AIF_GOLDEN=1`` to
-regenerate the baseline after an INTENTIONAL change.
-
-Determinism: the emit/finalize path has no RNG; detection is deterministic on
-fixed input. Cascade-dependent cells mock ``_run_two_pass_cascade`` with a fixed
-``CascadeResult`` so the real emit runs on fixed synthetic data.
+Each matrix cell runs the real interface and compares results at full float
+precision, including the saved mask, with a committed snapshot. Cascade cells
+mock candidate selection with fixed results; they test emission and provenance,
+not the complete detection algorithm. Set PMRIPREP_REGEN_DCE_AIF_GOLDEN=1 only
+for an intentional, reviewed snapshot update.
 """
 from __future__ import annotations
 
@@ -243,7 +233,7 @@ def test_population_aif_preserves_arrival_at_coarse_sampling(tmp_path: Path) -> 
 
 
 def _cell_external(tmp_path: Path) -> dict[str, Any]:
-    """Cell 7: external AIF file — P1 early-return path."""
+    """Cell 7: external AIF file — external-input path."""
     conc, mask = _make_conc()
     conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
     ext = tmp_path / "external_aif.txt"
@@ -304,7 +294,7 @@ def test_external_aif_retains_signed_baseline_noise(
 
 
 def _cell_c2_divergence(tmp_path: Path) -> dict[str, Any]:
-    """Cell 2: mocked cascade, C2 divergence — detected emit C2 branch."""
+    """Cell 2: mocked cascade, post-filter divergence — detected emit post-filter branch."""
     a, b, c = (10, 10, 10), (10, 11, 10), (11, 10, 10)
     conc, mask = _make_conc(arterial_coords=[a, b, c])
     conc_f, mask_f = _write_niftis(tmp_path, conc, mask)

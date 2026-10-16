@@ -1,4 +1,4 @@
-"""Phase 2a: ``desc-dscPreproc_dsc.json`` carries flat-prefixed cosmetic QC.
+"""``desc-dscPreproc_dsc.json`` carries flat-prefixed cosmetic QC.
 
 Asserts that ``enrich_dsc_preproc_sidecar`` injects ``Preload*`` and
 unprefixed motion/signal keys onto a base sidecar dict, and that base
@@ -86,7 +86,7 @@ class TestPreprocessingCosmeticKeys:
             preload_qc=preload_qc,
             preprocessing_stats=preprocessing_stats,
         )
-        # Motion (no prefix per bids-spec-expert)
+        # Motion fields have no modality prefix
         assert out["MotionFDMean"] == pytest.approx(0.18)
         assert out["MotionFDMax"] == pytest.approx(0.62)
         assert out["MotionPercentOutliers"] == pytest.approx(1.5)

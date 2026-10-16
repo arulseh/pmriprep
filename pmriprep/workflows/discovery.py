@@ -648,7 +648,7 @@ def _find_dsc_candidates(
     Returns
     -------
     list of Path
-        DSC candidates, or legacy perfusion BOLD candidates when DSC is absent.
+        DSC candidates, or perfusion BOLD candidates when DSC is absent.
     """
     perf_files = [
         Path(p) for p in layout.get(
@@ -795,7 +795,7 @@ def _classify_b1_data(
         except Exception:
             return {}
 
-    # --- Phase 1: tfl_b1map pre-computed B1+ maps (acq-famp) ---
+    # --- tfl_b1map pre-computed B1+ maps (acq-famp) ---
     tfl_candidates: list[tuple[Path, Optional[float]]] = []
     for b1_path in b1_files:
         fname = b1_path.name.upper()
@@ -844,7 +844,7 @@ def _classify_b1_data(
 
         tfl_candidates.append((b1_path, nominal_prep_fa))
 
-    # --- Phase 1b: vendor-neutral pre-computed TB1map (Units-driven) ---
+    # --- vendor-neutral pre-computed TB1map (Units-driven) ---
     # BIDS TB1map is a preprocessed parametric map whose encoding is signaled by
     # the ``Units`` sidecar (RECOMMENDED, so may be absent → "auto" median infer).
     _UNITS_TO_ENCODING = {
@@ -876,7 +876,7 @@ def _classify_b1_data(
     precomputed_paths.extend(path for path, _, _ in tb1map_candidates)
     result["b1_precomputed_candidates"] = precomputed_paths
 
-    # --- Phase 2: 4D AFI (TB1AFI or non-canonical *AFI* with 2 volumes) ---
+    # --- 4D AFI (TB1AFI or non-canonical *AFI* with 2 volumes) ---
     afi_files = [
         f for f in b1_files
         if "TB1TFL" not in f.name.upper() and "TB1MAP" not in f.name.upper()

@@ -1,14 +1,8 @@
-"""Can-fail tests: Tofts/ExtTofts must recover Ktrans across the kep range on
-the canonical Parker 2006 population AIF (the form production uses).
+"""Test Tofts-family recovery with a sampled Parker population AIF.
 
-A prior initialization bug seeded Ktrans from a divided-Patlak-plot slope that
-collapses for reversible high-kep tissue (the enhancing tumor rim), letting the
-optimizer run away (Ktrans +250-360%). The windowed initial-uptake-slope
-estimator fixes it. F1: an ExtTofts init landing ve+vp>1 was trapped by an
-in-objective volume clip (now removed, plus the init is clamped feasible).
-
-Inverse-crime (same forward for generate and fit) so quadrature cancels and the
-test isolates the init/optimizer behavior.
+Synthetic tissue and fitting use the same forward model, so these tests
+isolate initialization and optimization behavior across the stated parameter
+and noise fixtures. They do not establish recovery for arbitrary acquisitions.
 """
 from __future__ import annotations
 
@@ -22,7 +16,7 @@ from pmriprep.models.dce.tofts import ToftsModel
 def _parker_aif(
     n: int = 80, dt_min: float = 0.0667, arrival_min: float = 0.5
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Canonical Parker 2006 (Eq 1, Table 1) population AIF, peak-normalized."""
+    """Sample a Parker population AIF and normalize its peak."""
     t = np.arange(n) * dt_min
     tt = np.maximum(t - arrival_min, 0.0)
     a = (0.809, 0.330)
@@ -41,7 +35,7 @@ def _parker_aif(
 
 @pytest.mark.parametrize("ve", [0.05, 0.1, 0.15, 0.2, 0.4])
 def test_tofts_recovers_ktrans_across_kep(ve: float) -> None:
-    """F2: Ktrans recovered within 2% across kep = 0.75 .. 6.0 (tumor rim)."""
+    """Ktrans is recovered within 2% across kep = 0.75 to 6.0 in these fixtures."""
     aif, t = _parker_aif()
     model = ToftsModel()
     ktrans = 0.3
@@ -54,7 +48,7 @@ def test_tofts_recovers_ktrans_across_kep(ve: float) -> None:
 
 @pytest.mark.parametrize("ve,vp", [(0.5, 0.25), (0.7, 0.2), (0.6, 0.3)])
 def test_extended_tofts_recovers_ktrans_high_volume(ve: float, vp: float) -> None:
-    """F1: Ktrans recovered within 2% at the high-ve/high-vp constraint corner."""
+    """Ktrans is recovered within 2% in the tested high-ve/high-vp fixtures."""
     aif, t = _parker_aif()
     model = ExtendedToftsModel()
     ktrans = 0.3
@@ -64,7 +58,7 @@ def test_extended_tofts_recovers_ktrans_high_volume(ve: float, vp: float) -> Non
 
 
 def test_tofts_high_kep_stable_under_noise() -> None:
-    """F2 stays unbiased under clinical noise (no runaway)."""
+    """Median Ktrans across 50 noise realizations is within 5% of fixture truth."""
     aif, t = _parker_aif()
     model = ToftsModel()
     ktrans, ve = 0.3, 0.1  # kep = 3
@@ -78,14 +72,7 @@ def test_tofts_high_kep_stable_under_noise() -> None:
 
 
 def test_tofts_kep_boundary_no_runaway() -> None:
-    """Pin the identifiability boundary at kep~10 (ve at floor).
-
-    This is where recovery ends: the kep->inf / ve->0 corner is intrinsically
-    non-identifiable (the reversible ve*Cp and vascular vp*Cp forms coincide,
-    even under analytic convolution), so the correct end state is a QC flag,
-    not a fabricated value. The fix must at least not silently run away here
-    (the old failure); at zero noise it still recovers accurately.
-    """
+    """Recover Ktrans within 10% for the noiseless kep=10, ve=0.05 fixture."""
     aif, t = _parker_aif()
     model = ToftsModel()
     ktrans, ve = 0.5, 0.05  # kep = 10
@@ -95,8 +82,7 @@ def test_tofts_kep_boundary_no_runaway() -> None:
 
 
 def test_zero_ktrans_not_inflated() -> None:
-    """Guard the regression the rescue caused: pure-vascular (Ktrans=0) tissue
-    must not be inflated into a spurious high-Ktrans / ve->0 solution."""
+    """The pure-vascular fixture returns Ktrans below 0.015."""
     aif, t = _parker_aif()
     model = ExtendedToftsModel()
     gt = model.evaluate([0.0, 0.2, 0.05], aif, t)

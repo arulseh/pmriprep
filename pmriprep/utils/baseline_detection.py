@@ -4,20 +4,20 @@ Two-pass approach that solves the circular dependency problem: z-score
 methods need a baseline_window, but choosing the window requires knowing
 where the baseline ends.
 
-**Phase 1 — Derivative Anchor:** Find bolus arrival from the largest
+**Stage 1 — Derivative Anchor:** Find bolus arrival from the largest
 derivative event (max-slope backtrack + 2nd derivative peak).  These
 methods need NO baseline_window and are immune to preload washout.
 
-**Phase 2 — Z-Score Refinement:** Use the Phase 1 anchor to safely
+**Stage 2 — Z-Score Refinement:** Use the Stage 1 anchor to safely
 set ``baseline_window = anchor - 2``, then run z-score methods to
 refine ±1-2 frames.  Asymmetric: earlier detection is useful (catches
 gradual onset); much later detection is suspicious (preload noise).
 
-**Phase 3 — Multi-Signal Consensus:** When multiple signal
-representations are available (p99, p90, mean), run Phase 1+2 on each
+**Stage 3 — Multi-Signal Consensus:** When multiple signal
+representations are available (p99, p90, mean), run Stage 1+2 on each
 and take the median.
 
-**Phase 4 — Confidence:** Report HIGH/MEDIUM/LOW for QC.
+**Stage 4 — Confidence:** Report HIGH/MEDIUM/LOW for QC.
 """
 
 import logging
@@ -61,19 +61,15 @@ def robust_noise_sigma(
     mad = np.median(np.abs(diffs - med), axis=axis)
     return np.asarray(1.4826 * mad / np.sqrt(2.0), dtype=np.float64)
 
-#: Minimum fractional signal change to accept Phase 2 earlier refinement.
-#: At clinical Gd doses (0.1 mmol/kg), first-frame tissue enhancement
-#: is 5-15%. 1.5% is conservatively below this for low-dose/saturated cases.
+#: Minimum fractional signal change to accept Stage 2 earlier refinement.
 _MIN_FRACTIONAL_CHANGE: float = 0.015
 
-#: Minimum baseline frames for reliable z-score estimation.
-#: With N<8, std has >28% coefficient of variation (chi-distribution),
-#: making 3-sigma thresholds unreliable for detecting bolus onset.
+#: Minimum baseline count required before accepting earlier z-score refinement.
 _MIN_BASELINE_ZSCORE: int = 8
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 detectors — no baseline_window needed
+# Stage 1 detectors — no baseline_window needed
 # ---------------------------------------------------------------------------
 
 
@@ -176,7 +172,7 @@ def _detect_second_derivative_peak(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 detectors — require baseline_window (derived from Phase 1)
+# Stage 2 detectors — require baseline_window (derived from Stage 1)
 # ---------------------------------------------------------------------------
 
 
@@ -246,7 +242,7 @@ def _detect_cusum(
 
 
 # ---------------------------------------------------------------------------
-# Core: single-signal Phase 1 + Phase 2
+# Core: single-signal Stage 1 + Stage 2
 # ---------------------------------------------------------------------------
 
 _TR_THRESHOLD_2ND_DERIV = 4.0  # seconds — below this, 2nd derivative is useful
@@ -257,13 +253,13 @@ def _detect_single_signal(
     tr: float,
     min_baseline: int,
 ) -> tuple[int, str, dict[str, Any]]:
-    """Run Phase 1 + Phase 2 on a single signal.
+    """Run Stage 1 + Stage 2 on a single signal.
 
     Returns (arrival_frame, confidence, phase_diagnostics).
     """
     diag: dict[str, Any] = {}
 
-    # --- Phase 1: Derivative Anchor ---
+    # --- Stage 1: Derivative Anchor ---
     anchor_slope = _detect_max_slope_backtrack(signal, min_baseline=min_baseline)
     anchor: int | None
 
@@ -295,8 +291,8 @@ def _detect_single_signal(
     anchor = max(anchor, min_baseline)
     diag["phase1_anchor"] = anchor
 
-    # --- Phase 2: Z-Score Refinement ---
-    # baseline_window derived from anchor — guaranteed no bolus contamination
+    # --- Stage 2: Z-Score Refinement ---
+    # Use frames ending two before the anchor, with a three-frame minimum.
     bl_window = max(3, anchor - 2)
     n_consec = max(1, min(3, int(4.0 / max(tr, 0.1))))
 
@@ -313,15 +309,14 @@ def _detect_single_signal(
     # - 2+ methods detect EARLIER by 1-3 frames → refine (gradient onset)
     # - 2+ methods detect LATER by >3 frames → keep anchor (preload noise)
     #
-    # Two guards prevent false early detection:
-    # 1. Short-baseline skip: z-score std has >35% CV with <8 samples
-    # 2. Magnitude guard: signal change must exceed 1.5% (physiological minimum)
+    # Earlier refinement requires enough baseline frames and a fractional
+    # signal change above the configured floor.
     skip_earlier = bl_window < _MIN_BASELINE_ZSCORE
     earlier = [v for v in valid_p2.values() if 0 < anchor - v <= 3]
     if len(earlier) >= 2 and not skip_earlier:
         refined = max(earlier)  # latest of the earlier estimates
 
-        # Magnitude guard: verify signal change is physiologically meaningful
+        # Compare the fractional signal change with the configured floor.
         bl_mean = float(np.mean(signal[:bl_window]))
         if abs(bl_mean) > 1e-6:
             frac_change = abs(float(signal[refined]) - bl_mean) / abs(bl_mean)
@@ -334,7 +329,7 @@ def _detect_single_signal(
 
         if frac_change >= _MIN_FRACTIONAL_CHANGE:
             diag["phase2_action"] = f"refined_earlier_to_{refined}"
-            # Phase 1 and Phase 2 agree within a few frames → high confidence
+            # Stage 1 and Stage 2 agree within a few frames → high confidence
             confidence = "high"
             return max(refined, min_baseline), confidence, diag
         else:
@@ -353,7 +348,7 @@ def _detect_single_signal(
         diag["phase2_action"] = "confirmed_by_lagged_zscore"
         return max(anchor, min_baseline), "high", diag
 
-    # Check agreement: how many Phase 2 methods are within ±2 of anchor?
+    # Check agreement: how many Stage 2 methods are within ±2 of anchor?
     near_anchor = [v for v in valid_p2.values() if abs(v - anchor) <= 2]
 
     if len(near_anchor) >= 2:
@@ -363,7 +358,7 @@ def _detect_single_signal(
         confidence = "medium"
         diag["phase2_action"] = "no_phase2_data"
     else:
-        # Phase 2 disagrees — check if max derivative is strong enough
+        # Stage 2 disagrees — check if max derivative is strong enough
         deriv = np.diff(signal.astype(np.float64))
         max_d = float(np.max(deriv)) if len(deriv) > 0 else 0
         med_d = float(np.median(np.abs(deriv))) if len(deriv) > 0 else 0
@@ -390,16 +385,16 @@ def detect_baseline_ensemble(
 ) -> tuple[int, dict[str, Any]]:
     """Detect bolus arrival via derivative-anchored two-pass ensemble.
 
-    **Phase 1:** Derivative-based anchor (max-slope backtrack + 2nd
+    **Stage 1:** Derivative-based anchor (max-slope backtrack + 2nd
     derivative peak).  Needs no baseline_window.  Immune to preload.
 
-    **Phase 2:** Z-score refinement using Phase 1 baseline window.
+    **Stage 2:** Z-score refinement using Stage 1 baseline window.
     Asymmetric: earlier detection refines; much later is suspicious.
 
-    **Phase 3:** Multi-signal consensus (when ``additional_signals``
-    provided).  Median of per-signal Phase 1+2 results.
+    **Stage 3:** Multi-signal consensus (when ``additional_signals``
+    provided).  Median of per-signal Stage 1+2 results.
 
-    **Phase 4:** Confidence scoring (HIGH/MEDIUM/LOW).
+    **Stage 4:** Confidence scoring (HIGH/MEDIUM/LOW).
 
     Parameters
     ----------
@@ -439,7 +434,7 @@ def detect_baseline_ensemble(
         diag.update(method="fallback_constant", confidence="low")
         return min_baseline, diag
 
-    # --- Phase 1 + 2 on primary signal ---
+    # --- Stage 1 + 2 on primary signal ---
     primary_arrival, primary_conf, primary_diag = _detect_single_signal(
         signal, tr, min_baseline,
     )
@@ -447,7 +442,7 @@ def detect_baseline_ensemble(
     diag["primary_arrival"] = primary_arrival
     diag["primary_confidence"] = primary_conf
 
-    # --- Phase 3: Multi-signal consensus ---
+    # --- Stage 3: Multi-signal consensus ---
     if additional_signals:
         all_arrivals = [(primary_arrival, primary_conf)]
 
@@ -491,7 +486,7 @@ def detect_baseline_ensemble(
             elif spread > 5:
                 primary_conf = "medium" if primary_conf == "high" else primary_conf
 
-    # --- Phase 4: Confidence ---
+    # --- Stage 4: Confidence ---
     diag["confidence"] = primary_conf
     diag["method"] = "derivative_anchored"
     diag["arrival_frame"] = primary_arrival

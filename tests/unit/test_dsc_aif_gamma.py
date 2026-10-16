@@ -303,12 +303,10 @@ class TestFitGammaVariate:
         assert result.r_squared > 0.7
 
     def test_large_recirculation_r_squared(self) -> None:
-        """Regression: large recirculation tail must not cause spurious R² rejection.
+        """Check first-pass fit quality with a persistent synthetic recirculation tail.
 
-        Reproduces the sub-01 run2 scenario where a 120-frame AIF with
-        baseline_frames=45, sharp first-pass peak (~28 mM), and persistent
-        recirculation tail (~2-3 mM) caused R² = -0.554 because R² was
-        evaluated after AUC-preservation scaling inflated the fitted curve.
+        With AUC preservation enabled, the fit must converge, retain R² above 0.5
+        and keep its peak below 1.2 times the measured first-pass peak.
         """
         n_frames = 120
         t = np.arange(n_frames, dtype=np.float64)
@@ -347,18 +345,10 @@ class TestFitGammaVariate:
         )
 
     def test_symmetric_auc_window_preloaded(self) -> None:
-        """Regression: preloaded-shape AIF (first-pass + persistent tail)
-        produces auc_ratio ∈ [0.85, 1.15] with the symmetric-window fix.
+        """Measured and fitted AUC use the same first-pass window.
 
-        Pre-fix: ``auc_original`` was full-curve while ``auc_fitted`` was
-        first-pass-window only, giving auc_ratio ~0.4-0.6 for any
-        non-trivial tail (4 Gadovist 0.75+0.75 split-dose subjects all
-        rejected on this asymmetric ratio despite R²>0.94).
-
-        Uses ``preserve_auc=False`` so ``auc_ratio`` reflects pre-scaling
-        shape mismatch — the metric we actually care about. With the
-        symmetric window, ratio is near 1.0; the asymmetric (full-curve)
-        denominator would have given ~0.5 here.
+        With AUC preservation disabled, the persistent-tail fixture has a
+        pre-scaling area ratio between 0.85 and 1.15.
         """
         n_frames = 120
         t = np.arange(n_frames, dtype=np.float64)
@@ -579,13 +569,7 @@ class TestShouldApplyGammaFit:
         assert metrics["auc_ratio_warning"] is False
 
     def test_should_apply_gamma_fit_accepts_defect_with_bad_auc_ratio(self) -> None:
-        """Defect-positive AIF + auc_ratio outside [0.85, 1.15] still accepts.
-
-        Regression for the preloaded-DSC case: 4 Gadovist 0.75+0.75 subjects
-        had R²>0.94 + recirculation defect, but the (asymmetric, pre-fix)
-        auc_ratio was 0.39-0.59 and the gate rejected. With the gate
-        demoted, defect detection drives acceptance regardless of auc_ratio.
-        """
+        """A recirculation defect can admit a fit despite an AUC-ratio warning."""
         # Build a defect-positive AIF (clean first pass + recirculation hump)
         aif = _make_clean_aif()
         peak_idx = int(np.argmax(aif))
@@ -607,9 +591,7 @@ class TestShouldApplyGammaFit:
     def test_should_apply_gamma_fit_rejects_insufficient_first_pass_samples(
         self,
     ) -> None:
-        """Hard prerequisite: < 8 first-pass samples → reject regardless of fit
-        quality (Welker AJNR 2015, Calamante MRM 2010).
-        """
+        """Fewer than eight first-pass samples reject a fit despite high R-squared."""
         aif = _make_clean_aif()
         fit = _make_fit_result(
             aif, r_squared=0.99, auc_ratio=1.0, first_pass_n=5,

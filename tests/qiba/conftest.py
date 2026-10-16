@@ -1,34 +1,8 @@
-"""QIBA DSC-MRI DRO utilities, parameter tables, and fixtures.
+"""Synthetic DSC fixtures and optional TCIA data loaders.
 
-Provides QIBA-representative AIF with recirculation (Patil & Johnson 2011),
-CTH (capillary transit time heterogeneity) residue functions (Mouridsen 2006),
-and published tissue parameter tables (Semmineh 2017, Boxerman 2020).
-
-Phase 1: Code-generated synthetic data for CI.
-Phase 4: TCIA GBM-DSC-MRI-DRO (Semmineh 2017) for external validation.
-
-References
-----------
-    Patil V, Johnson G. An improved model for describing the contrast
-    bolus in perfusion MRI. Med Phys 2011;38:6380-6383.
-
-    Mouridsen K, Friston K, Hjort N, et al. Bayesian estimation of
-    cerebral perfusion using a physiological model of microvasculature.
-    NeuroImage 2006;33:570-579.
-
-    Semmineh NB, Stokes AM, Bell LC, Boxerman JL, Quarles CC.
-    A population-based digital reference object (DRO) for optimizing
-    dynamic susceptibility contrast (DSC)-MRI methods for clinical trials.
-    Tomography 2017;3:41-49.
-
-    Boxerman JL, Quarles CC, Hu LS, et al. Consensus recommendations
-    for a dynamic susceptibility contrast MRI protocol for use in
-    high-grade gliomas. Neuro-Oncology 2020;22:1262-1275.
-
-    Ostergaard L, Weisskoff RM, Chesler DA, Rosen BR. High resolution
-    measurement of cerebral blood flow using intravascular tracer bolus
-    passages. Part I: Mathematical approach and statistical analysis.
-    MRM 1996;36:715-725.
+Provides gamma-variate AIFs with recirculation, transit-time residue models
+and tissue parameter presets for synthetic recovery tests. External TCIA tests
+require separately prepared local data.
 """
 
 import json
@@ -69,7 +43,7 @@ __all__ = [
     "fine_grid_forward",
     "make_exponential_residue",
     "deconvolve_dro_batch",
-    # TCIA GBM-DSC-MRI-DRO (Phase 4)
+    # TCIA GBM-DSC-MRI-DRO
     "TCIA_DRO_ROOT",
     "TCIAConfig",
     "TCIADROData",
@@ -93,7 +67,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class QIBATissueParams:
-    """QIBA-representative tissue perfusion parameters.
+    """Synthetic tissue perfusion parameters.
 
     CBV is derived via central volume theorem: CBV = CBF * MTT / 60.
     Never independently specified.
@@ -107,7 +81,7 @@ class QIBATissueParams:
     mtt : float
         Mean transit time (seconds).
     description : str
-        Source reference and notes.
+        Description of the synthetic scenario.
     """
 
     name: str
@@ -130,9 +104,9 @@ class QIBATissueParams:
 class CTHConfig:
     """Capillary transit time heterogeneity configuration.
 
-    Controls the shape of the gamma-variate residue function.
-    alpha → ∞ gives exponential (no heterogeneity).
-    alpha → 1 gives maximum heterogeneity.
+    Controls the gamma transit-time distribution and its survival residue.
+    At fixed MTT, alpha = 1 gives an exponential residue; increasing alpha
+    reduces relative dispersion and approaches a box-shaped residue.
 
     Attributes
     ----------
@@ -151,7 +125,7 @@ class CTHConfig:
 
 @dataclass(frozen=True)
 class QIBANoiseLevel:
-    """Noise level for QIBA DRO tests.
+    """Noise level for synthetic DSC tests.
 
     Attributes
     ----------
@@ -169,7 +143,7 @@ class QIBANoiseLevel:
 
 
 # =============================================================================
-# Parameter tables (published values)
+# Synthetic parameter presets
 # =============================================================================
 
 # CBV derived via central volume theorem: CBV = CBF * MTT / 60
@@ -178,68 +152,68 @@ QIBA_TISSUE_PARAMS: Dict[str, QIBATissueParams] = {
         name="Normal GM",
         cbf=60.0,
         mtt=4.6,
-        description="Ostergaard 1996 (CBF=60, CBV=4.6 → MTT=4.6s)",
+        description="Synthetic gray-matter scenario",
     ),
     "normal_wm": QIBATissueParams(
         name="Normal WM",
         cbf=20.0,
         mtt=4.3,
-        description="Ostergaard 1996",
+        description="Synthetic white-matter scenario",
     ),
     "tumor": QIBATissueParams(
         name="Tumor",
         cbf=100.0,
         mtt=6.0,
-        description="Semmineh 2017 / Lacerda & Law 2009",
+        description="Synthetic tumor scenario",
     ),
     "tumor_high": QIBATissueParams(
         name="Tumor (hot-spot)",
         cbf=150.0,
         mtt=8.0,
-        description="Semmineh 2017 hot-spot voxel",
+        description="Synthetic high-perfusion tumor scenario",
     ),
     "tumor_low": QIBATissueParams(
         name="Tumor (low-end)",
         cbf=50.0,
         mtt=4.0,
-        description="Semmineh 2017 low-end tumor",
+        description="Synthetic low-perfusion tumor scenario",
     ),
     "peritumoral": QIBATissueParams(
         name="Peritumoral",
         cbf=35.0,
         mtt=5.0,
-        description="Boxerman 2020",
+        description="Synthetic tissue scenario",
     ),
     "contralateral_gm": QIBATissueParams(
         name="Contralateral GM",
         cbf=55.0,
         mtt=3.5,
-        description="Boxerman 2020",
+        description="Synthetic tissue scenario",
     ),
     "low_perfusion": QIBATissueParams(
         name="Low Perfusion",
         cbf=12.0,
         mtt=8.0,
-        description="Ischemic penumbra",
+        description="Synthetic low-perfusion scenario",
     ),
 }
 
-# Gamma-variate residue shape parameters (Mouridsen 2006)
+# Gamma-variate residue shape presets
 CTH_CONFIGS: Dict[str, CTHConfig] = {
     "low_cth": CTHConfig(
         alpha=9.0,
         rcth=0.33,
-        description="Near-exponential (alpha=9, RCTH=0.33)",
+        description="Low relative dispersion (alpha=9, RCTH=0.33)",
     ),
     "moderate_cth": CTHConfig(
         alpha=4.0,
         rcth=0.5,
-        description="Typical GM (alpha=4, RCTH=0.5)",
+        description="Moderate relative dispersion (alpha=4, RCTH=0.5)",
     ),
     "high_cth": CTHConfig(
         alpha=2.0,
         rcth=0.71,
-        description="Pathological (alpha=2, RCTH=0.71)",
+        description="High relative dispersion (alpha=2, RCTH=0.71)",
     ),
 }
 
@@ -267,17 +241,17 @@ def generate_qiba_aif(
     alpha_fp: float = 3.0,
     beta_fp: float = 2.5,
 ) -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-    """Generate a QIBA-representative AIF with SCR recirculation.
+    """Generate a synthetic AIF with a dispersed recirculation component.
 
     First-pass is a gamma-variate; recirculation is modeled as a
-    delayed, broadened copy of the first pass (Patil & Johnson 2011).
+    delayed, broadened copy of the first pass.
 
     Recirculation: c_recirc = kappa * convolve(c_fp, G(t - delay, sigma))
 
     Parameters
     ----------
     n_timepoints : int
-        Number of time points (80 for QIBA).
+        Number of time points.
     dt_sec : float
         Temporal resolution in seconds.
     baseline_frames : int
@@ -285,7 +259,7 @@ def generate_qiba_aif(
     peak_delta_r2 : float
         Peak first-pass delta-R2* (s^-1).
     kappa : float
-        Recirculation fraction (Patil 2011: 0.34 +/- 0.12).
+        Relative recirculation amplitude.
     recirc_delay_sec : float
         Recirculation delay in seconds.
     recirc_sigma_sec : float
@@ -355,7 +329,7 @@ def generate_cth_residue(
     """Generate a gamma-variate residue function R(t) = CBF * [1 - gammainc(alpha, t/beta)].
 
     This represents the capillary transit time heterogeneity (CTH) model
-    from Mouridsen et al. 2006. The residue function is the survival
+    for capillary transit times. The residue function is the survival
     function of the gamma distribution of transit times.
 
     Parameters
@@ -393,7 +367,7 @@ def generate_cth_residue(
 def qiba_aif_and_time() -> (
     Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
 ):
-    """QIBA AIF with recirculation for DSC DRO tests.
+    """Synthetic AIF with recirculation for DSC DRO tests.
 
     80 timepoints, dt=1.5s, kappa=0.35.
 
@@ -415,7 +389,7 @@ def qiba_aif_and_time() -> (
 def qiba_aif_no_recirc() -> (
     Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
 ):
-    """QIBA AIF without recirculation (for comparison).
+    """Synthetic AIF without recirculation (for comparison).
 
     Same first-pass parameters as qiba_aif_and_time but kappa=0.
 
@@ -434,7 +408,7 @@ def qiba_aif_no_recirc() -> (
 
 
 # =============================================================================
-# Batch deconvolution helper (used by Phase 1 and Phase 4 tests)
+# Batch deconvolution helper for synthetic and external fixtures
 # =============================================================================
 
 
@@ -492,7 +466,7 @@ def deconvolve_dro_batch(
 
 
 # =============================================================================
-# Phase 4: TCIA GBM-DSC-MRI-DRO (Semmineh 2017)
+# TCIA GBM-DSC-MRI-DRO
 # =============================================================================
 
 TCIA_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "tcia_gbm_dsc_dro"

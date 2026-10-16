@@ -130,7 +130,7 @@ def test_tumor_seg_datasinks_smoke(
 def test_tumor_seg_sidecar_sources_populated(
     tmp_path: Path, minimal_bids_with_tumor_inputs: tuple[Path, dict]
 ) -> None:
-    """M3 regression: every tumor_seg sidecar must carry Sources (was empty)."""
+    """Every tumor segmentation sidecar must carry Sources."""
     from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
 
     bids, sources = minimal_bids_with_tumor_inputs

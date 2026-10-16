@@ -488,7 +488,7 @@ class TestComputeRescueScore:
 
 
 # =============================================================================
-# AIF scaling unit-mismatch fix
+# AIF scaling units
 # =============================================================================
 
 
@@ -615,7 +615,7 @@ class TestAIFScalingUnitFix:
 
 
 # =============================================================================
-# Two-pass cascade regression tests (Issue #2 fix)
+# Two-pass cascade tests
 # =============================================================================
 
 
@@ -641,7 +641,7 @@ def _make_atlas_cascade(n: int = 3) -> tuple[list[np.ndarray], list[str]]:
 
 
 class TestTwoPassCascade:
-    """Regression tests for the Issue #2 two-pass cascade contract."""
+    """Tests for the two-pass cascade contract."""
 
     def test_no_atlas_support_is_recorded_separately_from_exhaustion(self) -> None:
         """A transformed atlas outside the search mask has zero support."""
@@ -858,16 +858,10 @@ class TestTwoPassCascade:
 
 
 class TestPermissiveThresholdTightened:
-    """Regression guard for the physics-expert recommendation."""
+    """Pin the permissive AIF washout policy."""
 
     def test_permissive_washout_threshold_tightened(self) -> None:
-        """Permissive AIF washout threshold raised from 0.05 to 0.10.
-
-        Physics review (Calamante NMR Biomed 2013): CNR relaxation
-        (5.0→2.0) provides the sensitivity gain on low-dose/preloaded
-        protocols; loosening washout below 0.10 admits tissue voxels
-        without proportional arterial-detection benefit.
-        """
+        """The permissive washout floor is 0.10."""
         assert AIF_THRESHOLDS_PERMISSIVE.washout_min == 0.10
 
 
@@ -915,7 +909,7 @@ class TestCascadeExhaustionProvenance:
 
 
 # =============================================================================
-# Anchor-gate regression tests (venous-cluster fix)
+# Anchor-gate tests
 # =============================================================================
 
 
@@ -930,7 +924,7 @@ class TestArterialAnchor:
         assert earliest == float("inf")
 
     def test_anchor_threshold_constant_value(self) -> None:
-        """Regression guard: physiologically-derived 10s threshold."""
+        """The configured anchor threshold is 10 seconds."""
         from pmriprep.interfaces.dce_aif import _MAX_ANCHOR_POST_ARRIVAL_S
         assert _MAX_ANCHOR_POST_ARRIVAL_S == 10.0
 
@@ -1214,7 +1208,7 @@ class TestAnchorGateInCascade:
 
 
 # =============================================================================
-# Slab-edge inflow exclusion regression tests (3D-VIBE inflow fix)
+# Slab-edge inflow exclusion tests
 # =============================================================================
 
 
@@ -1439,7 +1433,7 @@ class TestWholeBrainSymmetryExclusion:
 
 
 class TestSlabEdgeConstants:
-    """Renamed slab-edge constants reflect actual physics rationale."""
+    """Slab-edge constants specify the directional exclusion policy."""
 
     def test_rolloff_constant_value(self) -> None:
         """Rolloff (B1/RF profile, atlas inferior+superior, WB inferior
@@ -1488,7 +1482,7 @@ class TestInflowExclusionAppliedUniversally:
         assert out[:, :, :inflow_slices].sum() == 0
         assert out[:, :, -1:].sum() == 0
         assert out[:, :, inflow_slices].sum() > 0
-        # Atlas search retains arterial support above the old top-25% cut.
+        # Atlas search retains arterial support in the superior slices.
         assert out[:, :, int(0.75 * nz)].sum() > 0
 
     def test_wb_call_site_zeroes_inflow_inferior_and_sss_superior(self) -> None:
@@ -1513,7 +1507,7 @@ class TestInflowExclusionAppliedUniversally:
         assert out[:, :, inflow_slices].sum() > 0
 
     def test_3d_acquisition_isotropic_voxel_passes_axial_proxy(self) -> None:
-        """Regression for M1: isotropic 1×1×1mm 3D-VIBE must still get
+        """Isotropic 1×1×1mm 3D-VIBE must still get
         the directional exclusion (axial proxy guard uses >=, not >)."""
         mask = np.ones((64, 64, 80), dtype=np.uint8)
         out = AIFDetection._prepare_search_mask(
@@ -1568,8 +1562,7 @@ class TestDCEAIFPeakAmplitudeWarning:
         assert ratio < DCE_AIF_PEAK_RATIO_WARN_THRESHOLD
 
     def test_observed_literature_ceiling_does_not_flag(self) -> None:
-        """Schabel 2008 observed clean ceiling at full dose ~9 mM →
-        ratio 1.18 < 1.5; should not flag."""
+        """A 9 mM peak stays below the configured warning ratio."""
         ratio, warn = compute_dce_aif_peak_amplitude_warning(
             final_peak=9.0,
             expected_max_mm=self.EXPECTED_MAX,
@@ -2402,10 +2395,10 @@ def test_count_slabs_spanned_empty():
     assert _count_slabs_spanned([]) == 0
 
 
-# ----- Bump-detector new constants ----------------------------------------
+# ----- Bump-detector policy constants ----------------------------------------
 
 def test_bump_detector_short_shoulder_excludes_recirculation():
-    """sh60+f0.40 excludes physiologic recirculation hump."""
+    """The 60-second shoulder excludes the fixture peak at 30 seconds."""
     tr = 7.5
     curve = np.zeros(60)
     curve[7] = 10.0  # peak
@@ -2442,10 +2435,7 @@ def test_g1_dimensionless_against_dose_corrected_target():
 # ----- Trim metric routing regression --------------------------------------
 
 def test_select_worst_for_trim_g6_a_drops_lowest_peak():
-    """Regression for the failing-gate routing bug: G6_a (G1 fail with G6
-    escape denied via amplitude ceiling) must drop the lowest-peak voxel,
-    not the lowest score. Without the fix the call site stripped '_a' and
-    routed to the score-fallback branch."""
+    """An amplitude-ceiling failure trims the lowest peak rather than lowest score."""
     metrics = [
         {"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
         {"peak_mm": 1.0, "washout": 0.9, "fwhm_seconds": 14.0},
@@ -2467,7 +2457,7 @@ def test_select_worst_for_trim_g6_f_falls_through_to_score():
 
 
 # =============================================================================
-# Fix 1: brain-wide tissue_ttp_frame threading into _apply_arterial_criteria
+# Brain-wide tissue_ttp_frame threading into _apply_arterial_criteria
 # =============================================================================
 
 
@@ -2527,7 +2517,7 @@ class TestTissueTtpFrameThreading:
         assert ttp_passed == 25.0
 
     def test_kwarg_default_preserves_local_path(self):
-        """Omitting tissue_ttp_frame must give the pre-fix behavior."""
+        """Omitting tissue_ttp_frame uses the local tissue timing reference."""
         chars = self._build_atlas_arterial_chars()
         spatial_exclude = np.zeros(len(chars["peak_indices"]), dtype=bool)
         idx_a, ttp_a, tier_a = AIFDetection._apply_arterial_criteria(
@@ -2541,16 +2531,10 @@ class TestTissueTtpFrameThreading:
         assert tier_a == tier_b
 
     def test_fix1_byte_identical_on_healthy_session(self):
-        """Regression guard for the ‘13 healthy OSIPI sessions
-        unaffected’ claim.
+        """Local and brain-wide tissue timing agree for this mixed synthetic mask.
 
-        On a healthy session the atlas-local ``tissue_ttp`` (IQR median
-        of moderate-enhancement voxels in atlas territory) sits within
-        ~1 frame of the brain-wide reference because the atlas is not
-        yet collapsed onto the arterial peak (sufficient parenchymal
-        contamination in the IQR). In that regime, threading the brain-
-        wide value must be a no-op: candidate set, scores, and
-        ``is_likely_venous`` flags must be byte-identical.
+        When the references agree, candidate indices, scores and venous flags
+        must also agree.
         """
         # Build a synthetic 4D where the atlas mask covers a mix of
         # arterial-like AND parenchymal-like voxels — its local IQR
@@ -2657,14 +2641,14 @@ class TestTissueTtpFrameThreading:
         n_venous_fix = sum(1 for m in mets_fix if m.get("is_likely_venous", False))
         assert n_venous_fix == 0, "arterial atlas voxels must not be flagged venous when brain-wide tissue_ttp is passed"
         # The unfixed path should have flagged at least some arterial
-        # voxels (regression guard against silently restoring the bug).
+        # voxels.
         assert n_venous_no >= n_venous_fix
 
     def test_low_tr_residual_effect_on_venous_flag(self):
         """At TR > 5 s, the cascade selector path bypasses arterial_timing
         (uses early_arrival instead). But the per-voxel is_likely_venous
         flag and the scorer's timing contribution still consume tissue_ttp,
-        so Fix 1's effect is preserved at low TR."""
+        so the brain-wide timing reference applies at low TR."""
         nx = ny = nz = 20
         nt = 30
         t = np.arange(nt, dtype=np.float64)
@@ -2701,7 +2685,7 @@ class TestTissueTtpFrameThreading:
 
 
 # =============================================================================
-# Fix 2: 10mm physical erosion on WB fallback search mask
+# Physical erosion on the whole-brain fallback search mask
 # =============================================================================
 
 
@@ -2909,7 +2893,7 @@ class TestPhysicalErosionWBFallback:
 
 
 # =============================================================================
-# Fix 3: per-tier cascade_gate_decisions
+# Per-tier cascade_gate_decisions
 # =============================================================================
 
 
@@ -3058,7 +3042,7 @@ class TestCascadeGateDecisions:
 
 
 # =============================================================================
-# _score_and_gate_pool extraction (v0.81.1)
+# Pool scoring and gating
 # =============================================================================
 
 
@@ -3141,14 +3125,8 @@ def test_detection_has_no_hemisphere_score_prior(
 
 
 class TestScoreAndGatePool:
-    """Pin the extracted ``_score_and_gate_pool`` helper.
-
-    The helper must reproduce the exact average -> plasma-convert -> scale ->
-    QC -> hemisphere/slabs -> gate sequence the progressive-trim loop and the
-    post-cascade C2 re-gate previously inlined. The extraction is
-    behavior-preserving only if the helper is a faithful composition of those
-    primitives; these tests pin it against a manual replay and exercise the C2
-    candidate-set-divergence path that was previously uncovered.
+    """Compare pool scoring with an explicit replay of averaging, plasma conversion,
+    scaling, QC and gate evaluation, including a changed post-filter pool.
     """
 
     @staticmethod
@@ -3233,7 +3211,7 @@ class TestScoreAndGatePool:
         )
 
     def test_c2_divergence_rescores_shrunken_subset(self) -> None:
-        """C2 path re-scores the EMITTED (post-filter) subset.
+        """post-filter path re-scores the EMITTED (post-filter) subset.
 
         A shrunken candidate set (not the pre-filter pool) produces its own
         scaled curve and a gate decision sized to the subset.
@@ -3264,14 +3242,14 @@ class TestScoreAndGatePool:
 
 
 # =============================================================================
-# In-situ C2 divergence branch inside _run_interface (v0.81.2)
+# In-situ post-filter divergence branch inside _run_interface
 # =============================================================================
 
 
 class TestDetectedAIFEmissionInSitu:
     """Drive detected-AIF emission branches inside ``_run_interface``.
 
-    Cover the C2 re-gate/rebuild route and the anchored Pass-2 singleton route.
+    Cover the post-filter re-gate/rebuild route and the anchored Pass-2 singleton route.
     """
 
     @staticmethod
@@ -3301,11 +3279,11 @@ class TestDetectedAIFEmissionInSitu:
 
         a, b, c = (10, 10, 10), (10, 12, 10), (12, 10, 10)
         emitted = [a, b]        # post-cascade pool that reaches the emit block
-        tier_pool = [a, b, c]   # strict superset -> divergence at C2
+        tier_pool = [a, b, c]   # strict superset -> divergence at post-filter
         scores = [0.9, 0.8]
         metrics = [self._full_metric(), self._full_metric()]
 
-        # The cascade's tier_result carries a PASSing status; only the C2
+        # The cascade's tier_result carries a PASSing status; only the post-filter
         # rebuild (via the spy's FAIL outcome) can flip provenance to reduced.
         orig_tier = TierResult(
             candidates=tier_pool, scores=[0.9, 0.8, 0.7],
@@ -3351,7 +3329,7 @@ class TestDetectedAIFEmissionInSitu:
         ), patch.object(AIFDetection, "_score_and_gate_pool", spy):
             iface.run()
 
-        # C2 entered: the spy was invoked once, on the diverged (emitted) pool.
+        # post-filter entered: the spy was invoked once, on the diverged (emitted) pool.
         spy.assert_called_once()
         assert list(spy.call_args.args[0]) == emitted
 
@@ -3362,7 +3340,7 @@ class TestDetectedAIFEmissionInSitu:
         assert res["candidate_count"] == 2
         # Rebuilt tier_result carried the FAIL status through: the original
         # cascade tier_result was PASS, so a "reduced" confidence proves the
-        # C2 rebuild (not the original) drives downstream provenance.
+        # post-filter rebuild (not the original) drives downstream provenance.
         assert res["aif_confidence"] == "reduced"
 
     def test_pass2_singleton_is_emitted_with_qc(self, tmp_path, monkeypatch) -> None:

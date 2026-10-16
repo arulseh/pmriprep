@@ -1978,7 +1978,7 @@ def init_dce_preproc_wf(
         ])
 
     # ==========================================================================
-    # Node 4b2: Create conservative AIF search mask (Gap 5)
+    # Node 4b2: Create conservative AIF search mask
     # ==========================================================================
     # Intersect T1w-transformed mask with native DCE brain mask to exclude
     # non-brain regions. Uses proper brain extraction (HD-BET) instead of
@@ -2291,7 +2291,7 @@ def init_dce_preproc_wf(
         (signal_to_conc, aif_detection, [
             ("concentration_file", "concentration_file"),
         ]),
-        # Use conservative AIF search mask (Gap 5) instead of plain transformed mask
+        # Use conservative AIF search mask instead of plain transformed mask
         (create_aif_mask, aif_detection, [
             ("out_file", "brain_mask_file"),
         ]),

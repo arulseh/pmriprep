@@ -162,7 +162,7 @@ class _DSCQualityMaps(NamedTuple):
 
 
 class _DSCFinalMaps(NamedTuple):
-    """Clipped, unit-scaled, and brain-masked DSC output maps."""
+    """Unit-scaled and brain-masked DSC output maps."""
 
     rel_cbf: npt.NDArray[Any]
     rel_cbv: npt.NDArray[Any]

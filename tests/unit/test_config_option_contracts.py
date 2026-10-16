@@ -336,7 +336,7 @@ def test_skip_anat_is_not_a_public_cli_mode() -> None:
 
 
 def test_dsc_bbr_registration_is_not_configurable() -> None:
-    """Removed, unvalidated BBR modes must not remain reachable."""
+    """Unsupported BBR modes are rejected."""
     with pytest.raises(SystemExit):
         _build_parser().parse_args([
             "/tmp/bids",

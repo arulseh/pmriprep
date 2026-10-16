@@ -81,18 +81,18 @@ class TestFirstPassGap:
         fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
         # int(3.0 / 1.5) = 2 → fp_start = 17
         assert fp_start == 17
-        # Frame 19 (the actual peak in sub-0005) is within the window
+        # A peak at frame 19 is inside the window
         fp_end = min(baseline_frames + int(40.0 / tr), 80)
         assert 17 <= 19 < fp_end
 
     def test_fp_start_old_gap_misses_peak(self) -> None:
-        """With old 10s gap and TR=1.5s, fp_start=22 would miss frame 19."""
+        """A 10 s gap at TR=1.5 s starts at frame 21 and misses frame 19."""
         baseline_frames = 15
         tr = 1.5
         old_fp_start = baseline_frames + max(1, int(10.0 / tr))
         # int(10.0 / 1.5) = 6 → fp_start = 21
         assert old_fp_start == 21
-        # Frame 19 would be BEFORE the old window
+        # Frame 19 precedes the comparison window
         assert 19 < old_fp_start
 
 

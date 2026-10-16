@@ -100,7 +100,7 @@ class TestCanonicalAIFBlock:
         assert block["Hematocrit"] == pytest.approx(0.42)
 
     def test_no_legacy_flat_keys(self, aif_qc, bids_root):
-        """The retired flat AIF vocabulary is not duplicated."""
+        """AIF fields are nested without duplicate flat keys."""
         sidecar = build_aif_timeseries_sidecar(
             modality="DSC",
             source_paths=[],
@@ -254,12 +254,7 @@ def test_aif_sidecar_sampling_metadata() -> None:
 
 
 class TestColumnHeaderSingleSource:
-    """The TSV column header and the sidecar ``Columns`` share one source.
-
-    Regression guard for the bug where the AIF ``_timeseries.tsv`` header was
-    hardcoded ``concentration_mM`` (wrong for DSC, which is ΔR2* in 1/s) and
-    drifted from the sidecar's declared ``Columns``.
-    """
+    """The TSV column header and sidecar Columns share modality-specific units."""
 
     @pytest.mark.parametrize(
         "modality, name, units",

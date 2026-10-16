@@ -113,7 +113,7 @@ def test_boilerplate_bib_resolves_every_cited_key() -> None:
 
     # Pull keys from inside Pandoc citation groups ([@key], [@a; @b]) so a
     # typo'd marker of ANY shape is caught: a shape-restricted regex would
-    # silently drop e.g. [@Wu_2003] or [@van_osch_2018] from ``used`` and let
+    # silently drop mixed-case or underscored keys from ``used`` and let
     # the phantom check pass while pandoc emits a literal "[@key]". Bracketing
     # also excludes the bare ``@key`` doc-mentions and any Python decorator.
     src = Path(ru.__file__).read_text(encoding="utf-8")

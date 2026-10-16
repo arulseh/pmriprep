@@ -523,7 +523,7 @@ def _build_dce_mean_meta(
     qc_metrics: dict | None = None,
     motion_correct: bool = True,
 ) -> dict:
-    """Describe the all-volume DCE temporal mean without implying baseline contrast."""
+    """Build metadata for the temporal mean across all acquired DCE volumes."""
     out = dict(base)
     out.update({
         "Description": "Temporal mean across all acquired DCE volumes",

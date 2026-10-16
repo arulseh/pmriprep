@@ -22,7 +22,7 @@ def test_collect_pipeline_images_accepts_source_entities(tmp_path: Path) -> None
 
 
 def test_collect_pipeline_images_retains_legacy_name_priority(tmp_path: Path) -> None:
-    """An exact historical filename wins over an additional entity-rich file."""
+    """An exact entity-free filename wins over an additional entity-rich file."""
     legacy = tmp_path / "sub-test01_ses-visit1_desc-motion_dce.png"
     entity_rich = tmp_path / "sub-test01_ses-visit1_run-1_desc-motion_dce.png"
     legacy.touch()

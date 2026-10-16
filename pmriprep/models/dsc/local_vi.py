@@ -56,8 +56,7 @@ def conditional_mean_gain(
     -----
     Covariance, noise and the linearized uncertainty penalty are held fixed
     during this mean substep. Their terms cancel. After accepting a mean,
-    relinearize and settle its factors separately. This gain is not a change
-    in the fully relinearized local evidence approximation.
+    relinearize and settle its factors separately.
     """
     data_gain = noise_precision * np.sum(
         weights[None, :] * prediction_change * (residual - 0.5 * prediction_change),

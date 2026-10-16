@@ -125,7 +125,7 @@ class TestSyntheticAIFPeak:
         )
 
     def test_tissue_max_none_uses_formula(self):
-        """Regression: tissue_max=None must not fall back to Bleeker 250."""
+        """An absent tissue maximum leaves the formula-based target peak at 35."""
         det = _make_aif_detection()
         _, metrics = det._generate_synthetic_aif(
             n_timepoints=60, field_strength=3.0, effective_dose=1.0,
@@ -224,7 +224,7 @@ class TestShapePreserved:
     def test_recirculation_lobe_is_physiological(self):
         """The recirculation lobe is small and dispersed vs the first pass:
         second-peak amplitude ~0.12x first pass and recirc area ~0.25x first-pass
-        area (anti-regression against the old 0.35/alpha=4 lobe, area ~0.62x)."""
+        area for this configured synthetic AIF."""
         det = _make_aif_detection()
         tr, baseline_frames = 1.5, 5
         aif, metrics = det._generate_synthetic_aif(

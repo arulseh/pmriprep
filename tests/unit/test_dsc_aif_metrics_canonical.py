@@ -1,13 +1,8 @@
 """Pin the canonical AIF metrics shape produced by `aif_detect`.
 
-The DSC AIF detection node emits its detection-time metrics as a single
-nested ``aif_metrics`` block on ``qc_metrics``. There must be no flat
-``best_*`` duplicates at the top level — those are the long-deprecated
-producer-internal names that shadow the canonical ``aif_metrics`` keys
-and confuse downstream consumers.
-
-These tests guard against regressions that re-introduce the flat names
-or drift the per-detection-mode key set.
+The DSC AIF detection node emits its detection-time metrics in the nested
+``aif_metrics`` block on ``qc_metrics``. Tests check the per-detection-mode
+key set and the absence of flat ``best_*`` duplicates.
 """
 from __future__ import annotations
 

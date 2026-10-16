@@ -27,8 +27,8 @@ def get_aif_smoothing_window(n_timepoints: int, tr: float) -> int:
     n_timepoints : int
         Length of the AIF curve.
     tr : float
-        Frame period in seconds. Invalid values retain the historical
-        five-frame fallback.
+        Frame period in seconds. Invalid values use a five-frame target,
+        limited by the curve length.
 
     Returns
     -------
@@ -120,11 +120,11 @@ class GammaVariateFitResult:
         A: Amplitude scaling factor
         t0: Bolus arrival time
         α (alpha): Shape parameter controlling the rise steepness
-        β (beta): Scale parameter controlling the decay rate
+        β (beta): Decay time scale in frames
 
     Derived parameters:
         Time to peak (TTP) = t0 + α × β
-        AUC = A × β^(α+1) × Γ(α+1)  (total dose)
+        Infinite-support integral in frame units = A × β^(α+1) × Γ(α+1)
 
     Attributes
     ----------
@@ -137,17 +137,16 @@ class GammaVariateFitResult:
     alpha : float
         Shape parameter α (controls rise steepness).
     beta : float
-        Scale parameter β (controls decay rate, in frames).
+        Decay time scale β, in frames.
     auc_original : float
-        First-pass-window AUC of the input curve when ``remove_recirculation=True``;
-        full-curve AUC otherwise. Window matches ``auc_fitted`` so ``auc_ratio``
-        is apples-to-apples.
+        First-pass-window AUC of the baseline-subtracted input when
+        ``remove_recirculation=True``;
+        full-curve AUC otherwise. Integration uses acquisition seconds
+        and the same window as ``auc_fitted``.
     auc_fitted : float
-        Area under curve of fitted result, integrated over the same window
-        as ``auc_original``. Note: when ``preserve_auc=True`` (production
-        default), this is post-scaling and equals ``auc_original`` by
-        construction. ``auc_ratio`` is computed BEFORE scaling, so it
-        retains shape-fit-quality semantics.
+        Area of the fitted curve over the same window as ``auc_original``.
+        With AUC preservation enabled and a positive fitted area above the
+        numerical floor, scaling makes it equal to ``auc_original``.
     auc_ratio : float
         Ratio of fitted/original AUC computed BEFORE preservation scaling
         — measures gamma-fit shape mismatch against the empirical
@@ -155,18 +154,21 @@ class GammaVariateFitResult:
         for a good fit. Reported in QC for provenance; not a hard gate
         (see ``should_apply_gamma_fit``).
     residual_rms : float
-        RMS residual between original and fitted.
+        Full-curve RMS residual between baseline-subtracted input and
+        the unscaled fit, before optional AUC preservation.
     r_squared : float
-        Coefficient of determination (R²).
+        R² before AUC preservation, over the selected evaluation window,
+        bounded to [-1, 1].
     fit_converged : bool
         Whether the optimization converged successfully.
     recirculation_removed : bool
-        Whether recirculation was removed from the fit.
+        Whether residual-based recirculation detection was positive while
+        ``remove_recirculation=True``.
     first_pass_n : int
         Number of samples in the first-pass window
         ``[baseline_frames : peak_idx + max(10, 2*FWHM)]`` when
         ``remove_recirculation=True``; equal to ``n_frames - baseline_frames``
-        otherwise. Gamma fitting is ill-posed below ~8 samples.
+        otherwise. The window endpoint is limited by the acquired length.
     failure_reason : str or None
         Stable reason code when optimization does not converge or raises.
     """
@@ -425,8 +427,9 @@ def fit_gamma_variate(
     This function fits the model:
         C(t) = A × (t - t0)^α × exp(-(t - t0) / β)
 
-    The gamma-variate model represents the first-pass bolus only, allowing
-    recirculation to be excluded from the modeled AIF.
+    Fits a single gamma component to the baseline-subtracted AIF. Optional
+    tail downweighting emphasizes the first pass without modeling a separate
+    recirculation component.
 
     Parameters
     ----------
@@ -435,8 +438,10 @@ def fit_gamma_variate(
     baseline_frames : int
         Number of pre-bolus baseline frames for baseline subtraction.
     remove_recirculation : bool
-        If True, fit only the first-pass portion and remove recirculation.
-        If False, fit the entire curve.
+        If True, downweight the late tail and evaluate R² and AUC over
+        the estimated first-pass window. If False, retain full tail weight
+        and use the full-curve AUC. Baseline samples are downweighted in
+        both modes.
     preserve_auc : bool
         If True, scale the fitted curve to match the first-pass AUC (when
         remove_recirculation=True) or the full AUC (when False).
@@ -450,22 +455,15 @@ def fit_gamma_variate(
 
     Notes
     -----
-    The gamma-variate model is widely used for AIF characterization because:
-    - It naturally models the first-pass bolus shape
-    - It has analytical AUC: AUC = A × β^(α+1) × Γ(α+1)
-    - Recirculation appears as positive residual after washout
+    Alpha is a dimensionless shape exponent; beta is a decay time scale
+    in frames. The peak lies alpha * beta frames after arrival. For the
+    infinite-support model, the centroid is (alpha + 1) * beta frames after
+    arrival.
 
-    For first-pass AIF modeling:
-    - Fit gamma-variate to measured AIF
-    - The fitted curve represents first-pass only
-    - Residual (measured - fitted) contains recirculation
-    - Using fitted AIF for deconvolution removes recirculation effects
-
-    Clinical interpretation:
-    - Alpha (α): Rise steepness; typical 1.5-3.5
-    - Beta (β): Decay rate; typical 1.5-4.0 frames
-    - TTP = α × β: Time to peak from arrival
-    - MTT_AIF = (α + 1) × β: Mean transit time of bolus
+    Reported AUCs use numerical integration with the supplied frame period.
+    R² and residual RMS are computed before optional AUC scaling. R² uses
+    the evaluation window, while residual RMS uses the full curve. Residuals
+    can contain recirculation, noise and model mismatch.
 
     Examples
     --------
@@ -593,7 +591,7 @@ def fit_gamma_variate(
     else:
         r_squared = 0.0
 
-    # Clip R² to valid range (can be negative for poor fits)
+    # Bound the reported R² to [-1, 1]; the raw value can be below -1.
     r_squared = max(-1.0, min(1.0, r_squared))
 
     # Compute RMS residual on unscaled curve
@@ -608,14 +606,9 @@ def fit_gamma_variate(
         )
         if recirc_start > 0:
             recirculation_removed = True
-            # The fitted gamma-variate naturally excludes recirculation
-            # since it only models first-pass bolus
+            # The fitted curve has no separate recirculation component.
 
-    # Symmetric AUC window: when removing recirculation, integrate BOTH the
-    # original and the fitted curve over the same first-pass window so the
-    # ratio is apples-to-apples (else the asymmetric ratio misfires on any
-    # AIF with non-trivial post-bolus tail — preloaded protocols always,
-    # and any clean recirculation pattern).
+    # Integrate measured and fitted curves over the same selected window.
     if remove_recirculation:
         cutoff_for_auc = min(
             peak_idx + max(10, 2 * compute_aif_fwhm_frames(aif_curve, baseline_frames)),
@@ -725,23 +718,19 @@ def should_apply_gamma_fit(
 ) -> tuple["GammaAutoDecision", dict[str, Any]]:
     """Decide whether to apply gamma-variate fitting to the AIF.
 
-    Uses hard gates (fit quality) and defect triggers (recirculation,
-    noise + negative tail) to decide. The gamma-variate is applied only
-    when the fit is good AND a defect is detected that gamma fitting
-    would correct.
+    Requires the configured fit-quality gates and either a secondary-peak
+    trigger or the combination of roughness and negative-tail triggers.
 
     Hard gates (must all pass for eligibility):
         - ``fit_converged``
-        - ``first_pass_n >= GAMMA_MIN_FIRST_PASS_SAMPLES`` (8 samples).
-          Below this, gamma fitting is ill-posed regardless of metrics.
+        - ``first_pass_n >= GAMMA_MIN_FIRST_PASS_SAMPLES``.
         - ``r_squared >= GAMMA_R2_THRESHOLD``
         - ``peak_ratio in [GAMMA_PEAK_RATIO_MIN, GAMMA_PEAK_RATIO_MAX]``
 
     AUC ratio is NOT a hard gate; it is reported in ``metrics["auc_ratio"]``
     for QC provenance, with ``metrics["auc_ratio_warning"]`` set when the
     symmetric-window ratio falls outside ``[GAMMA_AUC_RATIO_SOFT_MIN,
-    GAMMA_AUC_RATIO_SOFT_MAX]``. R² + peak_ratio + defect detection already
-    cover the pathology a hard AUC gate would catch.
+    GAMMA_AUC_RATIO_SOFT_MAX]``.
 
     Parameters
     ----------
@@ -766,8 +755,7 @@ def should_apply_gamma_fit(
             metrics,
         )
 
-    # Eligibility prerequisite: gamma fitting is ill-posed below ~8 first-pass
-    # samples.
+    # Apply the configured minimum number of first-pass samples.
     metrics["first_pass_n"] = fit_result.first_pass_n
     if fit_result.first_pass_n < GAMMA_MIN_FIRST_PASS_SAMPLES:
         return (
@@ -808,9 +796,7 @@ def should_apply_gamma_fit(
             metrics,
         )
 
-    # AUC ratio: reported for QC provenance with a soft warning band, but
-    # NOT a hard gate. R² + peak_ratio + defect detection already cover the
-    # pathology this gate would catch.
+    # Report AUC-ratio warnings without changing eligibility.
     auc_ratio = fit_result.auc_ratio
     metrics["auc_ratio"] = auc_ratio
     metrics["auc_ratio_warning"] = not (
@@ -847,7 +833,7 @@ def should_apply_gamma_fit(
     metrics["spr_is_local_max"] = spr_is_local_max
     recirculation_defect = spr > GAMMA_SPR_THRESHOLD and spr_is_local_max
 
-    # 2) Noise defect: 2nd derivative L2 norm ratio (fitted vs original) > threshold
+    # 2) Roughness trigger: second-derivative L2 norm ratio (original / fitted)
     if n > 4:
         d2_orig = np.diff(original_aif, n=2)
         d2_fit = np.diff(fit_result.fitted_curve, n=2)

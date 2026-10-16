@@ -1,23 +1,8 @@
-"""Regression tests for cross-modality DataSink entity stripping.
+"""Test entity filtering for cross-modality derivative filenames.
 
-Bug: niworkflows ``DerivativesDataSink`` inherits all entities from the
-``source_file`` (the BIDS source). For pmriprep DSC/DCE workflows, the
-source for cross-modality outputs (T1w/FLAIR/T2w/masks resampled into
-DSC or DCE space) was the perfusion source — so entities like
-``acq-ep2d`` (DSC EP2D acquisition) or ``acq-vibe`` (DCE VIBE) propagated
-onto T1w/mask filenames that were not actually acquired with those
-sequences.
-
-Fix: pass ``dismiss_entities=("acquisition",)`` to the
-``PMRIPrepDataSink`` constructor on these sinks. Pre-contrast-derived
-masks (brain, NAWM) additionally pass
-``dismiss_entities=("acquisition", "ceagent")`` because they're computed
-from pre-contrast T1w and shouldn't carry ``ce-GAD``.
-
-These tests exercise ``PMRIPrepDataSink`` directly with a synthesized
-source file carrying the offending entities, asserting the produced
-output filename is clean. Pure DataSink unit test — no workflow build
-needed.
+Structural images resampled into perfusion space omit the perfusion
+acquisition entity. Masks derived from precontrast anatomy also omit the
+contrast-agent entity. Tests exercise PMRIPrepDataSink on synthetic files.
 """
 from __future__ import annotations
 

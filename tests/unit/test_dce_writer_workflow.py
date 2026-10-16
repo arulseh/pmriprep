@@ -28,7 +28,7 @@ def minimal_bids(tmp_path: Path) -> tuple[Path, str]:
 
 
 def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> None:
-    """Mandatory PK output (Ktrans) writes correctly with M3 sidecar fields."""
+    """Mandatory PK output (Ktrans) writes correctly with required sidecar fields."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -173,7 +173,7 @@ def test_registered_vfa_t1map_skips_population_fallback(
 def test_removed_model_free_maps_cannot_create_derivative_sinks(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """Removed model-free maps cannot create derivative sinks."""
+    """Unsupported model-free map inputs do not create derivative sinks."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, _ = minimal_bids
@@ -872,7 +872,7 @@ def test_dce_t1w_postcon_underlay_lands_in_anat(
 def test_dce_t1w_subtraction_underlay_lands_in_anat(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """Subtraction underlay: anat/ with desc-subtraction (C3 desc plumbing), no ce-."""
+    """Subtraction underlay: anat/ with desc-subtraction, no ce-."""
     bids, src = minimal_bids
     out = tmp_path / "out"
     underlay = _write_nii(tmp_path / "t1w_subtraction_in_dce.nii.gz")
@@ -1045,13 +1045,7 @@ def test_2cxm_uncertainty_tr_gate_auto_short_tr() -> None:
 
 
 def test_2cxm_uncertainty_tr_gate_auto_long_tr() -> None:
-    """auto-mode + TR > 2.0 s → 2CXM excluded → don't emit Fp/PS std.
-
-    Reproduces the original crash scenario: current institutional cohort
-    has volume_tr=4.06 s; the prior (auto, _) gate built the sink but the
-    producer never fed it → ``NodeExecutionError: _copy_perf_map missing
-    in_file``.
-    """
+    """Auto mode excludes 2CXM uncertainty outputs above the 2 s interval limit."""
     from pmriprep.workflows.base import _emit_2cxm_uncertainty
 
     assert _emit_2cxm_uncertainty("auto", 2.00001) is False
@@ -1156,12 +1150,7 @@ def _has_fp_uncertainty_sink(wf) -> bool:
 
 
 def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
-    """Regression for auto + Bayesian + TR>2.0 omitting the Fp/PS sink.
-
-    Reproduces the original ``NodeExecutionError: _copy_perf_map missing
-    in_file`` failure mode: ``model="auto"``, ``inference="vi"``,
-    ``RepetitionTime=4.06`` (current institutional cohort).
-    """
+    """Auto mode with VI and a 4.06 s interval omits the Fp uncertainty sink."""
     wf = _build_dce_wf_for_tr_gate(
         tmp_path, volume_tr=4.06, model="auto", inference="vi",
     )
@@ -1184,9 +1173,8 @@ def test_init_pmriprep_wf_auto_short_tr_builds_fp_sink(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Optional-figure trait hardening (regression for crash where upstream
-# Function nodes — e.g. ``_dsc_dce_xval_plot_node`` — return Python ``None``
-# and trip ``TraitError`` in nipype's File validator, stalling the DAG.)
+# Optional figure inputs accept Python None from upstream Function nodes
+# without triggering Nipype File validation errors.
 # ---------------------------------------------------------------------------
 
 

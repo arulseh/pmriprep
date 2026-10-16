@@ -77,14 +77,11 @@ MIN_AIF_CANDIDATES_ACCEPT: int = 3
 #: Gamma peak ratio band for cascade quality gate.
 #: If averaged AIF peak ratio falls outside this range, continue cascading
 #: to the next tier (keeping the current result as fallback).
-#: Physics: >12% AIF peak error exceeds the ~10% CBF CoV expected in
-#: normal brain.
 GAMMA_PEAK_RATIO_CASCADE_MIN: float = 0.88
 GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
 
 #: Gamma R² floor for synthetic fallback.
-#: R² < 0 means gamma fit is worse than mean — curve has no bolus shape.
-#: A true arterial bolus will never fit worse than a horizontal line.
+#: Reject gamma fits that explain less variance than a constant prediction.
 GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 
 #: Minimum baseline-return ratio (%) for an accepted averaged AIF.
@@ -327,15 +324,9 @@ def _flag_retained_below_floor(
 ) -> None:
     """Flag a real AIF retained below the gamma-fit floor when fallback is disabled.
 
-    With synthetic fallback enabled, a sub-floor gamma fit (R² < ``floor`` = fits
-    worse than a flat line = no bolus shape) triggers a synthetic swap. With
-    ``disable_aif_fallback`` the detected AIF is retained instead; this annotates
-    that case so it is not silent — the AIF itself is NOT modified, only flagged.
-
-    No-ops unless fallback is disabled, a real (non-synthetic) AIF was detected,
+    Adds QC fields when fallback is disabled, a non-synthetic AIF was detected,
     the gamma fit converged but was not applied, and ``gamma_fit_r_squared`` is
-    present and below the floor. Optimizer failures are reported separately and
-    do not establish that the measured AIF is inadequate.
+    present and below the floor. The detected curve is retained unchanged.
     """
     if gamma_fit_applied or not disable_fallback or detection_level == "synthetic":
         return
@@ -1281,8 +1272,8 @@ class AIFDetection(BaseInterface):
     ) -> float:
         """Score a candidate with the AIF cost function.
 
-        Lower is better.  Returns ``inf`` for physiologically implausible
-        candidates (hard rejection).
+        Lower is better.  Returns ``inf`` for candidates that fail a
+        configured acceptance gate.
 
         Parameters
         ----------
@@ -1353,9 +1344,7 @@ class AIFDetection(BaseInterface):
         if not np.isnan(fwhm) and fwhm > fwhm_max.get(criteria, 18.0):
             return float("inf")
 
-        # 5c. FWHM min — reject sub-TR spikes (not physiological).
-        # Arterial first-pass FWHM is typically 4-8 s; anything below
-        # ~2 s is noise or intravoxel dephasing artifact.
+        # 5c. Reject FWHM below the criterion-specific minimum in seconds.
         fwhm_min = {"strict": 3.0, "relaxed": 2.5, "permissive": 2.0}
         if not np.isnan(fwhm) and fwhm < fwhm_min.get(criteria, 2.0):
             return float("inf")
@@ -1642,24 +1631,16 @@ class AIFDetection(BaseInterface):
         1. **TR-scaled peak-spread filter**: keep voxels whose
            ``peak_time_frame`` is within
            ``ceil(AIF_PEAK_SPREAD_MAX_SECONDS / tr)`` frames of the
-           input pool's 20th-percentile peak time. The 20th-percentile
-           reference (rather than ``min``) is robust to a single
-           early-peaking outlier (e.g. a noise voxel that would
-           otherwise drag the gate down by 1-2 frames and reject
-           legitimate co-arterial voxels). The TR-scaled spread limit
-           accommodates frame quantization on argmax peak detection
-           plus per-voxel argmax jitter at SNR 20-40 (~±1 frame), so
-           true co-arterial voxels at TR=1.5 s spanning 2 measured
-           frames are retained.
+           input pool's 20th-percentile peak time, with a one-frame minimum.
+           The reference and spread are computed before the tail filter.
         2. **Tail/peak filter**: keep voxels with
            ``tail_fraction_late <= AIF_TAIL_FRACTION_MAX`` (default
-           0.15 — see ``dsc_constants.py`` for the PVF rationale).
+           0.15).
 
         TTP causality (peak before tissue) is **not** enforced here;
         it is the responsibility of ``_score_candidate_cost`` upstream
-        (``_score_and_select_candidates`` rejects ``frames_before_tissue
-        < -2`` outright and applies graduated penalties for borderline
-        cases).
+        using the peak-time difference in seconds and the configured
+        ``AIF_TTP_REJECT_AFTER_TISSUE_S`` and ``AIF_TTP_NEAR_TISSUE_S`` limits.
 
         Parameters
         ----------
@@ -1671,7 +1652,7 @@ class AIFDetection(BaseInterface):
             last 30 s mean ΔR2* / first-pass peak).
         tr : float
             Repetition time in seconds. Used to convert the
-            ``AIF_PEAK_SPREAD_MAX_SECONDS`` physiologic spread
+            ``AIF_PEAK_SPREAD_MAX_SECONDS`` configured spread
             ceiling to a frame-count gate at runtime.
 
         Returns

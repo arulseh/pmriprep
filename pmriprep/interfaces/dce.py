@@ -573,7 +573,7 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         # Signal masking: only compute B1+ where both signals are above
         # noise floor. Uses 5th-percentile threshold to preserve
-        # low-signal dropout regions (Gap 4).
+        # low-signal dropout regions.
         # -----------------------------------------------------------------
         threshold_domain = mask if mask is not None else np.ones(shape, dtype=bool)
         positive_signals = np.concatenate([
@@ -626,7 +626,7 @@ class B1Mapping(SimpleInterface):
         b1_map[valid] = alpha_actual / nominal_fa
 
         # -----------------------------------------------------------------
-        # B1+ physiological clipping (Gap 2, field-strength-dependent)
+        # B1+ processing bounds (field-strength-dependent)
         # -----------------------------------------------------------------
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
@@ -654,7 +654,7 @@ class B1Mapping(SimpleInterface):
             )
 
         # -----------------------------------------------------------------
-        # Normalized convolution smoothing (Gap 3).
+        # Normalized convolution smoothing.
         # smooth(B1*mask) / smooth(mask) averages only within brain
         # voxels and avoids bias at brain edges.
         # -----------------------------------------------------------------
@@ -726,7 +726,7 @@ class B1Mapping(SimpleInterface):
         b1_map = b1_map.astype(np.float32)
 
         # -----------------------------------------------------------------
-        # Detect uniform (pathological) B1+ maps (Gap 7).
+        # Flag spatially uniform B1+ maps.
         # If all brain voxels are zero or all ones, the map is unusable.
         # -----------------------------------------------------------------
         uniform_detected = False
@@ -952,7 +952,7 @@ class B1Mapping(SimpleInterface):
 
         # Validate pixel values — catch grossly wrong files (e.g., anatomical
         # companion with signal-intensity values), but allow high B1+ at FOV
-        # edges. Downstream physiological clipping handles the actual range.
+        # edges. Downstream B1+ bounds constrain the processing range.
         full_scale = expected_pixel_max(scale_factor)
         p99 = float(np.percentile(b1_raw[raw_support], 99)) if np.any(raw_support) else 0.0
         if p99 > full_scale * 5.0:
@@ -978,7 +978,7 @@ class B1Mapping(SimpleInterface):
         b1_map[valid_mask] = b1_raw[valid_mask] / scale_factor
 
         # -----------------------------------------------------------------
-        # Physiological clipping (field-strength-dependent)
+        # Apply field-strength-dependent B1+ processing bounds
         # -----------------------------------------------------------------
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
@@ -1462,7 +1462,7 @@ class T1Mapping(SimpleInterface):
 
         # Load B1+ map if provided, otherwise use unity
         # Clip to VFA-appropriate range to allow dielectric resonance
-        # effects while preventing extreme corrections (Gap 8).
+        # effects while preventing extreme corrections.
         b1_thresh = get_b1_thresholds(self.inputs.field_strength)
         if isdefined(self.inputs.b1_map) and self.inputs.b1_map:
             b1_img = nib.load(self.inputs.b1_map)
@@ -2003,7 +2003,7 @@ class T1Mapping(SimpleInterface):
             assumed_t1_s = assumed_t1_ms / 1000.0
             e1_expected = np.exp(-tr_s / assumed_t1_s)
 
-            # Select optimal FA pair: widest angular separation
+            # Select the FA pair with the widest angular separation
             flip_angles_deg = np.degrees(flip_angles_rad)
             best_i, best_j = 0, 1
             max_sep = 0.0
@@ -2101,10 +2101,8 @@ class T1Mapping(SimpleInterface):
         support_img.set_data_dtype(np.uint8)
         nib.save(support_img, support_file)
 
-        # Generate QC for every VFA attempt. When the measured map was rejected,
-        # the plot labels it explicitly and shows the final fallback map beside
-        # it so the diagnostic evidence is retained without implying that the
-        # rejected values were used for concentration conversion.
+        # Generate QC for every VFA attempt. Label rejected measured maps and
+        # display them beside the final fallback map used for conversion.
         qc_plot_path: Optional[str] = None
         try:
             from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
@@ -2148,13 +2146,12 @@ class T1Mapping(SimpleInterface):
     ) -> np.ndarray:
         """Fit T1 using weighted linear least squares (WLLS) DESPOT1.
 
-        Iteratively reweighted least squares that eliminates 10-20% T1
-        overestimation bias inherent in standard GLLS at clinical SNR.
+        Iteratively reweighted least squares for the linearized SPGR equation.
 
         The weights account for heteroscedastic noise in the linearized
         variables Y=S/sin(a) and X=S/tan(a), which share the same noisy
-        signal S. Without weighting, the correlated errors systematically
-        bias E1 (and thus T1) upward.
+        signal S. Weighting addresses this error structure; it does not
+        guarantee unbiased T1 estimates.
 
         Parameters
         ----------
@@ -3330,8 +3327,8 @@ class DCEPreprocess(SimpleInterface):
 
     **Motion Correction:**
 
-    Uses FSL mcflirt with the baseline mean as reference by default. This ensures
-    the motion correction reference has optimal contrast for registration (pre-contrast).
+    Uses FSL mcflirt with a baseline-mean reference by default. The reference
+    is precontrast when the selected baseline precedes bolus arrival.
 
     Motion parameters are output in FSL format:
     rot_x, rot_y, rot_z (radians), trans_x, trans_y, trans_z (mm)
@@ -4071,7 +4068,7 @@ class DCEBrainExtract(SimpleInterface):
        in the DCE field of view
 
     The method priority is:
-    1. HD-BET (deep learning, most accurate) - via conda environment
+    1. HD-BET (deep learning) - via conda environment
     2. FSL BET (traditional, robust) - if HD-BET unavailable
     3. Threshold-based (simple, fast) - if both fail
 

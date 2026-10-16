@@ -224,7 +224,7 @@ class TestPreloadConfig:
             assert config.preload == frac
 
     def test_invalid_string_raises(self) -> None:
-        """Old enum values now rejected — users must migrate to float."""
+        """Named dose-class strings are rejected; preload requires a numeric value."""
         from pmriprep.config.dsc import DSCConfig
         for enum_val in [
             "auto", "half_dose", "significant", "severe", "minimal", "none", "yes",

@@ -124,7 +124,7 @@ class TestIAUC:
         ids=["nonmonotonic", "nonfinite"],
     )
     def test_invalid_time_axis_raises(self, time_points: np.ndarray) -> None:
-        """Programming/input-contract violations are not physiological NaNs."""
+        """Nonmonotonic or nonfinite time axes raise a clear ValueError."""
         concentration = np.ones((1, 1, 1, time_points.size), dtype=np.float64)
         with pytest.raises(ValueError, match="finite and strictly increasing"):
             compute_iauc(concentration, time_points, 60.0)

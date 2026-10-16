@@ -6,7 +6,7 @@ from pmriprep.utils.provenance import enrich_provenance_from_qc
 
 
 def _make_dce_sidecar() -> dict:
-    """Minimal DCE sidecar with PerfusionProcessing from Phase 1."""
+    """Minimal DCE sidecar with base PerfusionProcessing metadata."""
     return {
         "PerfusionProcessing": {
             "ContrastAgent": {"GenericName": "gadobutrol", "Source": "bids_sidecar"},
@@ -17,7 +17,7 @@ def _make_dce_sidecar() -> dict:
 
 
 def _make_dsc_sidecar() -> dict:
-    """Minimal DSC sidecar with PerfusionProcessing from Phase 1."""
+    """Minimal DSC sidecar with base PerfusionProcessing metadata."""
     return {
         "PerfusionProcessing": {
             "ContrastDose": {"standard_dose_mmol_kg": 0.1, "dose_multiplier": 1.0},

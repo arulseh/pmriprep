@@ -1,15 +1,8 @@
-"""DSC brain extraction interface with HD-BET and BET fallback.
+"""Extract a native DSC brain mask using a sequence of fallback methods.
 
-Provides a SimpleInterface with Nipype GPU-slot scheduling through the
-``use_gpu`` trait and the following fallback chain:
-
-1. **HD-BET** — deep learning, most accurate for pathological brains
-2. **FSL BET -F** — functional/EPI mode, handles T2* contrast and distortion
-3. **Intensity threshold** — 10th percentile, last resort
-
-BET ``-F`` (not ``-R``) is used for DSC because ``-R``'s center-of-gravity
-iteration can fail with EPI susceptibility distortion, while ``-F`` is
-specifically designed for EPI cleanup.
+The interface tries HD-BET, then FSL BET in functional/EPI mode (-F), then
+a mask based on the 10th percentile of positive intensities. Nipype GPU-slot
+scheduling uses the ``use_gpu`` trait.
 """
 
 import logging
@@ -74,21 +67,11 @@ class DSCBrainExtractOutputSpec(TraitedSpec):
 
 
 class DSCBrainExtract(SimpleInterface):
-    """Extract brain from DSC pre-bolus mean image.
+    """Extract brain from the DSC pre-bolus mean image.
 
-    Uses a three-level fallback chain to ensure brain extraction always
-    succeeds:
-
-    1. **HD-BET** — deep learning skull stripping.
-       Most accurate, handles pathological anatomy.
-    2. **FSL BET -F** — functional/EPI mode.  Designed for T2*-weighted
-       EPI data with susceptibility distortion.
-    3. **Intensity threshold** — 10th percentile of nonzero voxels.
-       Crude but always succeeds.
-
-    The brain mask is used for registration quality (T1w → DSC) and as a
-    search region for AIF detection.  The final processing mask comes from
-    transforming the T1w brain mask through registration.
+    Try HD-BET, FSL BET -F, then intensity thresholding. The emitted native DSC
+    mask supplies AIF search and quantitative processing as well as registration
+    QC. The transformed T1w mask is a separate registration-QC input.
     """
 
     input_spec = DSCBrainExtractInputSpec

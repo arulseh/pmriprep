@@ -306,8 +306,7 @@ def batched_dsc_vi_fit(
     Requires an explicitly supplied model adapter.
 
     Model bounds constrain the local Gaussian mean updates, including
-    spatial updates. Covariance remains a local Gaussian approximation;
-    intervals at active bounds are not exact truncated-posterior intervals.
+    spatial updates. Covariance uses a local Gaussian approximation.
 
     Parameters
     ----------
@@ -1079,7 +1078,7 @@ def batched_dsc_vi_fit(
                 iteration, int(np.sum(active)), n_valid, int(np.sum(converged)),
             )
 
-    # The fixed 10-iteration VI schedule makes the FE-plateau count
+    # The configured iteration schedule makes the FE-plateau count
     # informational only. Final fit quality is gated downstream by R².
     logger.info(
         "DSC batched VI finished %d-iteration schedule (n=%d): "

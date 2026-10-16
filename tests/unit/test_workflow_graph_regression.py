@@ -293,8 +293,8 @@ def flatten_collapsed_graph(wf: pe.Workflow) -> Any:
     propagation across a sub-wf boundary is identical to the execution engine's.
     Splice order follows ``nx.topological_sort`` (chained identities collapse
     correctly). The resulting leaf-to-leaf edge set is invariant under a correct
-    decomposition -- the load-bearing premise (verified empirically and pinned by
-    ``test_flatten_collapse_matches_legacy_flat_on_monolith``).
+    decomposition; toy-workflow comparisons and the production graph
+    snapshots check this property.
     """
     g = wf._create_flat_graph()
     top = wf.name
@@ -840,12 +840,6 @@ def test_wrong_decomposition_miswired_input_caught() -> None:
 def test_wrong_decomposition_broken_handoff_caught() -> None:
     """A 2-sub-wf decomposition missing the sub_a->sub_b handoff is caught."""
     assert graph_signature(_toy_chain_monolith()) != graph_signature(_toy_chain_two_subwf(broken=True))
-
-
-# NOTE: ``test_flatten_collapse_matches_legacy_flat_on_monolith`` was retired once
-# DCE began decomposing (no production monolith remains). The flatten-collapse ==
-# legacy-flat invariant is now covered by the toy-monolith self-tests above and by
-# ``test_graph_matches_baseline`` (collapsed graph == committed baseline).
 
 
 def test_determinism_path_independent(tmp_path: Path) -> None:

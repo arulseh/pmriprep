@@ -1,11 +1,4 @@
-"""Regression tests for DCE registration QC mask handling.
-
-These tests guard against the silent shape-mismatch bug where the
-input ``brain_mask`` (T1w/anat space) was passed to NMI / Correlation /
-DICE helpers that operate on DCE-space images, raising ValueError on
-every metric and dropping the corresponding QC fields from
-``dce_qc.json``.
-"""
+"""Test registration QC with masks supplied on different image grids."""
 
 import shutil
 from pathlib import Path
@@ -79,15 +72,7 @@ class TestTransformMaskToGrid:
 
 
 class TestDCERegistrationQCMaskRegression:
-    """End-to-end regression: input mask in anat space, images in DCE space.
-
-    Today's bug: ``_compute_qc_metrics`` passes the anat-grid mask
-    directly to the QC helpers, every metric raises on shape mismatch,
-    and the resulting dict is missing nmi/correlation/dice and reports
-    ``qc_status='UNKNOWN'``. After the fix, the input mask is resampled
-    onto the DCE grid first; metrics populate and the gate reports
-    PASS/WARN/POOR.
-    """
+    """QC resamples an anatomical-grid mask to the DCE image grid before scoring."""
 
     def test_qc_metrics_populate_when_input_mask_in_anat_space(
         self, tmp_path: Path
@@ -101,7 +86,7 @@ class TestDCERegistrationQCMaskRegression:
         registered_t1w_data = dce_mean_data.copy()
 
         # Anat-space mask on a different grid (16,16,8) — the shape that
-        # triggers the original bug.
+        # exercises the cross-grid mask path.
         anat_affine = np.diag([1.0, 1.0, 1.0, 1.0])
         anat_mask_data = np.zeros((16, 16, 8), dtype=np.uint8)
         anat_mask_data[2:14, 2:14, 1:7] = 1

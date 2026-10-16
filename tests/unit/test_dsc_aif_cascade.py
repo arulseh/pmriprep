@@ -500,7 +500,7 @@ class TestComputeAifBrr:
 
 
 class TestAifPassesQualityBrrGate:
-    """_aif_passes_quality now gates on averaged BRR ≥ AIF_AVG_BRR_MIN."""
+    """_aif_passes_quality gates on averaged BRR ≥ AIF_AVG_BRR_MIN."""
 
     def test_rejects_negative_tail(self) -> None:
         """Curve with BRR well below -3 % fails the BRR gate."""
@@ -737,17 +737,11 @@ class TestPostfilterDiagsEmission:
 
 
 class TestUnionPoolTrim:
-    """Union-pool fallback now mirrors the per-tier progressive worst-BRR
-    trim (production code at ``dsc_aif.py:2870-2925``).
+    """Test progressive worst-BRR trimming of a union candidate pool.
 
-    These tests reproduce the union trim loop pattern in-test and verify
-    (a) single-shot acceptance of a contaminated pool fails;
-    (b) one trim iteration drops the contaminator;
-    (c) the trimmed pool passes averaged-pool acceptance;
-    (d) ``union_tier_provenance`` recomputed from the trimmed coords
-        excludes tiers whose voxels were dropped (fixes the
-        detection_level vs aif_tier_provenance inconsistency that would
-        otherwise occur).
+    These tests reproduce the trimming loop using production scoring helpers.
+    They check rejection of a contaminated pool, acceptance after trimming and
+    provenance counts for the retained coordinates.
     """
 
     @staticmethod
@@ -992,9 +986,7 @@ class TestSyntheticFallbackQcConsistency:
         assert qc["synthetic_fallback_reason"] == "no_candidates"
 
     def test_stamp_common_overwrites_aif_quality(self) -> None:
-        """Helper overwrites ``aif_quality='detected'`` to ``'degraded'``
-        (the Path B bug: gamma-R2 fallback left aif_quality as 'detected').
-        """
+        """Synthetic fallback overwrites a detected-quality label with degraded quality."""
         from pmriprep.interfaces.dsc_aif import _stamp_synthetic_fallback_common
         qc: dict[str, object] = {"aif_quality": "detected"}
         _stamp_synthetic_fallback_common(

@@ -232,11 +232,10 @@ QC_RHAT_MAX: Final[float] = 1.1
 #: Minimum effective sample size for MCMC convergence
 QC_ESS_MIN: Final[int] = 100
 
-#: Minimum CNR for reliable perfusion quantification (Rose criterion: CNR > 3-5)
+#: CNR cutoff used by the perfusion QC policy.
 QC_CNR_THRESHOLD: Final[float] = 4.0
 
-#: Minimum mean CNR for excluding total failures (failed injection, extravasation)
-#: Below this threshold, data is unusable regardless of coverage
+#: Mean-CNR cutoff for the gross-quality exclusion gate.
 QC_MEAN_CNR_MINIMUM: Final[float] = 3.0
 
 #: Time target used to choose the odd Savitzky-Golay AIF smoothing window.
@@ -247,39 +246,24 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 # AIF Per-Voxel Kinetic Filters (post-score, pre-averaging)
 # =============================================================================
 
-#: Maximum peak-time spread (seconds) within an averaged AIF voxel pool.
-#: True intra-arterial dispersion across the MCA tree (M1 → M3) is sub-
-#: second, but the MEASURED
-#: spread among co-arterial voxels at typical DSC TR (1-2 s) exceeds this
-#: due to (a) frame quantization on argmax peak detection and (b) per-voxel
-#: argmax jitter at SNR 20-40 (~±1 frame). Converted at runtime to a frame
-#: count via ``max(1, ceil(SECONDS / tr))``. At TR=1.5 s → 2 frames; at
-#: TR=2.0 s → 2 frames; at TR=0.5 s (high-temp DSC) → 6 frames.
+#: Maximum peak-time offset from the pool's 20th percentile, in seconds.
+#: Converted to frames with ``max(1, ceil(SECONDS / tr))``.
 AIF_PEAK_SPREAD_MAX_SECONDS: Final[float] = 3.0
 
-#: Tissue-TTP causality tolerance (s) for arterial-vs-venous candidate gating.
-#: A feeding artery peaks before parenchyma, so a candidate peaking more than
-#: ``AIF_TTP_REJECT_AFTER_TISSUE_S`` after tissue is venous and hard-rejected;
-#: ``AIF_TTP_NEAR_TISSUE_S`` bounds the mild near-tissue penalty band. Applied
-#: in seconds (frame difference × tr) so the gate is TR-invariant.
+#: Candidate timing limits relative to tissue TTP, in seconds.
+#: The first sets the late-peak rejection limit; the second sets the
+#: near-tissue penalty band. Neither establishes vessel identity by itself.
 AIF_TTP_REJECT_AFTER_TISSUE_S: Final[float] = 2.0
 AIF_TTP_NEAR_TISSUE_S: Final[float] = 2.0
 
 #: Maximum tail/peak fraction for an AIF voxel (mean ΔR2* over the last
-#: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak). Catches BBB-leakage
-#: and tissue-PVE-driven late plateau while allowing modest partial-volume
-#: tail elevation.
+#: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak).
 AIF_TAIL_FRACTION_MAX: Final[float] = 0.15
 
-#: Late-tail measurement window (seconds, from end of acquisition). At
-#: typical bolus arrival ~30 s and recirculation decay <5% peak by t > 4×
-#: MTT, 30 s places the window well
-#: past first-pass + recirculation in normal tissue, so a 15% tail
-#: indicates extravasation/PVE rather than residual recirculation.
+#: Late-tail measurement window in seconds, measured from acquisition end.
 AIF_TAIL_WINDOW_S: Final[float] = 30.0
 
-#: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
-#: partial volume with tumor feeding vessels corrupts bolus shape.
+#: Minimum distance (mm) from a lesion for AIF candidates.
 LESION_EXCLUSION_FLOOR_MM: Final[float] = 10.0
 
 #: Recommended minimum distance (mm) from lesion for AIF candidate voxels.

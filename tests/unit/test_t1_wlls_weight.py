@@ -1,11 +1,7 @@
-"""Tests for the DESPOT1 WLLS weight de-bias and the VFA-fit NRMSE QC fix.
+"""Test linearized SPGR weighting and VFA fit-residual reporting.
 
-Locks the fix that removed the dimensional misuse of ``EPSILON_T1`` (a T1-in-seconds
-floor) as a magnitude floor on the heteroscedastic weight denominator
-``1 - E1*cos(alpha)`` and on the normal-equation determinants. The old 0.01 floor
-de-weighted the informative long-T1 / small-flip points (Deoni 2003 Eq 2/3, weighted
-per Chang 2008), biasing T1 upward at >=3 flip angles. Also covers the report-only
-VFA-fit NRMSE now being evaluated at the B1-corrected flip angles.
+Compare denominator floors on paired synthetic noise, check noiseless T1
+recovery and verify that report residuals use B1-corrected flip angles.
 """
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ from pmriprep.interfaces.dce import T1Mapping
 # --- SPGR / DESPOT1 helpers ------------------------------------------------
 
 def _spgr(s0: float, fa_rad: np.ndarray, tr_s: float, t1_s: float) -> np.ndarray:
-    """Spoiled gradient-echo steady-state signal (Deoni 2003 Eq 1)."""
+    """Spoiled gradient-echo steady-state signal."""
     e1 = np.exp(-tr_s / t1_s)
     return s0 * np.sin(fa_rad) * (1.0 - e1) / (1.0 - e1 * np.cos(fa_rad))
 
@@ -49,13 +45,13 @@ _T1_EXPOSED = 0.600  # 600 ms -> E1 ~ 0.9934, in the exposed band (0.99, 0.995)
 
 
 class TestExposedRegime:
-    """The chosen config lands where the OLD 0.01 floor actually fired."""
+    """The fixture weight denominator lies between the two comparison floors."""
 
     def test_smallflip_denominator_between_old_and_new_floor(self) -> None:
-        """denom_w for the small-flip anchor is in (1e-6, 0.01): old floor bit it."""
+        """The smallest-flip weight denominator is between 1e-6 and 0.01."""
         e1 = np.exp(-_TR_S / _T1_EXPOSED)
         denom_w = 1.0 - e1 * np.cos(_FA_EXPOSED[0])  # smallest flip
-        assert 1e-6 < denom_w < 1e-2  # new floor 1e-6 spares it; old 0.01 clamped it
+        assert 1e-6 < denom_w < 1e-2  # Between the two comparison floors
 
 
 class TestNoiselessRecovery:
@@ -63,7 +59,7 @@ class TestNoiselessRecovery:
 
     @pytest.mark.parametrize("t1_s", [0.4, 0.6, 0.8, 1.2])
     def test_three_angle_recovers_t1(self, t1_s: float) -> None:
-        """>=3-angle noiseless fit recovers the ground-truth T1 to fp precision."""
+        """>=3-angle noiseless fit recovers the ground-truth T1 within 0.1%."""
         sig = _spgr(500.0, _FA_EXPOSED, _TR_S, t1_s)[:, None, None, None]
         t1 = _fit(sig, _FA_EXPOSED, _TR_S)
         assert t1[0] == pytest.approx(t1_s, rel=1e-3)
@@ -77,13 +73,10 @@ class TestNoiselessRecovery:
 
 
 class TestWeightDebiasVsOldFloor:
-    """Monte-Carlo: correct weight lowers DESPOT1 bias without inflating variance.
+    """Compare T1 bias and RMSE with denominator floors of 1e-6 and 0.01.
 
-    Simulates the OLD behaviour by monkeypatching ``EPSILON_WEIGHT_DENOM`` back to
-    0.01 (the fitter re-imports the constant on every call), on the SAME noise
-    realisations, so old vs new is a paired comparison. The de-bias is a mean
-    effect (unweighted GLLS overestimates T1; restoring the weight pulls it toward
-    truth), so it is measured on mean bias / RMSE, not the median.
+    Both fits use identical synthetic noise samples. These assertions
+    characterize the fixture, not performance for arbitrary acquisitions.
     """
 
     def _mc(self, monkeypatch, floor: float, seed: int = 20240712, n: int = 8000):
@@ -99,7 +92,7 @@ class TestWeightDebiasVsOldFloor:
         return _fit(noisy, _FA_EXPOSED, _TR_S)
 
     def test_new_floor_reduces_bias_and_rmse(self, monkeypatch) -> None:
-        """New 1e-6 floor: smaller mean bias, smaller RMSE, no variance blow-up."""
+        """The 1e-6 floor gives lower mean bias and RMSE in the paired fixture."""
         # Same seed -> paired on identical noise.
         t1_old = self._mc(monkeypatch, 0.01)
         t1_new = self._mc(monkeypatch, 1e-6)
@@ -111,11 +104,10 @@ class TestWeightDebiasVsOldFloor:
         rmse_old = np.sqrt(np.mean((t1_old - _T1_EXPOSED) ** 2))
         rmse_new = np.sqrt(np.mean((t1_new - _T1_EXPOSED) ** 2))
 
-        # Old GLLS-like weight overestimates T1 (positive bias); the correct
-        # weight is systematically closer to truth on the same noise.
-        assert (t1_old - t1_new).mean() > 0  # paired: old runs higher
-        assert bias_new < bias_old  # mean de-bias (Deoni/Chang weight restored)
-        assert rmse_new < rmse_old  # accuracy improves; variance not inflated
+        # Compare paired estimates, mean bias and RMSE on the same noise.
+        assert (t1_old - t1_new).mean() > 0  # The larger floor gives higher paired estimates
+        assert bias_new < bias_old  # Lower absolute mean bias
+        assert rmse_new < rmse_old  # Lower RMSE in this fixture
 
 
 class TestDegenerateGuard:
@@ -128,7 +120,7 @@ class TestDegenerateGuard:
         assert np.all(np.isfinite(t1))
 
     def test_nfa2_weight_invariant(self, monkeypatch) -> None:
-        """Two angles determine the line exactly: old vs new floor agree (allclose)."""
+        """Both denominator floors give equal fits to two noiseless flip angles."""
         fa2 = np.deg2rad([3.0, 15.0])
         sig = _spgr(500.0, fa2, _TR_S, _T1_EXPOSED)[:, None, None, None]
 
@@ -142,16 +134,12 @@ class TestDegenerateGuard:
 
 
 class TestVFAFitNRMSECorrectedAngles:
-    """Fix 2: the report-only VFA-fit NRMSE is evaluated at B1-corrected angles."""
+    """VFA fit NRMSE uses B1-corrected angles."""
 
     def test_nrmse_near_zero_for_perfect_corrected_data(
         self, tmp_path, monkeypatch
     ) -> None:
-        """Perfect SPGR at corrected angles (B1=1.2) -> NRMSE ~ 0, not inflated.
-
-        If the forward model used nominal angles (the old bug), s_pred would be
-        evaluated at the wrong flip and NRMSE would be materially non-zero.
-        """
+        """Exact SPGR data generated at corrected angles produce NRMSE below 0.02."""
         # Keep the interface's cwd-relative outputs (T1 map, QC PNG) in tmp.
         monkeypatch.chdir(tmp_path)
         nominal_deg = np.array([3.0, 7.0, 15.0])

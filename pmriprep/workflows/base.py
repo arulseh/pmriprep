@@ -920,7 +920,7 @@ def _find_previous_tumor_seg_outputs(
 # Must match ``ComputeDCEMaps._MAX_VOLUME_TR_2CXM`` in
 # ``pmriprep/interfaces/dce_compute.py``. The constant lives on the
 # producer class as a private attribute; duplicating with a named source
-# reference avoids a new public-import boundary while keeping the gate
+# reference keeps the builder independent of the interface import while remaining
 # auditable.
 _MAX_VOLUME_TR_2CXM_BUILD = 2.0
 _VOLUME_TR_COMPARISON_TOLERANCE_BUILD = 1e-6
@@ -2030,7 +2030,7 @@ def _connect_master_dsc_datasinks(
             ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
             ("outputnode.fallback_mask", "inputnode.fallback_mask"),
             ("outputnode.preload_qc", "inputnode.preload_qc"),
-            # Phase 2/3 BIDS cleanup: in-memory dicts feeding the
+            # In-memory QC dicts feed the
             # preproc-4D cosmetic enrichment + verbatim resume sidecar.
             ("outputnode.aif_qc", "inputnode.aif_qc"),
             ("outputnode.preprocessing_stats", "inputnode.preprocessing_stats"),
@@ -2478,7 +2478,7 @@ def _connect_master_dce_anatomy(
         workflow.connect([
             (anat_wf, dce_wf, [
                 ("outputnode.brain_mask", "inputnode.brain_mask"),
-                # Pass T1w→MNI transform for atlas-guided AIF (Gap 6)
+                # Pass T1w→MNI transform for atlas-guided AIF
                 ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
             ]),
         ])

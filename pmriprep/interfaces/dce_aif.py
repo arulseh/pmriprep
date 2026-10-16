@@ -1,14 +1,8 @@
-"""AIF (Arterial Input Function) detection interfaces for DCE-MRI.
+"""Detect and assess arterial input functions for DCE-MRI.
 
-This module implements Nipype interfaces for AIF detection in DCE perfusion
-processing, with multi-level detection strategies (atlas-based, whole-brain,
-population) and comprehensive quality metrics for DCE-specific requirements.
-
-The DCE AIF differs from DSC AIF in several important ways:
-- Concentration is in mM (not relative signal change)
-- Expected peak values are in physiological range (5-7.6 mM for full dose)
-- FWHM is in seconds (8-25s) rather than frames
-- Blood T1 depends on field strength (1.5T→1.35s, 3T→1.65s)
+Atlas-guided and whole-brain searches operate on concentration curves in mM.
+The interface can also emit a population AIF. Detection uses dose-scaled
+amplitude and temporal-shape policies, with separate QC and provenance.
 """
 
 import logging
@@ -85,18 +79,12 @@ from pmriprep.utils.dce_constants import (
 logger = logging.getLogger(__name__)
 
 # Per-candidate quality filtering for detected AIF
-# Candidates below this score are partial-volume contaminated (tiers 6-7)
+# Candidates below this score are excluded from the detected pool.
 _MIN_CANDIDATE_SCORE = 0.5
-# Minimum survivors for a reliable detected AIF (SNR >= 21, basic outlier check)
+# Minimum surviving candidates required to emit a detected AIF
 _MIN_CANDIDATES_FOR_DETECTED = 2
-# Maximum post-arrival peak time (seconds) for the EARLIEST candidate in a
-# tier to be considered "anchored" by an arterial-grade voxel. Derived from
-# physiological arterial bolus arrival range (4-12s post-injection)
-# plus capillary MTT margin (~4s in GM) for
-# adult brain DCE. Tiers whose earliest candidate peaks later than this
-# are treated as venous-only clusters and fail Pass-1 acceptance. If
-# pediatric or extreme-cardiac-output cohorts are added later, expose as
-# a config knob rather than tuning this constant.
+# Maximum post-arrival peak time (seconds) of the earliest candidate
+# for a tier to satisfy the Pass-1 anchor gate.
 _MAX_ANCHOR_POST_ARRIVAL_S: float = 10.0
 
 # Whole-brain fallback spatial policy. Atlas-constrained tiers use the
@@ -462,18 +450,9 @@ def detect_dce_aif_multi_bump_tail(
 
     Detects local maxima in the post-first-pass region whose absolute
     amplitude exceeds ``secondary_peak_fraction`` x first-pass peak.
-    QC-only flag for motion / inflow / venous mixing artifacts; does not
-    alter AIF detection or candidate selection.
-
-    The 60s post-peak shoulder (``DCE_AIF_TAIL_SHOULDER_SECONDS``) excludes the
-    physiologic recirculation hump, so a clean AIF has NO counted secondary
-    maxima in-window; ``count > 1`` flags late-tail anomalies (venous mixing /
-    motion / inflow) beyond 60s post-peak.
-
-    Window parameters are specified in seconds and converted to frames
-    via ``tr`` so the detector behaves consistently across acquisitions
-    with TRs from sub-second (compressed-sensing 4D) to ~6s (clinical
-    DCE-VIBE).
+    The count feeds both pool acceptance gates and emitted-AIF QC.
+    The shoulder and peak-separation intervals are converted from seconds
+    to at least one frame using ``tr``.
 
     Parameters
     ----------
@@ -488,14 +467,11 @@ def detect_dce_aif_multi_bump_tail(
         (absolute) above which a tail maximum is counted.
     tail_shoulder_seconds : float, optional
         Time (seconds) to skip immediately after
-        the first-pass peak before searching for secondary maxima
-        (avoids counting the descending shoulder of the first pass
-        as a separate peak; ~half a typical first-pass FWHM).
+        the first-pass peak before searching for secondary maxima.
     min_separation_seconds : float, optional
         Minimum time (seconds) between detected
-        secondary peaks (~1/3 of the typical recirculation period;
-        ``scipy.signal.find_peaks`` ``distance`` parameter,
-        converted to frames using ``tr``).
+        secondary peaks, converted to the ``scipy.signal.find_peaks``
+        distance parameter in frames.
 
     Returns
     -------
@@ -630,10 +606,8 @@ def compute_dce_aif_ratio_30s(
     """Compute the ratio C[peak + 30s] / C[peak] for the AIF curve.
 
     The post-peak sample is taken at the larger of 4 frames or
-    ``ceil(30 / tr)`` frames after the peak, so the gate behaves
-    consistently across temporal resolutions from sub-second compressed-
-    sensing 4D up to ~7 s clinical DCE-VIBE. Parker bi-exponential gives
-    ratio ~0.32 at peak+30 s; venous AIFs sit at >=0.55.
+    ``ceil(30 / tr)`` frames after the peak. At coarse sampling, the
+    four-frame minimum places the sample later than 30 seconds.
 
     Parameters
     ----------
@@ -700,9 +674,8 @@ def _asymmetric_band_score(
 ) -> float:
     """Asymmetric tent in [0, 1]: 1 at ``center``, with independent widths.
 
-    Used for washout, where deviation below the physiologic center is a strong
-    contamination signal (strict, ``lower_half_width``) but deviation above is
-    mostly benign long-acquisition drift (lenient, ``upper_half_width``).
+    The washout scorer uses a narrower lower band than upper band, so
+    equally sized deviations below the center incur a larger penalty.
     """
     hw = lower_half_width if value <= center else upper_half_width
     if hw <= 0.0:
@@ -717,37 +690,14 @@ def score_averaged_aif_fidelity(
     dose_factor: float = 1.0,
     hematocrit: float = HEMATOCRIT_ARTERIAL,
 ) -> tuple[float, dict[str, float]]:
-    """Physics-grounded fidelity score (0-1) for a *pooled/averaged* DCE AIF.
+    """Compute a diagnostic score in [0, 1] for the emitted DCE AIF.
 
-    Unlike the per-candidate scorer (whose mean over voxels never inspects the
-    pooled curve), this evaluates the emitted, pooled AIF directly. It is a QC /
-    regression-sentinel scalar: it rank-orders a faithful arterial AIF above a
-    tail-collapsed (over-washed) or partial-volume-diluted one — the two failure
-    modes that bias Ktrans. It is NOT a runtime accept/reject gate (real detected
-    AIFs cluster low because they systematically under-recover the real-MCA late
-    tail, a second-order effect for Ktrans); per-subject contamination is gated on
-    the specific signatures (tail-ratio, washout floors, peak band, FWHM, causality).
-
-    Caveat: the washout and tail-persistence terms use a fixed last-frames tail, so
-    this QC scalar reads slightly higher on acquisitions longer than ~7 min (the tail
-    is sampled deeper into renal clearance). Cosmetic here — this scalar never gates;
-    the gating per-candidate scorer uses an asymmetric washout band to absorb the drift.
-
-    Anchored to physiologic arterial targets rather than a full Parker-template
-    shape residual because measured arterial curves may have heavier
-    recirculation tails than the idealized template.
-
-    Terms (each in [0, 1], then weighted):
-
-    - **washout**: two-sided deviation from the physiologic arterial washout
-      (:data:`AIF_WASHOUT_PHYSIOLOGIC_CENTER`); never "more is better".
-    - **tail**: late-tail-mean / peak, two-sided around the physiologic persistence
-      plateau — penalizes both a collapsed tail and a tissue-diluted (too-high) one.
-    - **scale**: peak in the dose-scaled band + a one-sided AUC floor vs Parker
-      (a normalized-only score would hide the amplitude error that biases
-      Ktrans ~ 1 / AIF integral; a richer-than-Parker AUC is physiologic).
-    - **width**: FWHM near :data:`AIF_IDEAL_FWHM_SECONDS` + a positive upslope (a
-      broad venous curve fails the sharp arterial upstroke).
+    Scores the pooled curve directly. The composite is reported as QC;
+    runtime acceptance uses the individual pool gates. The score combines
+    configured washout and tail-persistence bands, a dose-scaled peak band,
+    a one-sided AUC comparison with an arrival-aligned Parker template,
+    an FWHM band and a positive-upslope indicator. The tail terms depend
+    on acquisition duration because they use the final acquired frames.
 
     Parameters
     ----------
@@ -810,8 +760,7 @@ def score_averaged_aif_fidelity(
     auc = compute_dce_aif_auc(curve, tr)
     template_auc = compute_dce_aif_auc(template, tr)
     auc_ratio = auc / template_auc if template_auc > 0 else 0.0
-    # One-sided: a richer-than-Parker AUC is physiologic; only penalize a deficient
-    # AUC (tail collapse / partial-volume dilution → too little tracer delivered).
+    # The AUC contribution saturates at the template AUC; lower areas lose score.
     auc_score = 1.0 if auc_ratio >= 1.0 else max(0.0, 1.0 - (1.0 - auc_ratio) / 0.5)
     scale_score = 0.5 * peak_score + 0.5 * auc_score
     metrics["peak_mm"] = peak
@@ -835,11 +784,8 @@ def score_averaged_aif_fidelity(
     metrics["fwhm_seconds"] = fwhm
     metrics["width_score"] = width_score
 
-    # --- tail persistence: late-tail-mean / peak (two-sided physiologic band) ---
-    # Peaked at the physiologic recirculation plateau; penalized both below the
-    # collapse floor (tail-collapse / over-washout — V1, over-selected AIFs) AND
-    # above it (a tissue-diluted partial-volume AIF does not wash out, so its tail
-    # sits too high). Half-width = target - floor puts the lower zero at the floor.
+    # Tail persistence uses a symmetric band about the configured target.
+    # Half-width = target - floor places the lower zero at the configured floor.
     tail_frames = max(1, int(round(30.0 / tr)))
     tail_ratio = float(np.mean(curve[-tail_frames:])) / peak if peak > 0 else 0.0
     tail_score = _two_sided_band_score(
@@ -850,7 +796,7 @@ def score_averaged_aif_fidelity(
     metrics["tail_ratio"] = tail_ratio
     metrics["tail_score"] = tail_score
 
-    # --- washout: two-sided deviation from the physiologic arterial center ---
+    # Washout uses a symmetric band about the configured center.
     washout = compute_dce_aif_washout(curve, baseline_frames)
     washout_score = _two_sided_band_score(
         washout, AIF_WASHOUT_PHYSIOLOGIC_CENTER, AIF_WASHOUT_BAND_HALFWIDTH
@@ -858,9 +804,7 @@ def score_averaged_aif_fidelity(
     metrics["washout"] = washout
     metrics["washout_score"] = washout_score
 
-    # Washout and tail-persistence jointly carry the tail-collapse / partial-volume
-    # discrimination; scale guards the amplitude (Ktrans ~ 1/AIF integral); width
-    # rejects broad venous curves.
+    # Weighted composite of tail, amplitude and width diagnostics.
     fidelity = (
         0.30 * washout_score
         + 0.30 * tail_score
@@ -1148,8 +1092,7 @@ def _evaluate_gates(
     G6 sub-criteria (a)/(f)/(g) are checked: if all hold, status is
     ``G6_ADMIT``; otherwise the failing G6 sub-criterion is reported.
 
-    G5 is the only WARN-tier gate currently; the design supports future
-    WARN gates (aggregate-warn check reserved for when a second is added).
+    G5 supplies the warning tier.
 
     Parameters
     ----------
@@ -1219,7 +1162,7 @@ def _evaluate_gates(
     if g5_state == "HARD":
         return _record("FAIL_G5", "G5")
 
-    # C5: a sub-threshold peak is no real bolus — a HARD amplitude reject that the
+    # A peak below the configured floor is a hard amplitude rejection that the
     # G6 escape (which rescues dilution/over-scale, not a ~0-peak AIF) must NOT
     # rescue. Placed with the other HARD gates, before the G6 clause. This is
     # caught gate-side because _apply_aif_scale returns scale=1.0 for such a peak,
@@ -1382,7 +1325,7 @@ class PoolGateOutcome:
 
     Returned by ``_score_and_gate_pool`` (the shared "average ->
     plasma-convert -> rescale -> QC -> hemisphere/slabs -> gate" body used
-    by both the progressive-trim loop and the C2 re-gate). ``curve_scaled``
+    by both the progressive-trim loop and the post-filter gate check). ``curve_scaled``
     is the exact curve the shape gates evaluated, so callers emit it directly.
     ``required_scale_factor`` remains the G1/G6 amplitude-adequacy input even
     when automatic peak-floor mutation is disabled.
@@ -1510,7 +1453,7 @@ class EmitResult:
     """The emitted AIF curve + mask + provenance, shared by both emit branches.
 
     ``tier_result``/``detection_method`` ride here (not on ``DetectionState``)
-    because the emit branches rebuild/override them: the C2 re-gate rebuilds
+    because the emit branches rebuild/override them: the post-filter gate check rebuilds
     ``tier_result``, and the population emit branch reassigns
     ``detection_method`` to ``"population"`` when the detected pool was emptied.
     """
@@ -1733,7 +1676,7 @@ class AIFDetection(BaseInterface):
     - Tissue TTP cross-validation to reject venous voxels
     - Upstroke slope metric for arterial/venous discrimination
     - Cluster-based spatial selection (26-connectivity)
-    - Inverse-score weighted averaging (single-voxel default, optional ROI expansion)
+    - Score-weighted averaging (single-voxel default, optional ROI expansion)
     - Distance-based lesion filtering
 
     Parameters
@@ -1856,7 +1799,7 @@ class AIFDetection(BaseInterface):
         return (base_min * dose_factor, base_max * dose_factor)
 
     # -----------------------------------------------------------------
-    # Signal Characteristics (Phase 2)
+    # Signal Characteristics
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -2133,7 +2076,7 @@ class AIFDetection(BaseInterface):
             candidate_indices = np.where(candidates_mask)[0]
             tier_used = 6
 
-        # TIER 7: Last resort — at high TR, peak only (always produces candidates);
+        # TIER 7: At high TR, use only the relaxed peak criterion;
         # at normal TR, peak + relaxed timing
         if len(candidate_indices) < 10:
             if low_tr:
@@ -2146,7 +2089,7 @@ class AIFDetection(BaseInterface):
         return candidate_indices, tissue_ttp, tier_used
 
     # -----------------------------------------------------------------
-    # Tissue TTP Reference (Phase 3)
+    # Tissue TTP Reference
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -2203,7 +2146,7 @@ class AIFDetection(BaseInterface):
         return float(np.median(peak_time_map[parenchyma]))
 
     # -----------------------------------------------------------------
-    # Search Mask Preparation (Phase 1)
+    # Search Mask Preparation
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -2765,10 +2708,8 @@ class AIFDetection(BaseInterface):
         if fwhm < thresholds.fwhm_min_seconds or fwhm > thresholds.fwhm_max_seconds:
             return 0.0, metrics
 
-        # 3. Peak concentration (must be physiological)
-        # Whole-brain: stricter peak gate (no spatial prior to compensate).
-        # 0.5 × 5.0 mM = 2.5 mM floor at full dose. At TR=4.76s, a true
-        # artery sampled at ~60% of peak ≈ 3.6 mM still passes.
+        # 3. Peak concentration must satisfy the configured dose-scaled band
+        # Whole-brain searches use a stricter peak gate without an atlas prior.
         # Atlas-constrained: uniform 0.15 — low peaks expected from temporal
         # undersampling + partial volume in known arterial territory.
         # Atlas spatial prior compensates; quarter-dose at long TR produces
@@ -2808,12 +2749,8 @@ class AIFDetection(BaseInterface):
         cnr_score = min(1.0, cnr / AIF_CNR_SATURATION)
         score += 0.15 * cnr_score
 
-        # Washout contribution: asymmetric band around the physiologic arterial
-        # washout. A monotonic "higher washout = better" reward is wrong — it
-        # rewards an under-washed (tissue-diluted) or collapsed tail. Penalize
-        # under-washing steeply (contamination) but over-washing softly: on a long
-        # acquisition a genuine artery reads high simply because the fixed tail is
-        # sampled deeper into renal clearance, and it must still clear the accept gate.
+        # Washout uses the configured asymmetric band: deviations below the
+        # center are penalized more strongly than equal deviations above it.
         washout_score = _asymmetric_band_score(
             washout,
             AIF_WASHOUT_PHYSIOLOGIC_CENTER,
@@ -2971,7 +2908,7 @@ class AIFDetection(BaseInterface):
         return kept
 
     # -----------------------------------------------------------------
-    # Cluster-Based Selection (Phase 4)
+    # Cluster-Based Selection
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -3061,7 +2998,7 @@ class AIFDetection(BaseInterface):
                 AIF_FWHM_BAND_HALFWIDTH_SECONDS,
             )
 
-            # Match the per-candidate asymmetric physiologic washout band.
+            # Match the per-candidate asymmetric washout scoring band.
             # A monotonic raw washout reward favors tail-collapsed curves.
             washout_vals = [
                 metrics_list[i].get("washout", 0.0) for i in cluster_indices
@@ -3195,14 +3132,10 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         tr: float,
     ) -> tuple[bool, float]:
-        """Mouridsen-style cluster-anchor predicate.
+        """Check the earliest candidate peak against the configured timing limit.
 
-        A tier is "anchored" if at least one candidate has post-arrival
-        peak time within the physiological arterial range. This catches
-        clusters with low per-voxel peaks but at least one voxel with
-        arterial-grade timing — while rejecting all-venous clusters
-        where every candidate lags arterial timing by more than
-        ``_MAX_ANCHOR_POST_ARRIVAL_S``.
+        A tier is "anchored" when its earliest candidate peak falls within
+        ``_MAX_ANCHOR_POST_ARRIVAL_S`` of the baseline arrival frame.
 
         Operates on the post-filter survivor list returned by
         ``_find_candidates_in_mask`` (NOT the raw mask candidates) — by
@@ -3261,7 +3194,7 @@ class AIFDetection(BaseInterface):
         Runs the shared sequence: weighted-ROI average -> plasma-convert
         (``/ (1 - Hct)``) -> amplitude rescale -> QC -> hemisphere / slab
         span -> gate evaluation. Used by both the progressive-trim loop and
-        the post-cascade C2 re-gate so the two paths cannot drift.
+        the post-filter gate check so both paths apply the same operations.
 
         Parameters
         ----------
@@ -3828,8 +3761,7 @@ class AIFDetection(BaseInterface):
             for x, y, z in mask_coords
         ])
 
-        # Cap at physiological maximum to reject resampling artifacts
-        # (max arterial peak ~15 mM for double dose; 20 mM provides margin)
+        # Apply the configured concentration ceiling
         MAX_PHYSIOLOGICAL_CONC_MM = 20.0
         curves = np.minimum(curves, MAX_PHYSIOLOGICAL_CONC_MM)
 
@@ -3882,9 +3814,9 @@ class AIFDetection(BaseInterface):
                 "fwhm_seconds": float(chars["fwhm_seconds"][idx]),
                 "fwhm_frames": float(chars["fwhm_frames"][idx]),
                 "washout": float(chars["washout_fraction"][idx]),
-                "baseline_std": 0.0,  # Not computed in vectorized path
-                "cnr": 0.0,  # Will compute below if needed
-                "auc": 0.0,  # Will compute below if needed
+                "baseline_std": 0.0,  # Retained for absent or negligible baseline variance
+                "cnr": 0.0,  # Retained when baseline_frames <= 0
+                "auc": 0.0,  # Replaced by the full-curve integral below
                 "upstroke_slope": float(chars["upstroke_slope"][idx]),
                 "peak_time_frame": float(chars["peak_indices"][idx]),
                 "enhancement": float(chars["enhancement"][idx]),
@@ -3921,7 +3853,7 @@ class AIFDetection(BaseInterface):
 
         # Score candidates for ranking (using individual _score_dce_candidate for ranking)
         # Pass tissue TTP so timing is factored into scoring
-        # Precompute physiological peak floor (loop-invariant)
+        # Precompute the dose-scaled peak floor (loop-invariant)
         peak_min_expected, peak_max_expected = self._get_expected_peak_range()
         peak_ceiling = _dce_aif_peak_ceiling(peak_max_expected, criteria)
         # Whole-brain: higher floor (match scorer's peak_tol) to reject venous
@@ -3946,7 +3878,7 @@ class AIFDetection(BaseInterface):
             # Update metrics with timing score if computed
             if "timing_score" in scored_metrics:
                 all_metrics[idx]["timing_score"] = scored_metrics["timing_score"]
-            # If score is 0, check whether peak is physiologically plausible
+            # If score is zero, check the configured peak interval
             # before applying tier-based fallback
             if score <= 0:
                 candidate_peak = all_metrics[idx].get("peak_mm", 0.0)
@@ -4005,7 +3937,7 @@ class AIFDetection(BaseInterface):
         return candidates, scores, all_metrics
 
     # -----------------------------------------------------------------
-    # Weighted ROI Averaging (Phase 5)
+    # Weighted ROI Averaging
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -4016,7 +3948,7 @@ class AIFDetection(BaseInterface):
         brain_mask: npt.NDArray[Any],
         roi_size: int = 1,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
-        """Compute an inverse-score weighted AIF with optional ROI averaging.
+        """Compute a score-weighted AIF with optional ROI averaging.
 
         When ``roi_size=1`` (default), each candidate contributes only its own
         voxel curve — no spatial expansion into neighboring tissue.  This
@@ -4064,7 +3996,7 @@ class AIFDetection(BaseInterface):
                 aif_mask[x, y, z] = 1
                 aif_curve = conc_data[x, y, z, :]
         else:
-            # Inverse-score weighting (higher score = higher weight).
+            # Direct score weighting (higher score = higher weight).
             # Guard against an all-zero score array (e.g., trim pool that
             # outlived its keepers); fall back to uniform weights so the
             # averaged curve stays defined and downstream gates / fallback
@@ -4222,7 +4154,7 @@ class AIFDetection(BaseInterface):
                 "Check that values are concentration in mM (not raw signal)."
             )
 
-        # Physiological range warnings
+        # Configured peak-range warnings
         if peak < 1.0:
             logger.warning(
                 "External AIF peak (%.3f mM) is below expected range "
@@ -4345,7 +4277,7 @@ class AIFDetection(BaseInterface):
     # -----------------------------------------------------------------
 
     def _load_and_validate_inputs(self) -> LoadedInputs:
-        """Validate hematocrit + load the concentration series and brain mask (P0)."""
+        """Validate hematocrit + load the concentration series and brain mask."""
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Hematocrit gates the blood->plasma conversion (/(1-Hct)) at every AIF
@@ -4379,7 +4311,7 @@ class AIFDetection(BaseInterface):
         Optional[npt.NDArray[Any]],
         Optional[npt.NDArray[Any]],
     ]:
-        """Load optional atlas, lesion, and enhancing masks (P2)."""
+        """Load optional atlas, lesion, and enhancing masks."""
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Optional atlas masks — build ordered list (tightest → broadest)
@@ -4417,7 +4349,7 @@ class AIFDetection(BaseInterface):
     def _read_params(
         self, conc_data: npt.NDArray[Any], header: Any,
     ) -> AIFParams:
-        """Read scalar detection parameters + derive geometry (P3)."""
+        """Read scalar detection parameters + derive geometry."""
         aif_method = str(self.inputs.aif_method)
         n_candidates = int(self.inputs.n_candidates)
         baseline_frames = int(self.inputs.baseline_frames)
@@ -4450,7 +4382,7 @@ class AIFDetection(BaseInterface):
         enhancing_mask: Optional[npt.NDArray[Any]],
         params: AIFParams,
     ) -> DetectionState:
-        """Run the detection cascade + post-cascade filters (P5)."""
+        """Run the detection cascade + post-cascade filters."""
         conc_data = loaded.conc_data
         brain_mask = loaded.brain_mask
         affine = loaded.affine
@@ -4466,7 +4398,7 @@ class AIFDetection(BaseInterface):
         _detection_attempt: dict[str, Any] | None = None
         # Restore the Literal type the narrowing (below) relies on.
         detection_method: Literal["atlas", "whole_brain", "population"]
-        # ===== Phase 1: Prepare search masks =====
+        # ===== Prepare search masks =====
         if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
             logger.warning(
                 "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
@@ -4542,7 +4474,7 @@ class AIFDetection(BaseInterface):
             np.count_nonzero(wb_search_mask > 0.5)
         )
 
-        # ===== Phase 3: Compute tissue TTP reference =====
+        # ===== Compute tissue TTP reference =====
         tissue_ttp_frame = self._calculate_tissue_ttp_reference(
             conc_data, brain_mask, baseline_frames
         )
@@ -4706,7 +4638,7 @@ class AIFDetection(BaseInterface):
     def _emit_detected_aif(
         self, state: DetectionState, loaded: LoadedInputs, params: AIFParams,
     ) -> EmitResult:
-        """Average + emit the detected AIF curve (P6, detected branch)."""
+        """Average + emit the detected AIF curve."""
         conc_data = loaded.conc_data
         brain_mask = loaded.brain_mask
         affine = loaded.affine
@@ -4734,7 +4666,7 @@ class AIFDetection(BaseInterface):
         )
         qc_metrics: dict[str, Any] = {}
 
-        # Phase 5: Weighted candidate averaging
+        # Weighted candidate averaging
         # When the cascade ran G1-G6 acceptance gates with progressive
         # trim (gates_enabled in _run_two_pass_cascade), the accepted
         # tier's averaged + Hct-corrected + rescaled curve is already
@@ -4745,7 +4677,7 @@ class AIFDetection(BaseInterface):
             tier_cand_set = set(tuple(c) for c in tier_result.candidates)
             cur_cand_set = set(tuple(c) for c in candidates)
             if cur_cand_set != tier_cand_set:
-                # C2: post-cascade filters shrank the accepted pool. Re-gate
+                # Post-filter gate check: post-cascade filters shrank the accepted pool. Re-gate
                 # the EMITTED subset (single evaluation, no trim) and rebuild
                 # tier_result so downstream provenance (confidence /
                 # uncertainty / gate decisions) describes the emitted AIF, not
@@ -4794,10 +4726,7 @@ class AIFDetection(BaseInterface):
             # (tissue conc is in blood units; AIF must be in plasma units
             #  for Tofts model: plasma = blood / (1 - Hct))
             aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
-        # Emitted quality score = fidelity of the POOLED/averaged AIF (report /
-        # regression sentinel), not the mean of per-voxel scores — the latter
-        # never inspected the averaged curve, so a tail-diluted pool could score
-        # high. Reported for QC; contamination is gated on the specific gates.
+        # Compute the reported quality score from the emitted pooled AIF.
         quality_score, _ = score_averaged_aif_fidelity(
             np.asarray(aif_curve, dtype=float), tr, baseline_frames,
             dose_factor=self._get_dose_factor(),
@@ -4896,7 +4825,7 @@ class AIFDetection(BaseInterface):
     def _emit_population_aif(
         self, state: DetectionState, loaded: LoadedInputs, params: AIFParams,
     ) -> EmitResult:
-        """Emit the BAT-aligned Parker population AIF (P6, population branch)."""
+        """Emit the BAT-aligned Parker population AIF."""
         conc_data = loaded.conc_data
         tr = params.tr
         n_timepoints = params.n_timepoints
@@ -4956,7 +4885,7 @@ class AIFDetection(BaseInterface):
         self, runtime: Any, emit: EmitResult, state: DetectionState,
         loaded: LoadedInputs, params: AIFParams,
     ) -> Any:
-        """Provenance + confidence + Pass-2 anchor + final metrics + save (P7-P11)."""
+        """Provenance + confidence + Pass-2 anchor + final metrics + save."""
         import nibabel as nib  # type: ignore[import-untyped]
         aif_curve = emit.aif_curve
         aif_mask = emit.aif_mask
@@ -5056,7 +4985,7 @@ class AIFDetection(BaseInterface):
                 qc_metrics["aif_g6_admitted"] = False
                 qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
             else:
-                # C2 re-gate of the emitted subset FAILED a gate: emit the
+                # post-filter gate check of the emitted subset FAILED a gate: emit the
                 # detected AIF (no new fallback) but downgrade confidence and
                 # inflate uncertainty honestly. Only reachable via the divergence
                 # re-gate; the cascade itself only ever sets PASS/PASS_WARN/G6.
@@ -5068,10 +4997,8 @@ class AIFDetection(BaseInterface):
             qc_metrics["aif_g6_admitted"] = False
             qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
 
-        # The cascade gates candidate pools before the emitted curve receives
-        # its final tissue-timing cross-check. Propagate that final assessment
-        # into confidence so the report does not certify a timing-marginal AIF
-        # as standard. This is QC-only: the selected curve is retained.
+        # A venous timing flag on the emitted curve reduces standard confidence
+        # and increases reported uncertainty while retaining the selected curve.
         if (
             detection_method != "population"
             and qc_metrics.get("is_likely_venous", False)
@@ -5082,7 +5009,7 @@ class AIFDetection(BaseInterface):
 
         # Amplitude-anchor the Pass-2 fallback AIF to the dose-scaled population
         # target via the shared _apply_aif_scale helper (identical math to the
-        # per-tier trim loop and the C2 re-gate). External AIFs bypass (supplied
+        # per-tier trim loop and the post-filter gate check). External AIFs bypass (supplied
         # pre-scaled in plasma mM, Hct-corrected — see README); the gated cascade
         # path bypasses (already scaled inside the trim loop, scale_factor recorded).
         if detection_method not in ("population", "external") and tier_result is None:
@@ -5151,10 +5078,8 @@ class AIFDetection(BaseInterface):
                 expected_max_mm,
             )
 
-        # Multi-bump tail detector. Physiologic recirculation produces
-        # exactly one secondary maximum (~30s post-peak); count > 1
-        # indicates motion / inflow / venous mixing. Suppressed for
-        # population fallback.
+        # Report late-tail secondary peaks for detected and external AIFs.
+        # The population branch does not report this measured-curve diagnostic.
         if detection_method != "population":
             multi_bump_count, multi_bump_heights = (
                 detect_dce_aif_multi_bump_tail(
@@ -5173,14 +5098,8 @@ class AIFDetection(BaseInterface):
                 DCE_AIF_TAIL_PEAK_FRACTION * 100,
             )
 
-        # Compute AIF status for HTML report from the gate-based confidence,
-        # NOT the report-only fidelity score (quality_score). The fidelity
-        # metric is systematically compressed (~0.26 for essentially every
-        # detected AIF, from the known MCA-tail under-recovery) and is
-        # physics-scoped as report-only, so thresholding it mislabels a normal
-        # detected AIF as POOR. aif_confidence already encodes the G1-G6 gate
-        # outcome: "standard" (gates passed) / "reduced" (G6-admitted or C2
-        # re-gate fail) / "low" (population fallback).
+        # Report status uses gate confidence and peak/tail warnings.
+        # The composite fidelity score is reported separately as a diagnostic.
         _aif_confidence = qc_metrics.get("aif_confidence", "reduced")
         aif_status = _dce_aif_report_status(
             _aif_confidence,

@@ -1,7 +1,7 @@
 """Tests for derivative-anchored baseline detection.
 
-Tests the Phase 1 (derivative anchor) + Phase 2 (z-score refinement) +
-Phase 3 (multi-signal consensus) + Phase 4 (confidence) architecture.
+Tests the Stage 1 (derivative anchor) + Stage 2 (z-score refinement) +
+Stage 3 (multi-signal consensus) + Stage 4 (confidence) architecture.
 """
 
 import numpy as np
@@ -67,12 +67,12 @@ def _make_preloaded_curve(
 
 
 # =============================================================================
-# Phase 1: Individual detectors
+# Stage 1: Individual detectors
 # =============================================================================
 
 
 class TestPhase1Detectors:
-    """Phase 1 derivative-based detectors."""
+    """Stage 1 derivative-based detectors."""
 
     def test_max_slope_clean(self) -> None:
         signal, true = _make_bolus_curve(baseline_frames=15)
@@ -147,12 +147,12 @@ class TestPhase1Detectors:
 
 
 # =============================================================================
-# Phase 2: Z-score detectors with derived baseline_window
+# Stage 2: Z-score detectors with derived baseline_window
 # =============================================================================
 
 
 class TestPhase2Detectors:
-    """Phase 2 z-score detectors with anchor-derived baseline_window."""
+    """Stage 2 z-score detectors with anchor-derived baseline_window."""
 
     def test_amplitude_zscore(self) -> None:
         signal, true = _make_bolus_curve(baseline_frames=15)
@@ -174,12 +174,12 @@ class TestPhase2Detectors:
 
 
 # =============================================================================
-# Single-signal Phase 1+2
+# Single-signal Stage 1+2
 # =============================================================================
 
 
 class TestSingleSignal:
-    """_detect_single_signal combines Phase 1 + Phase 2."""
+    """_detect_single_signal combines Stage 1 + Stage 2."""
 
     def test_clean_bolus(self) -> None:
         signal, true = _make_bolus_curve(baseline_frames=15)
@@ -249,7 +249,7 @@ class TestEnsemble:
         )
 
     def test_multi_signal_consensus(self) -> None:
-        """Phase 3: multiple signals should converge."""
+        """Stage 3: multiple signals should converge."""
         signal1, true = _make_bolus_curve(baseline_frames=15)
         signal2, _ = _make_bolus_curve(baseline_frames=15, peak=8.0, seed=99)
         signal3, _ = _make_bolus_curve(baseline_frames=15, peak=12.0, seed=123)
@@ -345,7 +345,7 @@ class TestRegression:
 
 
 class TestShortBaselineMagnitudeGuard:
-    """Tests for magnitude guard on Phase 2 earlier refinement.
+    """Tests for magnitude guard on Stage 2 earlier refinement.
 
     Prevents false early detection when z-score std is unreliable
     (short baselines) and signal drift is small (<1.5%).
