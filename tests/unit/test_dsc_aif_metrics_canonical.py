@@ -96,16 +96,20 @@ class TestAutoDetectionFullShape:
         for k in _FLAT_FORBIDDEN:
             assert k not in qc, f"flat key {k!r} reintroduced into qc top level"
 
-    def test_ph_preserved(self):
-        """``ph`` survives the producer-side path (the rounded-subset
-        construction in ``aif_qc_plot`` would drop it).
-        """
+    @pytest.mark.parametrize("ph, expected_confidence", [
+        (13.0, "low"), (15.0, "moderate"), (25.0, "high"),
+    ])
+    def test_candidate_ph_qualifies_prior(self, ph, expected_confidence):
+        """Candidate PH controls prior eligibility independently of recovery."""
+        from pmriprep.utils.dsc_cbv_constraint import (
+            ConstraintMode, assess_dsc_cbv_quality, determine_constraint_mode,
+        )
+
         aif_curve = np.zeros(60, dtype=np.float64)
         aif_curve[10:14] = np.array([5.0, 25.0, 18.0, 9.0])
         aif_curve[14:] = 4.0
-        top_candidates = [
-            (0.5, (10, 10, 5), _candidate_metrics()),
-        ]
+        metrics = {**_candidate_metrics(), "ph": ph, "baseline_return_ratio": 20.0}
+        top_candidates = [(0.5, (10 + i, 10, 5), metrics) for i in range(3)]
         conc_data = np.zeros((20, 20, 10, 60), dtype=np.float64)
         conc_data[:, :, :, :] = aif_curve[None, None, None, :]
         brain_mask = np.ones((20, 20, 10), dtype=np.uint8)
@@ -117,18 +121,23 @@ class TestAutoDetectionFullShape:
             affine=np.eye(4),
             tr=1.5,
             n_candidates_requested=6,
-            n_available=1,
+            n_available=3,
             baseline_frames=10,
         )
-        assert "ph" in qc["aif_metrics"]
+        qc["cnr_whole_brain"] = {"fraction_cnr_gt_4": 0.99}
+        quality = assess_dsc_cbv_quality(qc)
+        config = determine_constraint_mode(
+            quality, k2_metrics={"k2_reference_available": True},
+        )
+        assert quality.aif_peak_height == pytest.approx(ph / 100)
+        assert quality.confidence == expected_confidence
+        assert config.mode == (
+            ConstraintMode.SKIP if ph < 15 else ConstraintMode.SOFT
+        )
 
 
 class TestExternalAifSubsetShape:
-    """``_handle_external_aif`` emits a subset of aif_metrics — the
-    external path cannot derive ``ttp``/``ph``/``psr``/``arrival``, so
-    those keys must be omitted (consumers use ``.get``). No flat
-    ``best_*`` keys at top level.
-    """
+    """External AIF metrics, provenance, and prior/concordance qualification."""
 
     def test_external_aif_subset_shape(self, tmp_path, monkeypatch):
         import nibabel as nib
@@ -170,12 +179,27 @@ class TestExternalAifSubsetShape:
         # Subset that the external path can derive
         assert "peak_conc" in am
         assert "fwhm" in am
-        assert "brr" in am
-        # External path cannot derive these — omit per fmriprep convention
-        for absent in ("ttp", "ph", "psr", "arrival"):
-            assert absent not in am, (
-                f"external aif_metrics should omit {absent!r}"
-            )
-        # No flat best_* duplicates at top level
-        for k in _FLAT_FORBIDDEN:
-            assert k not in qc
+        assert qc["washout_fraction"] == pytest.approx(1.0)
+        assert qc["detection_method"] == "external"
+        assert qc["cbv_auc_denominator_is_synthetic"] is False
+
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+        from pmriprep.utils.dsc_cbv_constraint import prepare_vp_constraint_from_data
+        from pmriprep.workflows.dce._helpers import _dsc_dce_validation_node
+
+        provenance = build_aif_provenance_block(qc, modality="DSC")
+        assert provenance["Source"] == "external"
+        assert provenance["UsedAsCBVDenominator"] is True
+        prior = prepare_vp_constraint_from_data(
+            ncbv_file=None, aif_qc_data=qc, brain_mask_file=str(conc_path),
+        )
+        assert prior.config.mode.value == "skip"
+        assert prior.vp_map is None
+        assert prior.qc_report["skip_reason"] == "external_aif_qc_unavailable"
+        concordance = _dsc_dce_validation_node(
+            vp_file=str(conc_path),
+            pk_qc={"dsc_cbv_constraint": prior.qc_report},
+        )
+        assert concordance["skipped"] is True
+        assert concordance["skip_reason"] == "external_aif_qc_unavailable"
+        assert concordance["reason"] == prior.config.reason

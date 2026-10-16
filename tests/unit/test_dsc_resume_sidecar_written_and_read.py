@@ -26,6 +26,7 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
         "cbv_auc_denominator_is_synthetic": False,
         "cnr_whole_brain": {"fraction_cnr_gt_4": 0.81, "mean_cnr": 5.4},
         "aif_metrics": {
+            "ph": 41.2,
             "peak_conc": 12.5,
             "fwhm": 6.2,
             "psr": 78.0,

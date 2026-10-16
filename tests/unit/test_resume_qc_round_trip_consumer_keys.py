@@ -64,6 +64,7 @@ def representative_in_process_dicts():
             "peak_conc": 12.5,
             "fwhm": 6.2,
             "ttp": 18.0,
+            "ph": 41.2,
             "psr": 78.0,
             "brr": 92.0,
         },
@@ -161,7 +162,7 @@ def test_normalizer_handles_round_tripped_aif_qc(tmp_path, representative_in_pro
 
     normalized = _normalize_aif_qc_keys(dict(recovered["aif_qc"]))
     assert "aif_peak_height" in normalized
-    assert normalized["aif_peak_height"] == pytest.approx(0.78)
+    assert normalized["aif_peak_height"] == pytest.approx(0.412)
     assert "baseline_return_ratio" in normalized
     assert normalized["baseline_return_ratio"] == pytest.approx(0.92)
     assert "gamma_peak_ratio" in normalized

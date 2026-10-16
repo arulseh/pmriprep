@@ -1,6 +1,7 @@
 """Unit tests for DSC CBV to vp constraint utilities."""
 
 from typing import Any
+import json
 
 import numpy as np
 import pytest
@@ -29,6 +30,31 @@ from pmriprep.utils.dsc_cbv_constraint import (
 
 class TestAssessDSCCBVQuality:
     """Tests for assess_dsc_cbv_quality."""
+
+    @pytest.mark.parametrize("metric, normalized, label", [
+        ("ph", "aif_peak_height", "PH"),
+        ("brr", "baseline_return_ratio", "BRR"),
+    ])
+    @pytest.mark.parametrize("value", [None, np.nan, np.inf, -np.inf])
+    def test_unavailable_required_metric_withholds_prior(
+        self, metric: str, normalized: str, label: str, value: Any,
+    ) -> None:
+        """Unavailable signal metrics withhold the prior in either QC schema."""
+        for nested in (True, False):
+            qc: dict[str, Any] = {
+                "cnr_whole_brain": {"fraction_cnr_gt_4": 0.99},
+            }
+            if nested:
+                qc["aif_metrics"] = {"ph": 40.0, "brr": 15.0, metric: value}
+            else:
+                qc.update(aif_peak_height=0.4, baseline_return_ratio=0.15)
+                qc[normalized] = value
+            result = assess_dsc_cbv_quality(qc)
+            config = determine_constraint_mode(
+                result, k2_metrics={"k2_reference_available": True},
+            )
+            assert config.mode == ConstraintMode.SKIP
+            assert f"({label}) unavailable" in config.reason
 
     def test_high_quality(self) -> None:
         """Excellent AIF metrics produce high confidence and use_constraint=True."""
@@ -315,23 +341,26 @@ class TestNormalizeAifQcKeys:
     """Tests for _normalize_aif_qc_keys."""
 
     def test_pmriprep_format_translates(self) -> None:
-        """Producer-shape aif_metrics (psr, brr) is translated."""
-        data = {"aif_metrics": {"psr": 94.6, "brr": 7.17}}
+        """Producer signal drop and concentration tail ratio become fractions."""
+        data = {"aif_metrics": {"ph": 41.2, "psr": 94.6, "brr": 7.17}}
         result = _normalize_aif_qc_keys(data)
 
-        assert result["aif_peak_height"] == pytest.approx(0.946, rel=1e-6)
+        assert result["aif_peak_height"] == pytest.approx(0.412, rel=1e-6)
         assert result["baseline_return_ratio"] == pytest.approx(0.0717, rel=1e-6)
         assert "cnr_whole_brain" in result
         # Missing CNR uses MODERATE confidence
         assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
 
-    def test_already_normalized_passthrough(self) -> None:
-        """Already-normalized data passes through unchanged."""
+    @pytest.mark.parametrize("normalized_key", ["aif_peak_height", "baseline_return_ratio"])
+    def test_partially_normalized_fields(self, normalized_key: str) -> None:
+        """Each normalized field takes precedence while the other is converted."""
+        values = {"aif_peak_height": 0.4, "baseline_return_ratio": 0.15}
         data = {
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
+            "aif_metrics": {"ph": 40.0, "brr": 15.0},
+            normalized_key: values[normalized_key],
         }
+        data["aif_metrics"]["ph" if normalized_key == "aif_peak_height" else "brr"] = 99.0
         result = _normalize_aif_qc_keys(data)
 
         assert result["aif_peak_height"] == 0.4
@@ -346,20 +375,23 @@ class TestNormalizeAifQcKeys:
         # CNR defaults to MODERATE (conservative) when not wired from preprocessing
         assert "cnr_whole_brain" in result
         assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
-        # Other keys should remain absent (handled by assess_dsc_cbv_quality defaults)
-        assert "aif_peak_height" not in result
-        assert "baseline_return_ratio" not in result
+        quality = assess_dsc_cbv_quality(result)
+        assert quality.use_constraint is False
+        assert quality.aif_peak_height is None
+        assert quality.aif_baseline_return is None
+        assert any("(PH) unavailable" in reason for reason in quality.reasons)
+        assert any("(BRR) unavailable" in reason for reason in quality.reasons)
 
-    def test_aif_metrics_nested_psr_only(self) -> None:
-        """Nested aif_metrics.psr translates to aif_peak_height (brr absent)."""
-        data = {"aif_metrics": {"psr": 85.0}}
+    def test_aif_metrics_nested_ph_only(self) -> None:
+        """Nested PH translates independently of BRR availability."""
+        data = {"aif_metrics": {"ph": 35.0}}
         result = _normalize_aif_qc_keys(data)
 
-        assert result["aif_peak_height"] == pytest.approx(0.85, rel=1e-6)
+        assert result["aif_peak_height"] == pytest.approx(0.35, rel=1e-6)
         assert "baseline_return_ratio" not in result
 
     def test_aif_metrics_nested_brr_only(self) -> None:
-        """Nested aif_metrics.brr translates to baseline_return_ratio (psr absent)."""
+        """Nested BRR translates independently of PH availability."""
         data = {"aif_metrics": {"brr": 12.0}}
         result = _normalize_aif_qc_keys(data)
 
@@ -369,14 +401,14 @@ class TestNormalizeAifQcKeys:
     def test_good_aif_with_cnr_high_confidence(self) -> None:
         """Good AIF metrics with CNR coverage produces high confidence."""
         aif_qc_data = {
-            "aif_metrics": {"psr": 94.6, "brr": 7.17},
+            "aif_metrics": {"ph": 41.2, "psr": 94.6, "brr": 7.17},
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.95, "mean_cnr": 25.0},
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
 
         assert result.confidence == "high"
         assert result.use_constraint is True
-        assert result.aif_peak_height == pytest.approx(0.946, rel=1e-3)
+        assert result.aif_peak_height == pytest.approx(0.412, rel=1e-3)
         assert result.aif_baseline_return == pytest.approx(0.0717, rel=1e-3)
 
     def test_unknown_keys_preserved(self) -> None:
@@ -396,7 +428,7 @@ class TestNormalizeAifQcKeys:
 
     def test_normalize_no_gamma_metrics_no_key(self) -> None:
         """Missing gamma_fit_auto_metrics does not create gamma_peak_ratio."""
-        data = {"aif_metrics": {"psr": 94.6}}
+        data = {"aif_metrics": {"ph": 41.2}}
         result = _normalize_aif_qc_keys(data)
 
         assert "gamma_peak_ratio" not in result
@@ -408,12 +440,17 @@ class TestNormalizeAifQcKeys:
 
 
 class TestQcReportSchema:
-    """Tests that qc_report uses the (mode, reason) key schema."""
+    """Prior eligibility and metric availability reach the QC report."""
 
-    def test_qc_report_keys_from_prepare_vp_constraint_from_data(
-        self, tmp_path: Any
+    @pytest.mark.parametrize("metric, value, expected_mode", [
+        ("aif_peak_height", 0.4, "soft"),
+        ("aif_peak_height", np.nan, "skip"),
+        ("baseline_return_ratio", None, "skip"),
+    ])
+    def test_required_metrics_reach_qc(
+        self, tmp_path: Any, metric: str, value: Any, expected_mode: str,
     ) -> None:
-        """prepare_vp_constraint_from_data returns qc_report with 'mode'/'reason' keys."""
+        """Finite metrics enable the prior; unavailable metrics serialize as null."""
         import nibabel as nib
 
         # nCBV ≈ 1 gives vp ≈ 0.010, inside the configured median interval.
@@ -431,21 +468,27 @@ class TestQcReportSchema:
             "aif_peak_height": 0.4,
             "baseline_return_ratio": 0.15,
         }
+        aif_qc[metric] = value
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=str(ncbv_file),
             aif_qc_data=aif_qc,
             brain_mask_file=str(mask_file),
+            k2_metrics={"k2_reference_available": True},
+            dsc_registration_qc={"qc_status": "PASS"},
+            dce_registration_qc={"qc_status": "PASS"},
         )
 
         qc = result.qc_report
-        assert "mode" in qc, "qc_report must have 'mode' key"
-        assert "reason" in qc, "qc_report must have 'reason' key"
-        assert "constraint_mode" not in qc, "old 'constraint_mode' key must not exist"
-        assert "constraint_reason" not in qc, (
-            "old 'constraint_reason' key must not exist"
-        )
-        assert qc["mode"] in ("soft", "skip")
+        assert qc["mode"] == expected_mode
+        assert (result.vp_map is None) == (expected_mode == "skip")
+        serialized = json.loads(json.dumps(qc, allow_nan=False))
+        if expected_mode == "skip":
+            output_metric = (
+                "aif_peak_height" if metric == "aif_peak_height" else "aif_baseline_return"
+            )
+            assert serialized[output_metric] is None
+            assert "unavailable" in qc["reason"]
 
     def test_qc_report_skip_default_schema(self) -> None:
         """Default skip dict uses 'mode' and 'reason' (no 'constraint_' prefix)."""

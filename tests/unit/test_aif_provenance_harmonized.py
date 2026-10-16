@@ -85,6 +85,7 @@ class TestBuildProvenanceBlockDSC:
         assert block["QualityFlag"] == "pass"
         assert block["GammaFitApplied"] is False
         assert block["QualityScore"] == pytest.approx(0.8)
+        assert block["UsedAsCBVDenominator"] is True
 
     def test_spatial_policy_is_recorded(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
@@ -119,6 +120,7 @@ class TestBuildProvenanceBlockDSC:
         assert block["Source"] == "synthetic"
         assert block["QualityFlag"] == "poor"
         assert block["SyntheticFallbackReason"] == "no_candidates"
+        assert block["UsedAsCBVDenominator"] is True
 
     def test_gamma_optimizer_failure_is_explicit(self) -> None:
         """A retained measured AIF carries optional gamma-fit failure provenance."""

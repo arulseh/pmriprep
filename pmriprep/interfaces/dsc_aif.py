@@ -2460,12 +2460,11 @@ class AIFDetection(BaseInterface):
             "n_baseline_frames": baseline_frames,
             "baseline_detection_method": "selected_aif_refined",
             # Detection-time AIF metrics under the canonical nested
-            # key. The external path records peak amplitude, FWHM in
-            # frames and tail-to-peak washout percentage.
+            # key. The external path records peak amplitude and FWHM in
+            # frames; its concentration washout fraction is recorded above.
             "aif_metrics": {
                 "peak_conc": float(peak),
                 "fwhm": float(fwhm_frames),
-                "brr": float(washout),
             },
         }
         qc_metrics.update(baseline_diagnostics)
@@ -2492,7 +2491,7 @@ class AIFDetection(BaseInterface):
         out_measured_aif = self._gen_outfilename("_measured_aif_curve.txt")
         np.savetxt(out_measured_aif, aif_curve)
         qc_metrics["gamma_aif_fallback_to_raw"] = True
-        qc_metrics["cbv_auc_denominator_is_synthetic"] = True  # external is user-supplied
+        qc_metrics["cbv_auc_denominator_is_synthetic"] = False
 
         self._results = {
             "out_aif_curve": out_aif_curve,

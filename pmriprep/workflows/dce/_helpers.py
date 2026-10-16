@@ -879,7 +879,9 @@ def _dsc_dce_validation_node(
 
     from pmriprep.utils.dce_dsc_validation import validate_vp_cbv_from_files
     from pmriprep.utils.dsc_cbv_constraint import (
+        EXTERNAL_AIF_REASON_STRING,
         NO_DSC_RUN_REASON_STRING,
+        SKIP_REASON_EXTERNAL_AIF,
         SKIP_REASON_NO_DSC_RUN,
         SKIP_REASON_SYNTHETIC_AIF,
         SYNTHETIC_AIF_REASON_STRING,
@@ -968,14 +970,18 @@ def _dsc_dce_validation_node(
             "reason": "Validation skipped or missing data",
         }
 
-    # Synthetic-AIF CBV does not have the subject-specific scale required by
-    # a subject-specific vascular scale.
-    if constraint_skip_reason == SKIP_REASON_SYNTHETIC_AIF:
+    # Preserve the prior's AIF-source exclusions for concordance.
+    source_skip_reasons = {
+        SKIP_REASON_SYNTHETIC_AIF: SYNTHETIC_AIF_REASON_STRING,
+        SKIP_REASON_EXTERNAL_AIF: EXTERNAL_AIF_REASON_STRING,
+    }
+    source_reason = source_skip_reasons.get(constraint_skip_reason or "")
+    if source_reason is not None:
         return {
             "skipped": True,
             "status": "SKIPPED",
-            "reason": SYNTHETIC_AIF_REASON_STRING,
-            "skip_reason": SKIP_REASON_SYNTHETIC_AIF,
+            "reason": source_reason,
+            "skip_reason": constraint_skip_reason,
         }
 
     if not dsc_inputs_present:

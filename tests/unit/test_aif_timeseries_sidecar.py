@@ -37,7 +37,6 @@ def aif_qc() -> dict[str, Any]:
         "gamma_fit_r_squared": 0.94,
         "gamma_fit_auc_ratio": 0.97,
         "synthetic": False,
-        "cbv_auc_denominator_is_synthetic": False,
         "hematocrit": 0.42,
         "aif_metrics": {
             "peak_conc": 12.5,
@@ -236,6 +235,8 @@ def test_writer_credits_external_aif_source(bids_root, tmp_path) -> None:
         "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz",
         "bids:raw:sub-X/ses-Y/perf/external_aif.txt",
     ]
+    assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == "external"
+    assert sidecar["PerfusionProcessing"]["AIF"]["UsedAsCBVDenominator"] is True
 
 
 def test_aif_sidecar_sampling_metadata() -> None:

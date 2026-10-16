@@ -179,6 +179,10 @@ def build_aif_provenance_block(
     (``{"aif_detection": {...}, ...}``) or the flat interface
     ``qc_metrics`` output (``{"detection_method": ..., ...}``).
     Returns an empty dict when AIF QC is absent.
+
+    For DSC, ``UsedAsCBVDenominator`` indicates whether the selected curve
+    supplies the AUC-CBV denominator. Gamma-fitted measured AIFs use the
+    underlying raw measured curve for that denominator.
     """
     if not isinstance(qc_metrics, dict):
         return {}
@@ -323,9 +327,7 @@ def build_aif_provenance_block(
         gamma_auc_ratio = aif_qc.get("gamma_fit_auc_ratio")
         if gamma_auc_ratio is not None:
             block["GammaFitAUCRatio"] = float(gamma_auc_ratio)
-        cbv_denominator = aif_qc.get("cbv_auc_denominator_is_synthetic")
-        if cbv_denominator is not None:
-            block["UsedAsCBVDenominator"] = bool(cbv_denominator)
+        block["UsedAsCBVDenominator"] = source in {"measured", "external", "synthetic"}
         if source == "synthetic":
             reason = (
                 qc_metrics.get("synthetic_fallback_reason")

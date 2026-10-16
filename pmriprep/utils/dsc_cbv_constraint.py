@@ -56,10 +56,10 @@ CNR_COVERAGE_SKIP: float = 0.70
 #: Minimum mean CNR for the vp-prior quality gate.
 CNR_MEAN_MINIMUM: float = QC_MEAN_CNR_MINIMUM
 
-#: Minimum recovery proxy (producer PSR / 100) for moderate confidence.
+#: Policy minimum signal-drop fraction (PH / 100) for moderate confidence.
 AIF_PEAK_HEIGHT_MIN: float = 0.15
 
-#: Minimum recovery proxy (producer PSR / 100) for high confidence.
+#: Policy minimum signal-drop fraction (PH / 100) for high confidence.
 AIF_PEAK_HEIGHT_MARGINAL: float = 0.25
 
 #: Maximum baseline return ratio for acceptable quality
@@ -89,11 +89,16 @@ GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
 SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
 SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
+SKIP_REASON_EXTERNAL_AIF = "external_aif_qc_unavailable"
 SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
 SKIP_REASON_NLLS_UNSUPPORTED = "nlls_constraint_unsupported"
 NO_DSC_RUN_REASON_STRING = "No DSC data were available for a vp prior."
 SYNTHETIC_AIF_REASON_STRING = (
     "The DSC vp prior was skipped by the AIF-source quality gate."
+)
+EXTERNAL_AIF_REASON_STRING = (
+    "The external DSC AIF lacks the signal and candidate-voxel QC required "
+    "for the DSC-informed vp prior."
 )
 
 
@@ -116,8 +121,8 @@ class CBVQualityAssessment:
         confidence: Quality tier - 'high', 'moderate', or 'low'.
         use_constraint: Whether the assessment permits a DSC-derived vp prior.
         cnr_coverage: Fraction of brain voxels with CNR > 4.
-        aif_peak_height: Quality proxy populated from producer signal PSR / 100.
-        aif_baseline_return: Tail-to-peak concentration ratio.
+        aif_peak_height: Best candidate's signal-drop fraction (PH / 100), or None.
+        aif_baseline_return: Tail-to-peak concentration ratio, or None if unavailable.
         cbv_median: Median dimensionless nCBV in brain, or None if not assessed.
         cbv_negative_fraction: Fraction of negative nCBV values, or None.
         gamma_peak_ratio: Gamma-variate peak ratio (fitted/measured), or None.
@@ -127,8 +132,8 @@ class CBVQualityAssessment:
     confidence: str = "low"
     use_constraint: bool = False
     cnr_coverage: float = 0.0
-    aif_peak_height: float = 0.0
-    aif_baseline_return: float = 1.0
+    aif_peak_height: Optional[float] = None
+    aif_baseline_return: Optional[float] = None
     cbv_median: Optional[float] = None
     cbv_negative_fraction: Optional[float] = None
     detection_level: Optional[str] = None
@@ -176,13 +181,23 @@ class VpConstraintResult:
 # =============================================================================
 
 
+def _finite_aif_metric(value: Any) -> Optional[float]:
+    """Return a finite scalar QC metric, or None when unavailable."""
+    try:
+        metric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return metric if np.isfinite(metric) else None
+
+
 def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     """Normalize DSC AIF QC keys to the quality assessment schema.
 
-    Maps the producer-shape ``aif_qc.aif_metrics`` block (``psr``,
+    Maps the producer-shape ``aif_qc.aif_metrics`` block (``ph``,
     ``brr``) to the assessment-schema keys (``aif_peak_height``,
-    ``baseline_return_ratio``). Returns data unchanged if expected
-    keys are already present.
+    ``baseline_return_ratio``), converting percentages to fractions.
+    Each existing assessment-schema key takes precedence independently.
+    Missing or nonfinite metrics are unavailable for prior qualification.
 
     Parameters
     ----------
@@ -208,44 +223,28 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     data = dict(aif_qc_data)
 
     # --- Gamma peak ratio from auto-fit metrics ---
-    # Extract before the early return since gamma_fit_auto_metrics is present
-    # in both normalized and raw formats.
     if "gamma_peak_ratio" not in data:
         auto_metrics = data.get("gamma_fit_auto_metrics", {})
         if isinstance(auto_metrics, dict) and "peak_ratio" in auto_metrics:
             data["gamma_peak_ratio"] = auto_metrics["peak_ratio"]
 
-    # Helper to set CNR default with warning (avoids duplication)
-    def _set_cnr_default(d: dict[str, Any]) -> None:
-        if "cnr_whole_brain" not in d:
-            logger.warning(
-                "CNR coverage not in AIF QC data; defaulting to %.2f (moderate). "
-                "CBV constraint quality assessment may be optimistic.",
-                CNR_COVERAGE_MODERATE,
-            )
-            d["cnr_whole_brain"] = {"fraction_cnr_gt_4": CNR_COVERAGE_MODERATE}
-
-    # Already in expected format (skip PSR/BRR conversion if aif_peak_height present)
-    if "aif_peak_height" in data:
-        _set_cnr_default(data)
-        return data
-
     aif_metrics = data.get("aif_metrics") or {}
-
-    # Populate the quality proxy from signal recovery.
-    # psr = 100 * (S_tail - S_min) / (S0 - S_min)
-    # Thresholds are 0.25 for high and 0.15 for moderate confidence.
-    if "psr" in aif_metrics and "aif_peak_height" not in data:
-        data["aif_peak_height"] = aif_metrics["psr"] / 100.0
-
-    # --- Baseline return ratio from BRR ---
-    # brr = 100 * tail_conc / peak_conc
-    # Lower = better (more recovery). Thresholds: 0.30 (marginal), 0.40 (fail)
-    if "brr" in aif_metrics and "baseline_return_ratio" not in data:
-        data["baseline_return_ratio"] = aif_metrics["brr"] / 100.0
+    for source, target in (
+        ("ph", "aif_peak_height"),
+        ("brr", "baseline_return_ratio"),
+    ):
+        if target not in data and source in aif_metrics:
+            metric = _finite_aif_metric(aif_metrics[source])
+            data[target] = metric / 100.0 if metric is not None else None
 
     # --- CNR coverage: default to moderate if not available ---
-    _set_cnr_default(data)
+    if "cnr_whole_brain" not in data:
+        logger.warning(
+            "CNR coverage not in AIF QC data; defaulting to %.2f (moderate). "
+            "CBV constraint quality assessment may be optimistic.",
+            CNR_COVERAGE_MODERATE,
+        )
+        data["cnr_whole_brain"] = {"fraction_cnr_gt_4": CNR_COVERAGE_MODERATE}
 
     return data
 
@@ -330,7 +329,7 @@ def assess_dsc_cbv_quality(
 
     Implements a three-tier quality framework (high/moderate/low) based on:
     - CNR coverage: fraction of brain voxels with CNR > 4
-    - AIF recovery proxy: producer signal PSR / 100
+    - AIF signal drop: best candidate's signal PH / 100
     - AIF baseline return: how well AIF returns to baseline
     - nCBV value ranges: whether whole-brain median nCBV is plausible
 
@@ -474,26 +473,32 @@ def assess_dsc_cbv_quality(
             f"Only {n_candidates} AIF voxels -- limited averaging"
         )
 
-    # --- AIF recovery proxy ---
-    aif_peak = float(aif_qc_data.get("aif_peak_height", 0.0))
+    # --- AIF signal drop ---
+    aif_peak = _finite_aif_metric(aif_qc_data.get("aif_peak_height"))
     result.aif_peak_height = aif_peak
 
-    if aif_peak < AIF_PEAK_HEIGHT_MIN:
+    if aif_peak is None:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append("AIF signal-drop fraction (PH) unavailable")
+    elif aif_peak < AIF_PEAK_HEIGHT_MIN:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"AIF signal-recovery fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MIN}"
+            f"AIF signal-drop fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MIN}"
         )
     elif aif_peak < AIF_PEAK_HEIGHT_MARGINAL:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"AIF signal-recovery fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MARGINAL}"
+            f"AIF signal-drop fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MARGINAL}"
         )
 
     # --- AIF Baseline Return ---
-    baseline_return = float(aif_qc_data.get("baseline_return_ratio", 1.0))
+    baseline_return = _finite_aif_metric(aif_qc_data.get("baseline_return_ratio"))
     result.aif_baseline_return = baseline_return
 
-    if baseline_return > AIF_BASELINE_RETURN_MAX:
+    if baseline_return is None:
+        confidence = _downgrade_confidence(confidence, "low")
+        result.reasons.append("AIF baseline-return ratio (BRR) unavailable")
+    elif baseline_return > AIF_BASELINE_RETURN_MAX:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
             f"AIF baseline return {baseline_return:.2f} > {AIF_BASELINE_RETURN_MAX}"
@@ -763,13 +768,17 @@ def prepare_vp_constraint_from_data(
 
     Orchestrates:
 
-    1. Quality assessment on the AIF QC dict + nCBV distribution
-    2. nCBV→vp prior conversion via ``ncbv_to_vp_prior``
-       (vp = NAWM_VP_REFERENCE × nCBV)
+    1. Source qualification, nCBV availability and registration QC
+    2. Quality assessment on the AIF QC dict + nCBV distribution
     3. Constraint mode determination
-    4. Magnitude gate: SKIP when the derived vp median is outside policy bounds
+    4. nCBV→vp prior conversion via ``ncbv_to_vp_prior``
+       (vp = NAWM_VP_REFERENCE × nCBV)
+    5. Magnitude gate: SKIP when the derived vp median is outside policy bounds
 
-    If ``ncbv_file`` is None or does not exist, returns a SKIP result with
+    External AIFs are excluded because their signal and candidate-voxel QC
+    are unavailable. Synthetic AIFs are excluded by the source policy.
+    For qualifying sources, if ``ncbv_file`` is None or does not exist,
+    returns a SKIP result with
     ``qc_report["skip_reason"] = "no_nawm_mask"``. This is the expected
     outcome when the upstream DSC workflow could not produce an nCBV map
     (no NAWM mask from tumor segmentation and none user-supplied).
@@ -808,27 +817,35 @@ def prepare_vp_constraint_from_data(
 
     result = VpConstraintResult()
 
-    # Apply the AIF-source gate before checking for an nCBV file. The producer
-    # sets the denominator flag for synthetic and external AIFs.
-    if aif_qc_data and (
+    # Source qualification precedes nCBV availability and numerical QC.
+    source_skip_reason = None
+    source_reason = ""
+    if aif_qc_data.get("detection_method") == "external":
+        source_skip_reason = SKIP_REASON_EXTERNAL_AIF
+        source_reason = EXTERNAL_AIF_REASON_STRING
+    elif (
         aif_qc_data.get("detection_method") == "synthetic"
         or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
     ):
+        source_skip_reason = SKIP_REASON_SYNTHETIC_AIF
+        source_reason = SYNTHETIC_AIF_REASON_STRING
+
+    if source_skip_reason is not None:
         logger.info(
-            "DSC vp prior skipped by the AIF-source quality gate. "
-            "DCE fitting uses the model's ordinary priors and bounds."
+            "%s DCE fitting uses the model's ordinary priors and bounds.",
+            source_reason,
         )
         result.config = ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason=SYNTHETIC_AIF_REASON_STRING,
+            reason=source_reason,
         )
         result.vp_map = None
         result.qc_report = {
             "mode": ConstraintMode.SKIP.value,
             "reason": result.config.reason,
             "vp_uncertainty": result.config.vp_uncertainty,
-            "skip_reason": SKIP_REASON_SYNTHETIC_AIF,
+            "skip_reason": source_skip_reason,
         }
         return result
 
