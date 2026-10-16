@@ -48,8 +48,6 @@ class EnsembleConvolution:
     batch_size : int, optional
         Maximum parameter vectors evaluated in one integration block. This is
         a memory setting, not a model parameter or an accuracy setting.
-    reuse_gamma_geometry : bool, optional
-        Must be False. A True value raises ValueError during construction.
 
     Notes
     -----
@@ -63,8 +61,6 @@ class EnsembleConvolution:
         self,
         base: ContinuousCPIConvolution,
         batch_size: int = 8,
-        *,
-        reuse_gamma_geometry: bool = False,
     ) -> None:
         if (
             isinstance(batch_size, bool)
@@ -73,9 +69,6 @@ class EnsembleConvolution:
         ):
             raise ValueError("batch size must be a positive integer")
         self.base, self.batch_size = base, batch_size
-        if reuse_gamma_geometry:
-            raise ValueError("shared gamma geometry is not connected")
-        self.reuse_gamma_geometry = reuse_gamma_geometry
         self.rules = {n: np.polynomial.legendre.leggauss(n) for n in (16, 32)}
         self._geometry_cache: OrderedDict[tuple[str, bytes, str, bytes], PlainGeometry] = OrderedDict()
         self._geometry_bytes = 0
@@ -343,15 +336,11 @@ class SignalBatchEvaluator:
         self,
         model: FixedLayoutSignalCPI,
         batch_size: int = 8,
-        *,
-        reuse_gamma_geometry: bool = False,
     ) -> None:
         if model.continuous is None:
             raise ValueError("batch evaluation requires continuous integration")
         self.model = model
-        self.convolution = EnsembleConvolution(
-            model.continuous, batch_size, reuse_gamma_geometry=reuse_gamma_geometry
-        )
+        self.convolution = EnsembleConvolution(model.continuous, batch_size)
         self.domain = getattr(model, "derivative_domain", model.valid_mean)
 
     def clear_transient_state(self) -> None:
