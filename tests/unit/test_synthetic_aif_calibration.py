@@ -43,17 +43,17 @@ class TestEffectiveDose:
 
     def test_gadoquatrane(self):
         det = _make_aif_detection(dose=1.0, agent_standard_dose=0.04, gd_multiplicity=4)
-        assert det._effective_dose() == pytest.approx(1.6)
+        assert det._effective_dose() == pytest.approx(0.4)
 
     def test_raw_value_not_clamped(self):
         det = _make_aif_detection(dose=5.0, agent_standard_dose=0.2, gd_multiplicity=4)
         raw = det._effective_dose()
-        assert raw == pytest.approx(40.0)
+        assert raw == pytest.approx(10.0)
 
     def test_explicit_overrides(self):
         det = _make_aif_detection(dose=1.0, agent_standard_dose=0.1, gd_multiplicity=1)
-        val = det._effective_dose(dose=0.5, agent_standard_dose=0.1, gd_multiplicity=2)
-        assert val == pytest.approx(1.0)
+        val = det._effective_dose(dose=0.5, agent_standard_dose=0.1)
+        assert val == pytest.approx(0.5)
 
     def test_all_defaults(self):
         det = _make_aif_detection()
@@ -74,7 +74,7 @@ class TestSyntheticAIFPeak:
             (3.0, 2.0, 70.0),             # double dose
             (1.5, 1.0, 17.5),             # 1.5T scaling
             (7.0, 1.0, 35.0 * 7 / 3),    # 7T scaling
-            (3.0, 1.6, 56.0),             # gadoquatrane effective dose
+            (3.0, 0.4, 14.0),             # gadoquatrane effective dose
             (3.0, 2.5, 87.5),             # dose cap boundary
         ],
         ids=[

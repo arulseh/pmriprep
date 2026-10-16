@@ -18,7 +18,7 @@ from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
-from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX, get_r1_relaxivity
+from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 from pmriprep.utils.dce_signal import ernst_signal_model, signal_to_concentration_simple
 
 from .conftest import add_gaussian_noise, add_rician_noise, generate_parker_aif_dro
@@ -737,7 +737,7 @@ class TestSignalRoundtrip:
         flip_angle_deg = 15.0
         tr_sec = 0.005  # 5 ms
         field_strength = 3.0
-        r1 = get_r1_relaxivity(field_strength)  # 3.8 s^-1/mM
+        r1 = 3.7  # s^-1 mM^-1
         n_timepoints = 80
         dt_sec = 4.0
         baseline_frames = 8
@@ -781,6 +781,7 @@ class TestSignalRoundtrip:
             tr=tr_sec,
             t1_pre_ms=t1_pre_ms,
             field_strength=field_strength,
+            r1_relaxivity=r1,
             baseline_frames=baseline_frames,
             convert_to_plasma=False,
         )

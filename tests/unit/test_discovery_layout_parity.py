@@ -166,6 +166,7 @@ def test_discovery_rejects_multiple_dsc_candidates(
     dce = perf / "sub-01_dce.nii.gz"
     nib.save(nib.Nifti1Image(np.zeros((2, 2, 2, 50), dtype=np.float32), np.eye(4)), dce)
     dce.with_name("sub-01_dce.json").write_text(json.dumps({
+        "ContrastBolusAgent": "Magnevist",
         "EchoTime": 0.002, "RepetitionTime": 7.0,
         "RepetitionTimeExcitation": 0.004, "FlipAngle": 15.0,
         "MagneticFieldStrength": 3.0, "ScanningSequence": "GR",

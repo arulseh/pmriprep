@@ -23,6 +23,7 @@ def _write_series(path: Path, *, dsc: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     nib.save(nib.Nifti1Image(np.zeros((2, 2, 2, 50), dtype=np.float32), np.eye(4)), path)
     path.with_name(path.name.replace(".nii.gz", ".json")).write_text(json.dumps({
+        "ContrastBolusAgent": "Magnevist",
         "EchoTime": 0.035 if dsc else 0.002,
         "RepetitionTime": 1.5 if dsc else 7.0,
         "RepetitionTimeExcitation": 1.5 if dsc else 0.004,

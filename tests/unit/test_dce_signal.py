@@ -167,11 +167,12 @@ class TestConcentrationConversions:
                 tr=0.005,
                 baseline_frames=5,
                 hematocrit=hematocrit,
+                r1_relaxivity=3.7,
             )
 
-    @pytest.mark.parametrize("relaxivity", [0.0, -1.0, np.nan])
+    @pytest.mark.parametrize("relaxivity", [None, 0.0, -1.0, np.nan, np.inf])
     def test_signal_conversion_rejects_invalid_relaxivity(
-        self, relaxivity: float
+        self, relaxivity: float | None
     ) -> None:
         """Concentration scaling requires finite positive relaxivity."""
         with pytest.raises(ValueError, match="r1_relaxivity"):
@@ -196,6 +197,7 @@ def test_missing_b1_uses_nominal_flip_angle(missing_b1: float) -> None:
         b1_map=np.ones((1, 1, 1)),
         baseline_frames=5,
         convert_to_plasma=False,
+        r1_relaxivity=3.7,
     )
     missing = signal_to_concentration(
         signal,
@@ -204,6 +206,7 @@ def test_missing_b1_uses_nominal_flip_angle(missing_b1: float) -> None:
         b1_map=np.full((1, 1, 1), missing_b1),
         baseline_frames=5,
         convert_to_plasma=False,
+        r1_relaxivity=3.7,
     )
     np.testing.assert_allclose(missing.concentration, nominal.concentration)
     assert missing.conversion_qc["b1_missing_voxels"] == 1
@@ -219,6 +222,7 @@ def test_signal_conversion_reports_bounded_spgr_inversion() -> None:
         tr=0.005,
         baseline_frames=5,
         convert_to_plasma=False,
+        r1_relaxivity=3.7,
     )
     assert result.conversion_qc["e1_bounded_high_samples"] >= 1
     assert result.conversion_qc["e1_bounded_fraction"] > 0
@@ -237,6 +241,7 @@ def test_signal_conversion_qc_excludes_zero_background() -> None:
         b1_map=b1_map,
         baseline_frames=5,
         convert_to_plasma=False,
+        r1_relaxivity=3.7,
     )
     assert result.conversion_qc["n_spatial_voxels"] == 2
     assert result.conversion_qc["n_signal_supported_voxels"] == 1
@@ -260,6 +265,7 @@ def test_signal_conversion_qc_uses_explicit_mask_domain() -> None:
         baseline_frames=5,
         convert_to_plasma=False,
         qc_mask=qc_mask,
+        r1_relaxivity=3.7,
     )
 
     assert result.conversion_qc["n_spatial_voxels"] == 2
@@ -277,6 +283,7 @@ def test_signal_conversion_qc_mask_shape_must_match_signal() -> None:
             tr=0.005,
             baseline_frames=5,
             qc_mask=np.ones((3, 1, 1), dtype=bool),
+            r1_relaxivity=3.7,
         )
 
 
@@ -297,6 +304,7 @@ class TestFieldStrengthDefaultT1:
         result = signal_to_concentration(
             simple_signal, flip_angle_deg=15.0, tr=0.005,
             t1_map=None, t1_default_ms=None, field_strength=1.5,
+            r1_relaxivity=3.7,
         )
         # R1_baseline = 1/T1 = 1/0.9 ≈ 1.111 s^-1
         expected_r1 = 1.0 / (T1_TISSUE_REFERENCE[1.5]["default"] / 1000.0)
@@ -307,6 +315,7 @@ class TestFieldStrengthDefaultT1:
         result = signal_to_concentration(
             simple_signal, flip_angle_deg=15.0, tr=0.005,
             t1_map=None, t1_default_ms=None, field_strength=3.0,
+            r1_relaxivity=3.7,
         )
         expected_r1 = 1.0 / (T1_TISSUE_REFERENCE[3.0]["default"] / 1000.0)
         np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
@@ -316,6 +325,7 @@ class TestFieldStrengthDefaultT1:
         result = signal_to_concentration(
             simple_signal, flip_angle_deg=15.0, tr=0.005,
             t1_map=None, t1_default_ms=None, field_strength=7.0,
+            r1_relaxivity=3.7,
         )
         expected_r1 = 1.0 / (T1_TISSUE_REFERENCE[7.0]["default"] / 1000.0)
         np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
@@ -327,6 +337,7 @@ class TestFieldStrengthDefaultT1:
         result = signal_to_concentration(
             simple_signal, flip_angle_deg=15.0, tr=0.005,
             t1_map=None, t1_default_ms=1000.0, field_strength=1.5,
+            r1_relaxivity=3.7,
         )
         expected_r1 = 1.0 / (1000.0 / 1000.0)
         np.testing.assert_allclose(result.r1_baseline, expected_r1, rtol=1e-6)
@@ -338,10 +349,12 @@ class TestFieldStrengthDefaultT1:
         conc_15t = signal_to_concentration_simple(
             simple_signal, flip_angle_deg=15.0, tr=0.005,
             t1_pre_ms=None, field_strength=1.5,
+            r1_relaxivity=3.7,
         )
         conc_3t = signal_to_concentration_simple(
             simple_signal, flip_angle_deg=15.0, tr=0.005,
             t1_pre_ms=None, field_strength=3.0,
+            r1_relaxivity=3.7,
         )
         # Different field strengths → different concentrations
         assert not np.allclose(conc_15t, conc_3t)
@@ -365,6 +378,7 @@ class TestBaselineSubtraction:
             signal, flip_angle_deg=15.0, tr=0.005,
             t1_default_ms=1000.0, baseline_frames=baseline_frames,
             convert_to_plasma=False,
+            r1_relaxivity=3.7,
         )
         # Signed pre-bolus noise remains centered exactly at zero.
         pre_bolus = result.concentration[:baseline_frames]
@@ -381,6 +395,7 @@ class TestBaselineSubtraction:
             signal, flip_angle_deg=15.0, tr=0.005,
             t1_default_ms=1000.0, baseline_frames=baseline_frames,
             convert_to_plasma=False,
+            r1_relaxivity=3.7,
         )
         # Post-enhancement concentration should be clearly positive
         post_bolus = result.concentration[15:]

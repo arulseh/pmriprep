@@ -102,9 +102,7 @@ GD_DOTA_STANDARD_DOSE: Final[float] = 0.1
 # =============================================================================
 
 #: Population-median arterial peak ΔR2* (s⁻¹) at 3T for standard single-dose
-#: monomeric Gd (0.1 mmol/kg). For tetrameric agents at standard molecular
-#: dose, linear gd_multiplicity scaling may overestimate by up to 30% due to
-#: partial saturation of the static dephasing regime above ~15 mM blood [Gd].
+#: Gd dose (0.1 mmol Gd/kg).
 SYNTH_AIF_BASE_PEAK_3T: Final[float] = 35.0
 
 #: Upper cap on the effective-dose multiplier.

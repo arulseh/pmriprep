@@ -28,6 +28,7 @@ from pmriprep.workflows.base import (
     _connect_master_dce_masks,
     _connect_master_dce_t1_b1_inputs,
     _init_master_workflow_nodes,
+    _init_master_dce_workflow,
     _MasterReferencePlan,
     _plan_anatomical_modalities,
     _prepare_master_workflow_context,
@@ -85,6 +86,7 @@ def _write_case(root: Path, modalities: set[str]) -> Path:
             "MagneticFieldStrength": 3.0,
         },
         "dce": {
+            "ContrastBolusAgent": "Magnevist",
             "EchoTime": 0.0014,
             "RepetitionTime": 4.0,
             "RepetitionTimeExcitation": 0.004,
@@ -1149,6 +1151,119 @@ def test_select_master_structural_references_ignores_inactive_dsc_mask(
     )
 
     assert build_calls == [False]
+
+
+@pytest.mark.parametrize(
+    ("agent", "field_strength", "override", "expected"),
+    [
+        ("Elucirem", 7.0, None, None),
+        ("Ambelvist", 7.0, None, None),
+        ("Elucirem", 7.0, 8.5, 8.5),
+        ("Ambelvist", 7.0, 8.5, 8.5),
+        ("Gadavist", 3.0, 8.5, 8.5),
+        ("Gadavist", 3.0, None, 5.0),
+        ("Gadavist", 7.0, None, None),
+        ("unrecognized", 3.0, None, None),
+        (None, 3.0, None, None),
+        ("unrecognized", 3.0, 4.0, 4.0),
+        (None, 3.0, 4.0, 4.0),
+        ("Gadavist", None, None, None),
+        ("Gadavist", None, 4.0, None),
+    ],
+)
+def test_dce_r1_policy_reaches_preflight_workflow_and_provenance(
+    tmp_path: Path, agent: str | None, field_strength: float | None,
+    override: float | None, expected: float | None,
+) -> None:
+    import nipype.pipeline.engine as pe
+    from nipype.interfaces.utility import IdentityInterface
+
+    from pmriprep.utils.contrast_agent import normalize_agent_name
+    from pmriprep.utils.preflight import PreflightError
+
+    path = tmp_path / "dce.nii.gz"
+    _write_image(path, n_volumes=40)
+    path.with_name("dce.json").write_text(json.dumps({
+        "ContrastBolusAgent": agent, "MagneticFieldStrength": field_strength,
+        "EchoTime": 0.002, "RepetitionTime": 7.5,
+        "RepetitionTimeExcitation": 0.004, "FlipAngle": 15.0,
+        "MRAcquisitionType": "3D", "ScanningSequence": "GR",
+        "SequenceVariant": "SP",
+    }))
+    session = SessionData(
+        subject="0001", session="0001",
+        modalities=ModalityAvailability(dce=path),
+        pipelines=PipelineAvailability(dsc=False, dce=True),
+    )
+    config = DCEConfig(no_t1=True, b1_method="none", r1_relaxivity=override)
+    preflight_kwargs = dict(
+        session_data=session, decision=PipelineDecision(run_dsc=False, run_dce=True),
+        dsc_config=DSCConfig(), dce_config=config, user_specified=None,
+    )
+    if expected is None:
+        message = (
+            "DCE_MISSING_FIELD_STRENGTH" if field_strength is None
+            else "DCE_R1_UNAVAILABLE.*dce.r1_relaxivity"
+        )
+        with pytest.raises(PreflightError, match=message):
+            _prepare_master_preflight_state(**preflight_kwargs)
+    else:
+        _prepare_master_preflight_state(**preflight_kwargs)
+
+    workflow = pe.Workflow(name="r1_policy", base_dir=str(tmp_path))
+    inputnode = pe.Node(IdentityInterface(fields=["dce_file"]), name="inputnode")
+    kwargs = dict(
+        workflow=workflow, inputnode=inputnode, session_data=session,
+        dce_config=config, bids_dir=tmp_path, output_dir=tmp_path / "out",
+        subject_id="0001", session_id="0001", random_seed=None,
+        mem_gb=1.0, mem_limit_gb=None, user_specified=None,
+    )
+    if expected is None:
+        message = "MagneticFieldStrength" if field_strength is None else "dce.r1_relaxivity"
+        with pytest.raises(ValueError, match=message):
+            _init_master_dce_workflow(**kwargs)
+        return
+    initialized = _init_master_dce_workflow(**kwargs)
+    assert initialized.workflow.inputs.inputnode.r1_relaxivity == pytest.approx(expected)
+    perf = initialized.provenance["PerfusionProcessing"]
+    assert perf["Relaxivity"]["r1"] == pytest.approx(expected)
+    assert perf["ContrastAgent"].get("OriginalString") == agent
+    if agent is None or agent == "unrecognized":
+        assert perf["ContrastAgent"]["GenericName"] == "unspecified"
+        assert perf["ContrastAgent"]["Source"] == "unspecified"
+        assert "BrandName" not in perf["ContrastAgent"]
+    else:
+        assert perf["ContrastAgent"]["GenericName"] == normalize_agent_name(agent)
+        assert perf["ContrastAgent"]["Source"] == "bids_sidecar"
+    assert perf["Relaxivity"]["Source"] == (
+        "user_override" if override is not None else "bids_sidecar"
+    )
+
+
+@pytest.mark.parametrize(("agent", "dose"), [("Ambelvist", 0.04), ("Elucirem", 0.05)])
+def test_dsc_dose_does_not_require_available_r1(
+    tmp_path: Path, agent: str, dose: float,
+) -> None:
+    path = tmp_path / "dsc.nii.gz"
+    _write_image(path, n_volumes=40)
+    path.with_name("dsc.json").write_text(json.dumps({
+        "ContrastBolusAgent": agent, "MagneticFieldStrength": 7.0,
+        "EchoTime": 0.03, "RepetitionTime": 1.5, "FlipAngle": 30.0,
+        "ScanningSequence": ["GR", "EP"],
+    }))
+    session = SessionData(
+        subject="0001", session="0001",
+        modalities=ModalityAvailability(dsc=path),
+        pipelines=PipelineAvailability(dsc=True, dce=False),
+    )
+    config = DSCConfig()
+    state = _prepare_master_preflight_state(
+        session_data=session, decision=PipelineDecision(run_dsc=True, run_dce=False),
+        dsc_config=config, dce_config=DCEConfig(), user_specified=None,
+    )
+    assert config.agent_standard_dose == dose
+    assert state.dsc_agent_source == "bids_sidecar"
+    assert state.dsc_sidecar["r1_relaxivity"] is None
 
 
 def test_prepare_master_preflight_state_preserves_metadata_policy(

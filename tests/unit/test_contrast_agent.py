@@ -1,5 +1,10 @@
 """Unit tests for contrast agent utilities."""
 
+import json
+import math
+from pathlib import Path
+from typing import Any, Callable
+
 import pytest
 
 from pmriprep.utils.contrast_agent import (
@@ -15,6 +20,7 @@ from pmriprep.utils.contrast_agent import (
     get_agent_info,
     get_available_agents,
     get_brand_name,
+    get_r1_from_sidecar,
     get_r1_from_sidecar_dict,
     lookup_gd_multiplicity,
     lookup_r1,
@@ -62,13 +68,24 @@ def test_normalize_agent_name(raw: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("agent", "field_strength", "expected"),
     [
-        pytest.param("gadobutrol", 3.0, 4.97, id="gadobutrol-3t"),
+        pytest.param("gadobutrol", 3.0, 5.0, id="gadobutrol-3t"),
+        pytest.param("gadobutrol", 1.5, 5.2, id="gadobutrol-1p5t"),
         pytest.param("gd-dtpa", 3.0, 3.7, id="gd-dtpa-3t"),
         pytest.param("gd-dtpa", 1.5, 4.1, id="gd-dtpa-1p5t"),
-        pytest.param("gd-dtpa", 7.0, 3.3, id="gd-dtpa-7t"),
-        pytest.param("gadobutrol", 7.0, 3.83, id="gadobutrol-7t"),
+        pytest.param("gd-dtpa-bma", 1.5, 4.3, id="gadodiamide-1p5t"),
+        pytest.param("gd-dtpa-bma", 3.0, 4.0, id="gadodiamide-3t"),
+        pytest.param("gadoterate", 1.5, 3.6, id="gadoterate-1p5t"),
+        pytest.param("gadoterate", 3.0, 3.5, id="gadoterate-3t"),
+        pytest.param("gadoteridol", 1.5, 4.1, id="gadoteridol-1p5t"),
+        pytest.param("gadoteridol", 3.0, 3.7, id="gadoteridol-3t"),
+        pytest.param("gadobenate", 1.5, 6.3, id="gadobenate-1p5t"),
+        pytest.param("gadobenate", 3.0, 5.5, id="gadobenate-3t"),
+        pytest.param("gadoxetate", 1.5, 6.9, id="gadoxetate-1p5t"),
+        pytest.param("gadoxetate", 3.0, 6.2, id="gadoxetate-3t"),
+        pytest.param("gadopiclenol", 1.5, 12.8, id="gadopiclenol-1p5t"),
+        pytest.param("gadopiclenol", 3.0, 11.6, id="gadopiclenol-3t"),
         pytest.param("gd-dtpa", 2.25, 4.1, id="low-bin-boundary"),
-        pytest.param("gd-dtpa", (2.5, 5.0), 3.7, id="mid-bin-range"),
+        pytest.param("gd-dtpa", (2.2501, 5.0), 3.7, id="mid-bin-range"),
         pytest.param("gadoquatrane", 3.0, 10.5, id="gadoquatrane-3t"),
         pytest.param("gadoquatrane", 1.5, 11.8, id="gadoquatrane-1p5t"),
     ],
@@ -88,6 +105,10 @@ def test_lookup_r1_values(
     ("alias", "generic"),
     [
         pytest.param("Gadavist", "gadobutrol", id="gadavist"),
+        pytest.param("gd-dota", "gadoterate", id="gd-dota"),
+        pytest.param("gd-hp-do3a", "gadoteridol", id="gd-hp-do3a"),
+        pytest.param("gd-bopta", "gadobenate", id="gd-bopta"),
+        pytest.param("gadopentetate", "gd-dtpa", id="gadopentetate"),
         pytest.param("ambelvist", "gadoquatrane", id="ambelvist"),
     ],
 )
@@ -98,7 +119,11 @@ def test_lookup_r1_aliases(alias: str, generic: str) -> None:
 @pytest.mark.parametrize(
     ("agent", "field_strength", "message"),
     [
-        pytest.param("gadoxetate", 7.0, "No peer-reviewed 7T r1", id="unsupported-7t"),
+        *[
+            pytest.param(agent, 7.0, "dce.r1_relaxivity", id=f"{agent}-7t")
+            for agent in get_available_agents()
+        ],
+        pytest.param("gadopiclenol", 5.01, "dce.r1_relaxivity", id="unsupported-field-bin"),
         pytest.param("fakium", 3.0, "Available agents", id="unknown-agent"),
     ],
 )
@@ -111,7 +136,7 @@ def test_lookup_r1_errors(agent: str, field_strength: float, message: str) -> No
     ("agent", "expected"),
     [
         pytest.param("fakium", None, id="unknown"),
-        pytest.param("gadobutrol", 4.97, id="known"),
+        pytest.param("gadobutrol", 5.0, id="known"),
     ],
 )
 def test_lookup_r1_safe(agent: str, expected: float | None) -> None:
@@ -166,11 +191,11 @@ class TestGetAgentInfo:
     """Tests for detailed agent information retrieval."""
 
     def test_gadobutrol_info(self) -> None:
-        """Gadobutrol info contains Szomolanyi 2019 r1 + 1.0M concentration."""
+        """Gadobutrol info includes its r1 values and formulation concentration."""
         info = get_agent_info("gadobutrol")
-        assert info["r1_1_5T"] == pytest.approx(4.78)
-        assert info["r1_3_0T"] == pytest.approx(4.97)
-        assert info["r1_7_0T"] == pytest.approx(3.83)
+        assert info["r1_1_5T"] == pytest.approx(5.2)
+        assert info["r1_3_0T"] == pytest.approx(5.0)
+        assert math.isnan(info["r1_7_0T"])
         assert info["concentration_mmol_per_ml"] == pytest.approx(1.0)
 
 
@@ -230,6 +255,49 @@ def test_classify_dose(dose: float, expected: str) -> None:
     assert classify_dose(dose) == expected
 
 
+@pytest.mark.parametrize("field_strength", [None, 7.0])
+def test_agent_identity_survives_unavailable_r1(
+    tmp_path: Path, field_strength: float | None,
+) -> None:
+    sidecar: dict[str, Any] = {"ContrastBolusAgent": "Ambelvist 7ml"}
+    if field_strength is not None:
+        sidecar["MagneticFieldStrength"] = field_strength
+    path = tmp_path / "contrast.json"
+    path.write_text(json.dumps(sidecar))
+    result = get_r1_from_sidecar(path)
+    assert result == get_r1_from_sidecar_dict(sidecar)
+    assert result["agent_name"] == "gadoquatrane"
+    assert result["agent_string"] == "Ambelvist 7ml"
+    assert result["volume_ml"] == 7.0
+    assert result["r1"] is None
+    assert result["source"] == (
+        "no_field_strength" if field_strength is None else "unsupported_field"
+    )
+
+
+def test_gadoquatrane_volume_helpers_use_gd_units() -> None:
+    assert calculate_dose_from_volume(7.0, 70.0, "Ambelvist") == pytest.approx(0.04)
+    assert calculate_volume_for_dose(0.04, 70.0, "Ambelvist") == pytest.approx(7.0)
+
+
+@pytest.mark.parametrize("builder", [build_dce_provenance, build_dsc_provenance])
+def test_provenance_normalizes_brand_name(
+    builder: Callable[..., dict[str, Any]],
+) -> None:
+    agent = builder(contrast_agent="Gadavist")["PerfusionProcessing"]["ContrastAgent"]
+    assert agent["GenericName"] == "gadobutrol"
+    assert agent["BrandName"] == "Gadavist"
+
+
+def test_provenance_default_r1_uses_agent_and_field() -> None:
+    perf = build_dce_provenance(
+        contrast_agent="Gadavist", field_strength=3.0,
+    )["PerfusionProcessing"]
+    assert perf["Relaxivity"]["r1"] == pytest.approx(5.0)
+    with pytest.raises(ValueError, match="dce.r1_relaxivity"):
+        build_dce_provenance(contrast_agent="Ambelvist", field_strength=7.0)
+
+
 class TestGetR1FromSidecarDict:
     """Tests for extracting r1 from a BIDS sidecar dictionary."""
 
@@ -240,8 +308,8 @@ class TestGetR1FromSidecarDict:
             "MagneticFieldStrength": 3.0,
         }
         result = get_r1_from_sidecar_dict(sidecar)
-        # gadovist -> gadobutrol -> 4.97 at 3T (Szomolanyi 2019)
-        assert result["r1"] == pytest.approx(4.97)
+        assert result["r1"] == pytest.approx(5.0)
+        assert result["agent_name"] == "gadobutrol"
         assert result["source"] == "dicom_lookup"
         assert result["volume_ml"] == pytest.approx(3.5)
 
@@ -276,12 +344,12 @@ class TestBuildDceProvenance:
     def test_user_override_r1(self) -> None:
         """User-supplied r1 records user_override source."""
         prov = build_dce_provenance(
-            agent_source=ParameterSource.USER_OVERRIDE,
+            relaxivity_source=ParameterSource.USER_OVERRIDE,
             r1_relaxivity=5.0,
             field_strength=3.0,
         )
         perf = prov["PerfusionProcessing"]
-        assert perf["ContrastAgent"]["Source"] == "user_override"
+        assert perf["ContrastAgent"] == {"GenericName": "unspecified", "Source": "unspecified"}
         assert perf["Relaxivity"]["r1"] == 5.0
         assert perf["Relaxivity"]["Source"] == "user_override"
 
@@ -300,17 +368,14 @@ class TestBuildDceProvenance:
         assert agent["OriginalString"] == "Gadavist 7ml"
         assert agent["Source"] == "bids_sidecar"
 
-    def test_default_fallback(self) -> None:
-        """Default fallback uses Gd-DTPA with default_fallback source."""
-        prov = build_dce_provenance()
-        agent = prov["PerfusionProcessing"]["ContrastAgent"]
-        assert agent["GenericName"] == "gd-dtpa"
-        assert agent["BrandName"] == "Magnevist"
-        assert agent["Source"] == "default_fallback"
+    def test_unspecified_agent_requires_r1(self) -> None:
+        with pytest.raises(ValueError, match="explicit r1_relaxivity"):
+            build_dce_provenance()
 
     def test_dose_source_tracking(self) -> None:
         """Dose source is recorded correctly."""
         prov = build_dce_provenance(
+            r1_relaxivity=3.7,
             dose_multiplier=0.5,
             dose_source=ParameterSource.USER_SPECIFIED,
         )
@@ -417,7 +482,7 @@ class TestBuildDscProvenance:
         )
         dose = prov["PerfusionProcessing"]["ContrastDose"]
         assert dose["gd_ions_per_molecule"] == 4
-        assert dose["effective_gd_dose_mmol_kg"] == pytest.approx(0.16)
+        assert dose["effective_gd_dose_mmol_kg"] == pytest.approx(0.04)
 
     def test_gd_multiplicity_omitted_for_monomeric(self) -> None:
         """Monomeric agent does not record gd_ions_per_molecule."""
@@ -459,17 +524,6 @@ class TestCollectDefaultWarnings:
         )
         warnings = collect_default_warnings(prov, "DCE")
         assert warnings == []
-
-    def test_dce_agent_default_warning(self) -> None:
-        """Warning when DCE agent falls back to default."""
-        prov = build_dce_provenance(
-            agent_source=ParameterSource.DEFAULT_FALLBACK,
-            r1_relaxivity=3.8,
-            field_strength=3.0,
-        )
-        warnings = collect_default_warnings(prov, "DCE")
-        assert len(warnings) >= 1
-        assert "defaulted" in warnings[0].lower() or "Gd-DTPA" in warnings[0]
 
     def test_dce_dose_default_warning(self) -> None:
         """Warning when DCE dose is defaulted."""

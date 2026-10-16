@@ -683,6 +683,7 @@ def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
     )
     (raw / "perf" / "sub-01_ses-0001_dce.json").write_text(
         _json.dumps({
+            "ContrastBolusAgent": "Magnevist",
             "RepetitionTime": 4.0,
             "FlipAngle": 12.0,
             "MagneticFieldStrength": 3.0,
@@ -1119,6 +1120,7 @@ def _build_dce_wf_for_tr_gate(
     )
     (raw / "perf" / "sub-01_ses-0001_dce.json").write_text(
         _json.dumps({
+            "ContrastBolusAgent": "Magnevist",
             "RepetitionTime": volume_tr,
             "FlipAngle": 12.0,
             "MagneticFieldStrength": 3.0,

@@ -622,14 +622,14 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     agent_standard_dose = traits.Float(
         0.1,
         usedefault=True,
-        desc="Agent's recommended molecular dose in mmol/kg "
+        desc="Agent's standard dose in mmol Gd/kg "
              "(0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)",
     )
     gd_multiplicity = traits.Int(
         1,
         usedefault=True,
         desc="Gd3+ ions per molecule (1=monomeric, 4=gadoquatrane). "
-             "Affects DSC susceptibility scaling for AIF peak thresholds.",
+             "Descriptive metadata; dose is already expressed per Gd.",
     )
     field_strength = traits.Float(
         3.0,
@@ -1241,9 +1241,8 @@ class AIFDetection(BaseInterface):
         self,
         dose: Optional[float] = None,
         agent_standard_dose: Optional[float] = None,
-        gd_multiplicity: Optional[int] = None,
     ) -> float:
-        """Effective Gd dose relative to 0.1 mmol/kg reference (unclamped).
+        """Effective Gd dose relative to 0.1 mmol Gd/kg (unclamped).
 
         Parameters
         ----------
@@ -1251,13 +1250,11 @@ class AIFDetection(BaseInterface):
             Override; falls back to self.inputs.dose.
         agent_standard_dose : float, optional
             Override; falls back to self.inputs.agent_standard_dose.
-        gd_multiplicity : int, optional
-            Override; falls back to self.inputs.gd_multiplicity.
 
         Returns
         -------
         float
-            Raw multiplier ``(agent_std * dose * gd_mult) / GD_DOTA_STANDARD_DOSE``.
+            Raw multiplier ``(agent_std * dose) / GD_DOTA_STANDARD_DOSE``.
             Consumers apply their own clamping.
         """
         d = dose if dose is not None else (
@@ -1267,11 +1264,7 @@ class AIFDetection(BaseInterface):
             float(self.inputs.agent_standard_dose)
             if isdefined(self.inputs.agent_standard_dose) else 0.1
         )
-        g = gd_multiplicity if gd_multiplicity is not None else (
-            int(self.inputs.gd_multiplicity)
-            if isdefined(self.inputs.gd_multiplicity) else 1
-        )
-        return (a * d * g) / GD_DOTA_STANDARD_DOSE
+        return (a * d) / GD_DOTA_STANDARD_DOSE
 
     # -----------------------------------------------------------------
     # Step 7: Cost-function scoring
@@ -1285,7 +1278,6 @@ class AIFDetection(BaseInterface):
         *,
         dose: Optional[float] = None,
         agent_standard_dose: Optional[float] = None,
-        gd_multiplicity: Optional[int] = None,
     ) -> float:
         """Score a candidate with the AIF cost function.
 
@@ -1304,11 +1296,8 @@ class AIFDetection(BaseInterface):
             Contrast agent dose multiplier. None uses the interface setting,
             or 1.0 if that setting is undefined.
         agent_standard_dose : float or None
-            Standard molecular dose in mmol/kg. None uses the interface
+            Standard dose in mmol Gd/kg. None uses the interface
             setting, or 0.1 if that setting is undefined.
-        gd_multiplicity : int or None
-            Gd3+ ions per molecule (1=monomeric, 4=gadoquatrane).
-            Falls back to self.inputs.gd_multiplicity if None.
 
         Returns
         -------
@@ -1409,7 +1398,7 @@ class AIFDetection(BaseInterface):
             # Cap 3.0 (vs 2.5 for synthetic AIF): artifact rejection tolerates
             # slight nonlinearity; synthetic AIF amplitude must stay linear.
             effective_dose = float(np.clip(
-                self._effective_dose(dose, agent_standard_dose, gd_multiplicity),
+                self._effective_dose(dose, agent_standard_dose),
                 0.2, 3.0,
             ))
             field_strength = (
@@ -2074,7 +2063,7 @@ class AIFDetection(BaseInterface):
         field_strength : float, optional
             Magnetic field strength in Tesla.
         effective_dose : float, optional
-            ``(agent_std * dose * gd_mult) / 0.1``, clamped.
+            ``(agent_std * dose) / 0.1``, clamped.
 
         Returns
         -------

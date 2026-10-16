@@ -116,43 +116,6 @@ EPSILON_EIGENVALUE: Final[float] = 1e-10
 
 
 # =============================================================================
-# Field-Strength Dependent R1 Relaxivity
-# =============================================================================
-#
-# Single source of truth: CONTRAST_AGENTS in contrast_agent.py.
-# This module's get_r1_relaxivity(field_strength) delegates to that table
-# under the Gd-DTPA fallback agent.
-
-
-def get_r1_relaxivity(field_strength: float) -> float:
-    """Get fallback r1 relaxivity (Gd-DTPA) for a given field strength.
-
-    Used when the BIDS sidecar does not identify a specific contrast agent.
-    Delegates to :func:`pmriprep.utils.contrast_agent.lookup_r1` with
-    ``"gd-dtpa"``, so all per-agent values come from one table.
-
-    Parameters
-    ----------
-    field_strength : float
-        Magnetic field strength in Tesla.
-
-    Returns
-    -------
-    float
-        r1 relaxivity in s^-1 per mM.
-
-    Raises
-    ------
-    ValueError
-        If field_strength > 5.0 T and the fallback agent has no measured
-        7T value.
-    """
-    from pmriprep.utils.contrast_agent import lookup_r1
-
-    return lookup_r1("gd-dtpa", field_strength)
-
-
-# =============================================================================
 # Blood T1 Values by Field Strength
 # =============================================================================
 

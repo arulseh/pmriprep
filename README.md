@@ -291,10 +291,13 @@ independent magnitude image and must already be world-aligned with the DCE
 series. When VFA T1 mapping is used, PMRIPrep applies the inverse of the
 accepted VFA-to-DCE transform to transfer that map into VFA space.
 
-When `ContrastBolusAgent` is absent or unrecognized, PMRIPrep uses Gd-DTPA as
-the fallback agent: field-strength-specific Gd-DTPA r1 for DCE and a standard
-dose of 0.1 mmol Gd/kg for dose-adjusted AIF handling. DSC and DCE dose options
-are multipliers of the agent's standard administered dose.
+DCE resolves r1 from `ContrastBolusAgent` and `MagneticFieldStrength`, using
+the 1.5 T entry for fields ≤2.25 T and the 3 T entry for fields >2.25 T through
+5 T. Fields >5 T, or a missing/unrecognized agent, require an explicit finite
+positive dce `r1_relaxivity` value in the configuration file (or `--dce-r1`), in
+s⁻¹ mM⁻¹ per Gd. DSC retains a standard-dose fallback of 0.1 mmol Gd/kg with
+a warning when the agent is unresolved. DSC and DCE dose options are
+multipliers of the agent's standard administered dose in mmol Gd/kg.
 
 ## Outputs and QC
 

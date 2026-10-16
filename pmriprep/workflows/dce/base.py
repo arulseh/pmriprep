@@ -1483,7 +1483,7 @@ def init_dce_preproc_wf(
     field_strength
         Magnetic field strength in Tesla.
     r1_relaxivity
-        r1 relaxivity of contrast agent (L/mmol/s). If None, use lookup.
+        Required finite positive r1 relaxivity of contrast agent (L/mmol Gd/s).
 
     Outputs
     -------

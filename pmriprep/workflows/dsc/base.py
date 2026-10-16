@@ -1738,7 +1738,7 @@ def init_dsc_preproc_wf(
     mem_limit_gb : float, optional
         Upper bound in GB for per-node memory requests.
     gd_multiplicity : int, optional
-        Number of gadolinium ions per contrast-agent molecule for dose scaling.
+        Number of gadolinium ions per contrast-agent molecule as metadata.
     name : str
         Workflow name (default: "dsc_preproc_wf").
 

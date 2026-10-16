@@ -74,6 +74,7 @@ def test_shared_reader_preserves_dce_validation(tmp_path: Path, echo_time: Any) 
     """Valid DCE timing is unchanged; invalid supplied TE cannot become absent TE."""
     image = tmp_path / "sub-01_dce.nii.gz"
     image.with_name("sub-01_dce.json").write_text(json.dumps({
+        "ContrastBolusAgent": "Magnevist",
         "EchoTime": echo_time, "RepetitionTime": 7.0,
         "RepetitionTimeExcitation": 0.004, "FlipAngle": 15.0,
         "MagneticFieldStrength": 3.0, "ScanningSequence": "GR",

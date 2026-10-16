@@ -12,13 +12,12 @@ import numpy as np
 import pytest
 
 import pmriprep.utils.dce_constants as dce_constants
-from pmriprep.utils.dce_constants import get_r1_relaxivity
 from pmriprep.utils.dce_signal import signal_to_concentration
 
 _NOMINAL_FA_DEG = 20.0
 _TR_S = 0.005
 _T1_PRE_MS = 1000.0
-_R1 = get_r1_relaxivity(3.0)  # s^-1 mM^-1, matches the inversion's lookup
+_R1 = 3.7  # s^-1 mM^-1
 _N_BASELINE = 5
 
 

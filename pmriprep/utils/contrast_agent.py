@@ -20,80 +20,78 @@ logger = logging.getLogger(__name__)
 class AgentRelaxivity(NamedTuple):
     """R1 relaxivity values at different field strengths.
 
-    Values are in L/(mmol·s) (equivalently s^-1 per mM) per millimole of
-    molecule (not per Gd3+ ion). r1_7_0T is None for agents without a
-    peer-reviewed plasma-37°C measurement at 7T; lookups at B0 ≥ 5T for
-    those agents raise rather than extrapolate.
+    Values are in L/(mmol Gd·s), equivalently s^-1 per mM Gd.
+    A None value means no supported default is available in the table.
+    Lookups at B0 > 5 T use the 7 T entry and raise when it is unavailable.
     """
 
     r1_1_5T: float  # R1 relaxivity at 1.5T
     r1_3_0T: float  # R1 relaxivity at 3.0T
-    r1_7_0T: Optional[float] = None  # R1 at 7T; None = no measured value
+    r1_7_0T: Optional[float] = None  # R1 at 7T; None = no supported default
     gd_ions: int = 1  # Gd3+ ions per molecule (4 for tetrameric gadoquatrane)
     source: str = ""  # Primary citation for the values
 
 
-#: R1 relaxivity values for common gadolinium-based contrast agents in
-#: human plasma at 37°C, per Gd3+ ion unless gd_ions > 1.
+#: In-vitro R1 relaxivity at 37°C, per Gd3+ ion. Measurement media are
+#: identified in each entry's source metadata.
 #:
 CONTRAST_AGENTS: Final[dict[str, AgentRelaxivity]] = {
-    # Linear agents (lower relaxivity, higher stability)
+    # Linear agents
     "gd-dtpa": AgentRelaxivity(  # Magnevist
-        r1_1_5T=4.1, r1_3_0T=3.7, r1_7_0T=3.3,
-        source="Rohrer 2005 (1.5T/3T plasma); Noebauer-Huhmann 2010 (7T)",
+        r1_1_5T=4.1, r1_3_0T=3.7,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gadopentetate": AgentRelaxivity(  # Magnevist (generic)
-        r1_1_5T=4.1, r1_3_0T=3.7, r1_7_0T=3.3,
-        source="Rohrer 2005 (1.5T/3T plasma); Noebauer-Huhmann 2010 (7T)",
+        r1_1_5T=4.1, r1_3_0T=3.7,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gd-dtpa-bma": AgentRelaxivity(  # Omniscan (NSF-restricted)
-        r1_1_5T=4.3, r1_3_0T=4.0, r1_7_0T=None,
-        source="Rohrer 2005 plasma; no peer-reviewed 7T plasma measurement",
+        r1_1_5T=4.3, r1_3_0T=4.0,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
 
-    # Macrocyclic agents (higher stability, preferred clinically)
+    # Macrocyclic agents
     "gadoterate": AgentRelaxivity(  # Dotarem
-        r1_1_5T=3.32, r1_3_0T=3.00, r1_7_0T=2.84,
-        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+        r1_1_5T=3.6, r1_3_0T=3.5,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gd-dota": AgentRelaxivity(  # Dotarem (generic)
-        r1_1_5T=3.32, r1_3_0T=3.00, r1_7_0T=2.84,
-        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+        r1_1_5T=3.6, r1_3_0T=3.5,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gadoteridol": AgentRelaxivity(  # ProHance
-        r1_1_5T=3.80, r1_3_0T=3.28, r1_7_0T=3.21,
-        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+        r1_1_5T=4.1, r1_3_0T=3.7,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gd-hp-do3a": AgentRelaxivity(  # ProHance (generic)
-        r1_1_5T=3.80, r1_3_0T=3.28, r1_7_0T=3.21,
-        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+        r1_1_5T=4.1, r1_3_0T=3.7,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gadobutrol": AgentRelaxivity(  # Gadavist/Gadovist
-        r1_1_5T=4.78, r1_3_0T=4.97, r1_7_0T=3.83,
-        source="Szomolanyi 2019 (human plasma 37°C, all 3 fields)",
+        r1_1_5T=5.2, r1_3_0T=5.0,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
 
     # High-relaxivity agents
     "gadopiclenol": AgentRelaxivity(  # Elucirem/Vueway
-        r1_1_5T=12.8, r1_3_0T=11.6, r1_7_0T=9.6,
-        source="Robic 2019 (human serum 37°C, 1.5T-7T)",
+        r1_1_5T=12.8, r1_3_0T=11.6, r1_7_0T=None,
+        source="Robic 2019 (human serum 37°C, 1.41T/3T)",
     ),
     "gadoquatrane": AgentRelaxivity(  # Ambelvist (tetrameric)
-        r1_1_5T=11.8, r1_3_0T=10.5, r1_7_0T=8.0, gd_ions=4,
-        source="Lohrke 2022 (per-molecule plasma; ±15% uncertainty)",
+        r1_1_5T=11.8, r1_3_0T=10.5, r1_7_0T=None, gd_ions=4,
+        source="Lohrke 2022 (per-Gd human plasma 37°C, 1.41T/3T)",
     ),
     "gadobenate": AgentRelaxivity(  # MultiHance — protein-binding
-        r1_1_5T=6.3, r1_3_0T=5.5, r1_7_0T=None,
-        source="Rohrer 2005 plasma; no clean 7T (protein-binding makes "
-               "any single value approximate)",
+        r1_1_5T=6.3, r1_3_0T=5.5,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gd-bopta": AgentRelaxivity(  # MultiHance (generic)
-        r1_1_5T=6.3, r1_3_0T=5.5, r1_7_0T=None,
-        source="Rohrer 2005 plasma; no clean 7T (protein-binding)",
+        r1_1_5T=6.3, r1_3_0T=5.5,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
     "gadoxetate": AgentRelaxivity(  # Eovist/Primovist — hepatobiliary
-        r1_1_5T=6.9, r1_3_0T=6.2, r1_7_0T=None,
-        source="Rohrer 2005 plasma; no clean 7T human-plasma measurement",
+        r1_1_5T=6.9, r1_3_0T=6.2,
+        source="Rohrer 2005 (bovine plasma 37°C, 1.5T/3T)",
     ),
 }
 
@@ -126,8 +124,8 @@ DEFAULT_AGENT: Final[str] = "gd-dtpa"
 # Standard Clinical Doses
 # =============================================================================
 
-#: Standard clinical doses per agent (mmol/kg).
-#: Most agents: 0.1 mmol/kg. High-relaxivity agents use lower doses.
+#: Standard clinical doses per agent (mmol Gd/kg).
+#: Most agents: 0.1 mmol Gd/kg. High-relaxivity agents use lower doses.
 #: Keyed by generic name; brand names resolved via AGENT_ALIASES + normalize_agent_name()
 AGENT_STANDARD_DOSES: Final[dict[str, float]] = {
     "gd-dtpa": 0.1,
@@ -150,7 +148,7 @@ AGENT_STANDARD_DOSES: Final[dict[str, float]] = {
 # Contrast Agent Concentrations
 # =============================================================================
 
-#: Standard concentrations for contrast agents in mmol/mL
+#: Standard concentrations for contrast agents in mmol Gd/mL
 #: Most agents are supplied at 0.5 M (0.5 mmol/mL)
 #: Gadobutrol (Gadavist) is supplied at 1.0 M (1.0 mmol/mL)
 AGENT_CONCENTRATIONS: Final[dict[str, float]] = {
@@ -163,7 +161,7 @@ AGENT_CONCENTRATIONS: Final[dict[str, float]] = {
     "gd-hp-do3a": 0.5,
     "gadobutrol": 1.0,       # Higher concentration (1 M)
     "gadopiclenol": 0.5,
-    "gadoquatrane": 0.5,
+    "gadoquatrane": 0.4,
     "gadobenate": 0.5,
     "gd-bopta": 0.5,
     "gadoxetate": 0.25,      # Lower concentration (0.25 M)
@@ -247,10 +245,9 @@ def lookup_r1_safe(
     agent: str,
     field_strength: float = 3.0,
 ) -> Optional[float]:
-    """Look up r1 relaxivity, returning None for unknown agents.
+    """Look up r1, returning None for unknown agents or unavailable values.
 
-    Unlike lookup_r1(), this function does not raise ValueError for
-    unknown agents - it returns None instead, allowing flexible fallback.
+    Callers that require a value must obtain an explicit r1 when lookup fails.
 
     Parameters
     ----------
@@ -262,7 +259,7 @@ def lookup_r1_safe(
     Returns
     -------
     float or None
-        r1 relaxivity in s^-1 per mM, or None if agent not recognized
+        r1 relaxivity in s^-1 per mM Gd, or None when unavailable.
     """
     try:
         return lookup_r1(agent, field_strength)
@@ -291,12 +288,12 @@ def get_r1_from_sidecar(
     -------
     dict
         Dictionary with:
-        - 'r1': float or None (r1 in s^-1 mM^-1)
-        - 'agent_name': str or None (parsed agent name)
+        - 'r1': float or None (r1 in s^-1 mM^-1 per Gd)
+        - 'agent_name': str or None (generic name when recognized)
         - 'agent_string': str or None (original ContrastBolusAgent string)
         - 'field_strength': float or None
         - 'volume_ml': float or None (if volume in agent string)
-        - 'source': str ('dicom_lookup', 'not_found', 'unknown_agent', 'file_error')
+        - 'source': lookup status ('unsupported_field' for an unavailable entry)
 
     Examples
     --------
@@ -304,7 +301,7 @@ def get_r1_from_sidecar(
         >>> if result['r1'] is not None:  # doctest: +SKIP
         ...     print(f"r1={result['r1']:.1f} for {result['agent_name']}")
         ... else:
-        ...     print(f"Using default r1 (agent: {result['source']})")
+        ...     print(f"No r1 resolved (status: {result['source']})")
     """
     result: dict[str, Any] = {
         "r1": None,
@@ -328,38 +325,7 @@ def get_r1_from_sidecar(
         result["source"] = "file_error"
         return result
 
-    # Extract field strength if not provided
-    if field_strength is None:
-        field_strength = metadata.get("MagneticFieldStrength")
-        result["field_strength"] = field_strength
-
-    if field_strength is None:
-        result["source"] = "no_field_strength"
-        return result
-
-    # Try to extract contrast agent name
-    agent_string = metadata.get("ContrastBolusAgent", "")
-    result["agent_string"] = agent_string
-
-    if not agent_string or not agent_string.strip():
-        result["source"] = "not_in_dicom"
-        return result
-
-    # Parse agent string
-    parsed = parse_contrast_agent_string(agent_string)
-    result["agent_name"] = parsed["agent_name"]
-    result["volume_ml"] = parsed["volume_ml"]
-
-    # Look up r1
-    r1 = lookup_r1_safe(parsed["agent_name"], field_strength)
-
-    if r1 is not None:
-        result["r1"] = r1
-        result["source"] = "dicom_lookup"
-    else:
-        result["source"] = "unknown_agent"
-
-    return result
+    return get_r1_from_sidecar_dict(metadata, field_strength)
 
 
 def get_r1_from_sidecar_dict(
@@ -396,10 +362,6 @@ def get_r1_from_sidecar_dict(
         field_strength = sidecar.get("MagneticFieldStrength")
         result["field_strength"] = field_strength
 
-    if field_strength is None:
-        result["source"] = "no_field_strength"
-        return result
-
     # Try to extract contrast agent name
     agent_string = sidecar.get("ContrastBolusAgent", "")
     result["agent_string"] = agent_string
@@ -413,6 +375,15 @@ def get_r1_from_sidecar_dict(
     result["agent_name"] = parsed["agent_name"]
     result["volume_ml"] = parsed["volume_ml"]
 
+    name = normalize_agent_name(parsed["agent_name"])
+    if name not in CONTRAST_AGENTS:
+        result["source"] = "unknown_agent"
+        return result
+    result["agent_name"] = name
+    if field_strength is None:
+        result["source"] = "no_field_strength"
+        return result
+
     # Look up r1
     r1 = lookup_r1_safe(parsed["agent_name"], field_strength)
 
@@ -420,7 +391,7 @@ def get_r1_from_sidecar_dict(
         result["r1"] = r1
         result["source"] = "dicom_lookup"
     else:
-        result["source"] = "unknown_agent"
+        result["source"] = "unsupported_field"
 
     return result
 
@@ -453,7 +424,7 @@ def lookup_standard_dose(agent: str) -> float:
     """Look up standard clinical dose for a contrast agent.
 
     Uses normalize_agent_name() to resolve brand names via AGENT_ALIASES.
-    E.g., "Vueway" -> "gadopiclenol" -> 0.05 mmol/kg
+    E.g., "Vueway" -> "gadopiclenol" -> 0.05 mmol Gd/kg
 
     Parameters
     ----------
@@ -463,7 +434,7 @@ def lookup_standard_dose(agent: str) -> float:
     Returns
     -------
     float
-        Standard dose in mmol/kg (0.1 for most agents, 0.05 for Vueway, etc.).
+        Standard dose in mmol Gd/kg (0.1 for most agents, 0.05 for Vueway, etc.).
     """
     name = normalize_agent_name(agent)
     return AGENT_STANDARD_DOSES.get(name, 0.1)
@@ -473,9 +444,8 @@ def lookup_gd_multiplicity(agent: str) -> int:
     """Look up Gd3+ ion count per molecule for a contrast agent.
 
     Most GBCAs are monomeric (1 Gd per molecule). Gadoquatrane is
-    tetrameric (4 Gd per molecule). This affects DSC susceptibility
-    scaling but NOT DCE (where per-molecule r1 already accounts for
-    all Gd ions).
+    tetrameric (4 Gd per molecule). The count describes the molecule;
+    doses and relaxivities in this module are already expressed per Gd.
 
     Parameters
     ----------
@@ -510,21 +480,22 @@ def lookup_r1(
     Returns
     -------
     float
-        r1 relaxivity in L/(mmol·s) or equivalently s^-1 per mM
+        r1 relaxivity in L/(mmol Gd·s), equivalently s^-1 per mM Gd.
 
     Raises
     ------
     ValueError
-        If the agent name is not recognized
+        If the agent name is not recognized or the selected field entry
+        has no supported default.
 
     Examples
     --------
         >>> lookup_r1("gadobutrol", 3.0)
-        4.97
+        5.0
         >>> lookup_r1("gd-dtpa", 1.5)
         4.1
         >>> lookup_r1("Gadavist", 3.0)  # Brand name
-        4.97
+        5.0
     """
     name = normalize_agent_name(agent)
 
@@ -540,20 +511,19 @@ def lookup_r1(
     # Three field-strength bins, midpoints at 2.25T and 5.0T:
     #   B0 ≤ 2.25T → 1.5T value
     #   2.25T < B0 ≤ 5.0T → 3.0T value
-    #   B0 > 5.0T → 7.0T value (raise if not measured for this agent)
-    # No linear interpolation: r1(B0) is concave (NMRD profile), and the
-    # 1.5T/3T/7T values come from different studies for some agents, so
-    # interpolation can mix sources.
+    #   B0 > 5.0T → 7.0T value (raise if no default is supported)
+    # Select the nearest nominal field without interpolating measurements.
     if field_strength <= 2.25:
         return relaxivity.r1_1_5T
     if field_strength <= 5.0:
         return relaxivity.r1_3_0T
     if relaxivity.r1_7_0T is None:
         raise ValueError(
-            f"No peer-reviewed 7T r1 measurement for agent '{name}' "
-            f"(B0={field_strength}T). Verify the contrast agent and field "
-            "strength against literature, or use a different agent. "
-            f"Citation: {relaxivity.source}"
+            f"No supported r1 default is available for contrast agent '{name}' "
+            f"in the 7 T lookup range (B0={field_strength:g} T). "
+            "Set dce.r1_relaxivity in the YAML/JSON configuration file "
+            "(or supply --dce-r1) to a verified finite positive value "
+            "in s^-1 mM^-1 per Gd."
         )
     return relaxivity.r1_7_0T
 
@@ -614,9 +584,9 @@ def calculate_dose_from_volume(
     body_weight_kg: float,
     agent: str = DEFAULT_AGENT,
 ) -> float:
-    """Calculate contrast agent dose in mmol/kg from injected volume.
+    """Calculate contrast agent dose in mmol Gd/kg from injected volume.
 
-    Standard dose is typically 0.1 mmol/kg (single dose) or 0.05 mmol/kg (half dose).
+    The formulation concentration is expressed in mmol Gd/mL.
 
     Parameters
     ----------
@@ -630,7 +600,7 @@ def calculate_dose_from_volume(
     Returns
     -------
     float
-        Dose in mmol/kg
+        Dose in mmol Gd/kg
 
     Raises
     ------
@@ -662,7 +632,7 @@ def calculate_dose_from_volume(
     else:
         concentration = AGENT_CONCENTRATIONS[name]
 
-    # Calculate: volume (mL) × concentration (mmol/mL) / weight (kg) = dose (mmol/kg)
+    # Volume × Gd concentration / body weight gives the dose in mmol Gd/kg.
     total_mmol = volume_ml * concentration
     dose_mmol_per_kg = total_mmol / body_weight_kg
 
@@ -679,7 +649,7 @@ def calculate_volume_for_dose(
     Parameters
     ----------
     dose_mmol_per_kg : float
-        Target dose in mmol/kg (0.1 for standard, 0.05 for half)
+        Target dose in mmol Gd/kg
     body_weight_kg : float
         Patient body weight in kilograms
     agent : str
@@ -718,7 +688,7 @@ def calculate_volume_for_dose(
     else:
         concentration = AGENT_CONCENTRATIONS[name]
 
-    # Calculate: dose (mmol/kg) × weight (kg) / concentration (mmol/mL) = volume (mL)
+    # Gd dose × body weight / Gd concentration gives the injection volume.
     total_mmol = dose_mmol_per_kg * body_weight_kg
     volume_ml = total_mmol / concentration
 
@@ -811,7 +781,8 @@ def build_dce_provenance(
     *,
     contrast_agent: Optional[str] = None,
     agent_source: str = ParameterSource.DEFAULT_FALLBACK,
-    r1_relaxivity: float = 3.8,
+    relaxivity_source: Optional[str] = None,
+    r1_relaxivity: Optional[float] = None,
     field_strength: float = 3.0,
     dose_multiplier: float = 1.0,
     dose_source: str = ParameterSource.DEFAULT_FALLBACK,
@@ -830,8 +801,11 @@ def build_dce_provenance(
         Generic agent name (e.g., "gadobutrol").
     agent_source : str
         How the agent was determined (ParameterSource constant).
-    r1_relaxivity : float
-        R1 relaxivity in s^-1/mM.
+    relaxivity_source : str, optional
+        How r1 was determined. Defaults to agent_source.
+    r1_relaxivity : float, optional
+        R1 relaxivity in s^-1/mM Gd. Required unless a recognized agent
+        and supported field entry are supplied.
     field_strength : float
         Magnetic field strength in Tesla.
     dose_multiplier : float
@@ -839,7 +813,7 @@ def build_dce_provenance(
     dose_source : str
         How the dose was determined (ParameterSource constant).
     agent_standard_dose : float
-        Standard clinical dose in mmol/kg.
+        Standard clinical dose in mmol Gd/kg.
     bids_agent_string : str, optional
         Raw ContrastBolusAgent string from BIDS sidecar.
     scanner_metadata : dict, optional
@@ -854,7 +828,14 @@ def build_dce_provenance(
         Dict with PerfusionProcessing namespace containing ContrastAgent,
         Relaxivity, and ContrastDose sub-dicts.
     """
-    agent_name = str(contrast_agent) if contrast_agent else DEFAULT_AGENT
+    agent_name = normalize_agent_name(contrast_agent) if contrast_agent else "unspecified"
+    if agent_name not in CONTRAST_AGENTS:
+        agent_name = "unspecified"
+        agent_source = "unspecified"
+    if r1_relaxivity is None:
+        if agent_name == "unspecified":
+            raise ValueError("An explicit r1_relaxivity is required for an unspecified agent.")
+        r1_relaxivity = lookup_r1(agent_name, field_strength)
     brand = get_brand_name(agent_name)
 
     agent_dict: dict[str, Any] = {
@@ -872,7 +853,7 @@ def build_dce_provenance(
             "r1": float(r1_relaxivity),
             "units": "s-1.mM-1",
             "field_strength_T": float(field_strength),
-            "Source": str(agent_source),
+            "Source": str(relaxivity_source or agent_source),
         },
         "ContrastDose": {
             "standard_dose_mmol_kg": float(agent_standard_dose),
@@ -923,7 +904,7 @@ def build_dsc_provenance(
     dose_source : str
         How the dose was determined (ParameterSource constant).
     agent_standard_dose : float
-        Standard clinical molecular dose in mmol/kg.
+        Standard clinical dose in mmol Gd/kg.
     agent_standard_dose_source : str
         How agent std dose was determined.
     gd_multiplicity : int
@@ -969,7 +950,7 @@ def build_dsc_provenance(
     perf: dict[str, Any] = {}
 
     if contrast_agent is not None:
-        agent_name = str(contrast_agent)
+        agent_name = normalize_agent_name(contrast_agent)
         brand = get_brand_name(agent_name)
         agent_dict: dict[str, Any] = {
             "GenericName": str(agent_name),
@@ -990,7 +971,7 @@ def build_dsc_provenance(
     if gd_multiplicity != 1:
         dose_dict["gd_ions_per_molecule"] = int(gd_multiplicity)
         dose_dict["effective_gd_dose_mmol_kg"] = float(
-            agent_standard_dose * dose_multiplier * gd_multiplicity
+            agent_standard_dose * dose_multiplier
         )
     perf["ContrastDose"] = dose_dict
     perf["Deconvolution"] = deconv_block
@@ -1057,21 +1038,6 @@ def collect_default_warnings(
     perf = provenance_dict.get("PerfusionProcessing", {})
 
     if modality == "DCE":
-        # Check contrast agent source
-        agent = perf.get("ContrastAgent", {})
-        if agent.get("Source") == ParameterSource.DEFAULT_FALLBACK:
-            r1_info = perf.get("Relaxivity", {})
-            r1_val = r1_info.get("r1", "?")
-            fs_val = r1_info.get("field_strength_T", "?")
-            agent_name = agent.get("GenericName", DEFAULT_AGENT)
-            brand = agent.get("BrandName", "")
-            brand_str = f" ({brand})" if brand else ""
-            warnings.append(
-                f"Contrast agent defaulted to {agent_name}{brand_str} "
-                f"(r1={r1_val} s-1/mM at {fs_val}T). "
-                f"Specify ContrastBolusAgent in BIDS sidecar or use --dce-r1."
-            )
-
         # Check dose source
         dose = perf.get("ContrastDose", {})
         if dose.get("Source") == ParameterSource.DEFAULT_FALLBACK:

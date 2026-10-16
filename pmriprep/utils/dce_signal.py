@@ -20,7 +20,6 @@ from pmriprep.utils.dce_constants import (
     EPSILON_T1,
     HEMATOCRIT,
     get_b1_thresholds,
-    get_r1_relaxivity,
 )
 
 logger = logging.getLogger(__name__)
@@ -269,12 +268,11 @@ def signal_to_concentration(
         Optional 3D B1+ correction map (relative flip angle).
         Values typically 0.8-1.2. If provided, actual flip angle =
         nominal flip angle × B1+.
-    r1_relaxivity : float, optional
-        Longitudinal relaxivity in s^-1/mM. If None, will
-        be looked up from field_strength.
+    r1_relaxivity : float
+        Required finite positive longitudinal relaxivity in s^-1/mM Gd.
     field_strength : float, optional
-        Magnetic field strength in Tesla. Used for r1
-        lookup if r1_relaxivity is not provided. Default is 3.0T.
+        Magnetic field strength in Tesla for default tissue T1 and B1+
+        thresholds. Default is 3.0T.
     baseline_frames : int, optional
         Number of pre-contrast frames for baseline.
         Default is 5 frames.
@@ -302,6 +300,8 @@ def signal_to_concentration(
     ValueError
         If tr is not positive.
     ValueError
+        If r1_relaxivity is missing, non-finite, or non-positive.
+    ValueError
         If baseline_frames exceeds signal timepoints.
     ValueError
         If T1 map dimensions don't match signal spatial dims.
@@ -328,6 +328,7 @@ def signal_to_concentration(
     ...     tr=0.0050,             # 5 ms
     ...     t1_map=t1_data,
     ...     field_strength=3.0,
+    ...     r1_relaxivity=3.7,
     ... )
     >>> concentration = result.concentration  # (x, y, z, time) in mM
     """
@@ -363,11 +364,11 @@ def signal_to_concentration(
     if baseline_frames < 1:
         raise ValueError(f"baseline_frames must be at least 1, got {baseline_frames}")
 
-    if r1_relaxivity is not None and (
+    if r1_relaxivity is None or (
         not np.isfinite(r1_relaxivity) or r1_relaxivity <= 0
     ):
         raise ValueError(
-            "r1_relaxivity must be a finite positive value in s^-1/mM, "
+            "r1_relaxivity must be supplied as a finite positive value in s^-1/mM Gd, "
             f"got {r1_relaxivity}"
         )
 
@@ -398,11 +399,7 @@ def signal_to_concentration(
             )
         qc_mask = np.asarray(qc_mask, dtype=bool)
 
-    # Get r1 relaxivity
-    if r1_relaxivity is not None:
-        effective_r1 = r1_relaxivity
-    else:
-        effective_r1 = get_r1_relaxivity(field_strength)
+    effective_r1 = r1_relaxivity
 
     # Convert flip angle to radians
     flip_angle_rad = np.deg2rad(flip_angle_deg)
@@ -706,10 +703,10 @@ def signal_to_concentration_simple(
     t1_pre_ms : float, optional
         Pre-contrast T1 value in milliseconds. If None,
         uses field-strength-appropriate literature value.
-    r1_relaxivity : float, optional
-        Longitudinal relaxivity in s^-1/mM.
+    r1_relaxivity : float
+        Required finite positive longitudinal relaxivity in s^-1/mM Gd.
     field_strength : float, optional
-        Field strength in Tesla for r1 lookup.
+        Field strength in Tesla for default tissue T1 and B1+ thresholds.
     baseline_frames : int, optional
         Number of baseline frames.
     convert_to_plasma : bool, optional
@@ -832,8 +829,8 @@ def signal_to_concentration_from_files(
         uses field-strength-appropriate literature value.
     b1_map_file : str or pathlib.Path, optional
         Optional path to B1+ map NIfTI file.
-    r1_relaxivity : float, optional
-        Longitudinal relaxivity in s^-1/mM.
+    r1_relaxivity : float
+        Required finite positive longitudinal relaxivity in s^-1/mM Gd.
     field_strength : float, optional
         Field strength in Tesla.
     baseline_frames : int, optional

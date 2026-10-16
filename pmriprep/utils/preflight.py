@@ -15,7 +15,8 @@ from typing import Any, Optional
 from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.utils.contrast_agent import (
-    lookup_gd_multiplicity,
+    CONTRAST_AGENTS,
+    lookup_r1,
     lookup_r1_safe,
     lookup_standard_dose,
     normalize_agent_name,
@@ -402,9 +403,8 @@ def validate_dsc_metadata(
 
         # DSC check 3: low effective Gd dose
         if agent_name:
-            gd_mult = lookup_gd_multiplicity(agent_name)
             eff_gd_dose = (
-                dsc_config.agent_standard_dose * dsc_config.dose * gd_mult
+                dsc_config.agent_standard_dose * dsc_config.dose
             )
             if eff_gd_dose < LOW_GD_DOSE_THRESHOLD:
                 msgs.append(PreflightMessage(
@@ -647,17 +647,31 @@ def validate_dce_metadata(
             ),
         ))
 
-    # r1 relaxivity warnings (skip if user supplied override)
+    # DCE requires a supported agent/field lookup or an explicit r1.
     contrast_agent = sidecar.get("contrast_agent")
     if dce_config.r1_relaxivity is None:
-        if contrast_agent is None and field_strength is not None:
+        if (
+            contrast_agent is not None
+            and normalize_agent_name(contrast_agent) in CONTRAST_AGENTS
+            and field_strength is not None
+        ):
+            try:
+                lookup_r1(contrast_agent, field_strength)
+            except ValueError as exc:
+                msgs.append(PreflightMessage(
+                    level="error",
+                    code="DCE_R1_UNAVAILABLE",
+                    message=str(exc),
+                ))
+        if contrast_agent is None or normalize_agent_name(contrast_agent) not in CONTRAST_AGENTS:
             msgs.append(PreflightMessage(
-                level="warning",
-                code="DCE_UNKNOWN_AGENT",
+                level="error",
+                code="DCE_R1_UNAVAILABLE",
                 message=(
-                    "Contrast agent not identified in DCE sidecar. "
-                    "r1 varies up to 3x across agents. Using generic "
-                    "Gd-DTPA r1. Supply --dce-r1 for known agents."
+                    "DCE ContrastBolusAgent is missing or unrecognized. "
+                    "Set dce.r1_relaxivity in the YAML/JSON configuration file "
+                    "(or supply --dce-r1) to a finite positive value "
+                    "in s^-1 mM^-1 per Gd."
                 ),
             ))
     else:
@@ -688,8 +702,8 @@ def validate_dce_metadata(
         agent_name = normalize_agent_name(contrast_agent)
 
     # DCE agent checks (require agent + field strength for r1 lookup)
-    r1: Optional[float] = None
-    if agent_name and field_strength is not None:
+    r1 = dce_config.r1_relaxivity
+    if r1 is None and agent_name and field_strength is not None:
         r1 = lookup_r1_safe(agent_name, field_strength)
 
     # DCE check 1: high-r1 agent with measured AIF
@@ -712,8 +726,6 @@ def validate_dce_metadata(
 
     # DCE check 2: low effective dose × r1
     if agent_name:
-        if r1 is None and dce_config.r1_relaxivity is not None:
-            r1 = dce_config.r1_relaxivity
         if r1 is not None:
             agent_std_dose = lookup_standard_dose(agent_name)
             eff_dose_r1 = agent_std_dose * dce_config.dose * r1

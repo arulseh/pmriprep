@@ -453,7 +453,7 @@ class TestValidateDCEMetadata:
         sc["contrast_agent"] = None
         sc["field_strength"] = 3.0
         msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_UNKNOWN_AGENT" for m in msgs)
+        assert any(m.code == "DCE_R1_UNAVAILABLE" and m.level == "error" for m in msgs)
 
     def test_r1_override_skips_agent_warnings(self):
         """When r1 is user-supplied, agent warnings are skipped but field strength is still required."""
@@ -465,7 +465,7 @@ class TestValidateDCEMetadata:
         msgs = validate_dce_metadata(sc, cfg)
         codes = {m.code for m in msgs}
         assert "DCE_MISSING_FIELD_STRENGTH" in codes
-        assert "DCE_UNKNOWN_AGENT" not in codes
+        assert "DCE_R1_UNAVAILABLE" not in codes
 
 
 # ===========================================================================
@@ -1075,14 +1075,14 @@ class TestDSCAgentGuardrails:
         codes = [m.code for m in msgs]
         assert "DSC_LOW_EFFECTIVE_DOSE" in codes
 
-    def test_low_dose_gadoquatrane_no_warning(self):
+    def test_low_dose_gadoquatrane_warning(self):
         sc = _valid_dsc_sidecar()
         sc["contrast_agent"] = "gadoquatrane"
         sc["flip_angle"] = 30.0
         cfg = _make_dsc_config(dose=1.0, agent_standard_dose=0.04)
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         codes = [m.code for m in msgs]
-        assert "DSC_LOW_EFFECTIVE_DOSE" not in codes
+        assert "DSC_LOW_EFFECTIVE_DOSE" in codes
 
     def test_full_dose_no_warning(self):
         sc = _valid_dsc_sidecar()

@@ -581,10 +581,12 @@ Examples:
         default=None,
         metavar="R1",
         help=(
-            "Override r1 relaxivity (s⁻¹ mM⁻¹) for DCE concentration "
+            "Override r1 relaxivity (s⁻¹ mM⁻¹ per Gd) for DCE concentration "
             "conversion. Bypasses contrast-agent lookup from BIDS sidecar. "
             "If omitted, PMRIPrep resolves r1 from the contrast agent and "
-            "field strength and records any generic fallback in provenance."
+            "field strength. Required above 5 T or when the agent is missing "
+            "or unrecognized; must be finite and positive. "
+            "Also configurable as dce.r1_relaxivity."
         ),
     )
     dce_group.add_argument(

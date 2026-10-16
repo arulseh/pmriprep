@@ -21,7 +21,6 @@ from pmriprep.utils.dce_constants import (
     get_aif_thresholds,
     get_b1_thresholds,
     get_blood_t1,
-    get_r1_relaxivity,
     get_tissue_t1_ranges,
     is_low_temporal_resolution,
 )
@@ -67,34 +66,6 @@ class TestMinMeaningfulEnhancement:
         assert "MIN_MEANINGFUL_ENHANCEMENT_MM" in dir(dce_constants)
         assert MIN_MEANINGFUL_ENHANCEMENT_MM != MIN_ENHANCEMENT_MM  # 0.01 vs 1e-8
         assert MIN_MEANINGFUL_ENHANCEMENT_MM != EPSILON_CONCENTRATION  # 0.01 vs 1e-6
-
-
-class TestR1Relaxivity:
-    """Tests for field-strength-dependent R1 relaxivity lookup.
-
-    get_r1_relaxivity now delegates to contrast_agent.lookup_r1 with
-    Gd-DTPA as the fallback agent (Rohrer 2005 plasma at 1.5T/3T,
-    Noebauer-Huhmann 2010 at 7T).
-    """
-
-    def test_r1_relaxivity_known_fields(self) -> None:
-        """Known field strengths return catalogued Gd-DTPA values."""
-        assert get_r1_relaxivity(1.5) == pytest.approx(4.1)
-        assert get_r1_relaxivity(3.0) == pytest.approx(3.7)
-        assert get_r1_relaxivity(7.0) == pytest.approx(3.3)
-
-    def test_r1_relaxivity_bin_low(self) -> None:
-        """B0 ≤ 2.25T snaps to 1.5T value."""
-        assert get_r1_relaxivity(2.25) == pytest.approx(4.1)
-
-    def test_r1_relaxivity_bin_mid(self) -> None:
-        """2.25 < B0 ≤ 5.0T snaps to 3.0T value."""
-        assert get_r1_relaxivity(3.0) == pytest.approx(3.7)
-        assert get_r1_relaxivity(5.0) == pytest.approx(3.7)
-
-    def test_r1_relaxivity_low_clamp(self) -> None:
-        """Sub-1.5T field clamps to 1.5T bin."""
-        assert get_r1_relaxivity(0.5) == pytest.approx(4.1)
 
 
 class TestBloodT1:

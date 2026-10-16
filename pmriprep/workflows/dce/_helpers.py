@@ -623,7 +623,7 @@ def _signal_to_concentration_node(
     field_strength : float
         Magnetic field strength in Tesla.
     r1_relaxivity : float or None
-        r1 relaxivity of the contrast agent (L/mmol/s); None to use lookup.
+        Required finite positive r1 relaxivity of the contrast agent (L/mmol Gd/s).
     baseline_frames : int
         Number of pre-contrast baseline frames.
     no_t1 : bool

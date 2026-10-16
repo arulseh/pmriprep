@@ -621,7 +621,7 @@ def _read_bids_sidecar(
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
         - r1_relaxivity: r1 from contrast agent lookup, or None
-        - contrast_agent: Contrast agent name from DICOM, or None
+        - contrast_agent: Recognized generic contrast agent name, or None
         - scanning_sequence: frozenset of DICOM ScanningSequence tokens, or None
         - sequence_variant: frozenset of DICOM SequenceVariant tokens, or None
         - echo_entity: True if filename contains echo-<N> BIDS entity
@@ -689,7 +689,7 @@ def _read_bids_sidecar(
         # Fallback: if no pulse TR, use volume TR (2D sequences)
         result["pulse_tr"] = float(meta["RepetitionTime"])
 
-    if "MagneticFieldStrength" in meta:
+    if meta.get("MagneticFieldStrength") is not None:
         result["field_strength"] = float(meta["MagneticFieldStrength"])
 
     if "FlipAngle" in meta:
@@ -712,12 +712,12 @@ def _read_bids_sidecar(
             meta["SequenceVariant"]
         )
 
-    # Extract contrast agent r1 relaxivity from DICOM metadata
-    # This enables agent-specific r1 values (e.g., Gadovist r1=5.0 at 3T)
+    # Preserve recognized agent identity even when r1 is unavailable.
     r1_info = get_r1_from_sidecar_dict(meta, result["field_strength"])
+    if r1_info["agent_name"] is not None and r1_info["source"] != "unknown_agent":
+        result["contrast_agent"] = r1_info["agent_name"]
     if r1_info["r1"] is not None:
         result["r1_relaxivity"] = r1_info["r1"]
-        result["contrast_agent"] = r1_info["agent_name"]
     if r1_info.get("agent_string"):
         result["bids_agent_string"] = r1_info["agent_string"]
 
@@ -1827,8 +1827,8 @@ def _connect_master_dsc_outputs_and_build_provenance(
             dsc_config.dose,
         )
     if agent_dose_source == ParameterSource.DEFAULT_FALLBACK:
-        logger.info(
-            "DSC agent standard dose not specified. Using default=%.3f mmol/kg. "
+        logger.warning(
+            "DSC agent standard dose not specified. Using default=%.3f mmol Gd/kg. "
             "Use --dsc-agent-standard-dose for non-standard agents "
             "(e.g., 0.05 for Vueway).",
             dsc_config.agent_standard_dose,
@@ -2350,30 +2350,25 @@ def _init_master_dce_workflow(
             dce_sidecar.get("mr_acquisition_type", "")
         )
 
-        # Set r1 relaxivity — priority chain:
-        # 1. User-supplied override (dce_config.r1_relaxivity)
-        # 2. Agent-specific lookup from BIDS sidecar
-        # 3. Generic Gd-DTPA for known field strength
-        # 4. Hardcoded Gd-DTPA at 3T fallback (3.8 s^-1/mM)
+        # An explicit r1 overrides the agent/field lookup.
         from pmriprep.utils.contrast_agent import (
             ParameterSource,
             build_dce_provenance,
+            lookup_r1,
         )
 
         logger = logging.getLogger("pmriprep.workflows")
-        _resolved_r1: float = 3.8
-        _resolved_fs: float = (
-            dce_sidecar["field_strength"]
-            if dce_sidecar["field_strength"] is not None
-            else 3.0
+        _resolved_fs: float = dce_sidecar["field_strength"]
+        _agent_name = dce_sidecar.get("contrast_agent")
+        _bids_agent_string = dce_sidecar.get("bids_agent_string")
+        _agent_source = (
+            ParameterSource.BIDS_SIDECAR
+            if _agent_name is not None else "unspecified"
         )
-        _agent_source = ParameterSource.DEFAULT_FALLBACK
-        _agent_name: Optional[str] = None
-        _bids_agent_string: Optional[str] = None
 
         if dce_config.r1_relaxivity is not None:
             _resolved_r1 = dce_config.r1_relaxivity
-            _agent_source = ParameterSource.USER_OVERRIDE
+            _r1_source = ParameterSource.USER_OVERRIDE
             dce_wf.inputs.inputnode.r1_relaxivity = dce_config.r1_relaxivity
             logger.info(
                 f"Using user-supplied r1={dce_config.r1_relaxivity:.1f} "
@@ -2381,37 +2376,22 @@ def _init_master_dce_workflow(
             )
         elif dce_sidecar["r1_relaxivity"] is not None:
             _resolved_r1 = dce_sidecar["r1_relaxivity"]
-            _agent_source = ParameterSource.BIDS_SIDECAR
-            _agent_name = dce_sidecar.get("contrast_agent")
-            _bids_agent_string = dce_sidecar.get("bids_agent_string")
+            _r1_source = ParameterSource.BIDS_SIDECAR
             dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
             logger.info(
                 f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
                 f"for contrast agent: {dce_sidecar['contrast_agent']}"
             )
-        elif dce_sidecar["field_strength"] is not None:
-            # Fallback to generic Gd-DTPA r1 for field strength
-            from pmriprep.utils.dce_constants import get_r1_relaxivity
-            fallback_r1 = get_r1_relaxivity(dce_sidecar["field_strength"])
-            _resolved_r1 = fallback_r1
-            dce_wf.inputs.inputnode.r1_relaxivity = fallback_r1
-            logger.warning(
-                "ContrastBolusAgent not found in BIDS JSON or unknown agent. "
-                f"Using default Gd-DTPA r1={fallback_r1:.1f} s^-1/mM "
-                f"at {dce_sidecar['field_strength']:.1f}T. "
-                "Provide ContrastBolusAgent in JSON sidecar for "
-                "agent-specific accuracy."
-            )
-        else:
-            # Default to 3T value
-            from pmriprep.utils.dce_constants import get_r1_relaxivity
-            _resolved_r1 = get_r1_relaxivity(3.0)
+        elif _agent_name is not None:
+            _resolved_r1 = lookup_r1(_agent_name, _resolved_fs)
+            _r1_source = ParameterSource.BIDS_SIDECAR
             dce_wf.inputs.inputnode.r1_relaxivity = _resolved_r1
-            logger.warning(
-                "ContrastBolusAgent and field strength not found in BIDS JSON. "
-                "Using default Gd-DTPA r1=3.8 s^-1/mM at 3.0T. "
-                "Provide ContrastBolusAgent in JSON sidecar for "
-                "agent-specific accuracy."
+        else:
+            raise ValueError(
+                "DCE ContrastBolusAgent is missing or unrecognized. "
+                "Set dce.r1_relaxivity in the YAML/JSON configuration file "
+                "(or supply --dce-r1) to a finite positive value "
+                "in s^-1 mM^-1 per Gd."
             )
 
         # Set agent-specific standard dose (e.g. 0.05 for Vueway)
@@ -2427,6 +2407,7 @@ def _init_master_dce_workflow(
         dce_provenance = build_dce_provenance(
             contrast_agent=_agent_name,
             agent_source=_agent_source,
+            relaxivity_source=_r1_source,
             r1_relaxivity=_resolved_r1,
             field_strength=_resolved_fs,
             dose_multiplier=dce_config.dose,
