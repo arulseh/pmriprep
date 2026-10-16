@@ -5,8 +5,7 @@ import pytest
 
 from pmriprep.utils.dsc_signal import (
     compute_psr,
-    compute_psr_legacy,
-    compute_ttp_legacy,
+    compute_ttp,
     detect_bolus_arrival,
     find_bolus_arrival,
     get_baseline_signal,
@@ -144,16 +143,12 @@ class TestComputePSR:
         psr = compute_psr(signal, baseline_frames=10, tail_frames=10)
 
         # PSR = 100 * (S_tail - S_min) / (S_baseline - S_min)
-        # S_min comes from global min = 400 (the compute_psr uses global min)
+        # The post-baseline minimum is 400.
         expected = 100.0 * (900.0 - 400.0) / (1000.0 - 400.0)
         assert psr == pytest.approx(expected, rel=1e-4)
 
-
-class TestComputePSRLegacy:
-    """Tests for the production post-baseline PSR definition."""
-
     def test_1d_post_baseline_smin(self) -> None:
-        """Legacy uses S_min from post-baseline only."""
+        """S_min uses post-baseline frames only."""
         n = 30
         signal = np.ones(n, dtype=np.float64) * 1000.0
         # Global min in baseline region (frame 2)
@@ -163,19 +158,19 @@ class TestComputePSRLegacy:
         # Recovery tail
         signal[25:] = 900.0
 
-        psr_legacy = compute_psr_legacy(signal, baseline_frames=5, tail_frames=5)
+        psr = compute_psr(signal, baseline_frames=5, tail_frames=5)
 
-        # Legacy: S_min from signal[5:] => 500
+        # S_min from signal[5:] => 500
         # S0 = mean(signal[:5]) = (1000+1000+300+1000+1000)/5 = 860
         s0 = np.mean(signal[:5])
         expected = 100.0 * (900.0 - 500.0) / (s0 - 500.0)
-        assert psr_legacy == pytest.approx(expected, rel=1e-4)
+        assert psr == pytest.approx(expected, rel=1e-4)
 
     def test_final_tail_window_and_unclipped_output(self) -> None:
         """Recovery uses the final acquired frames and remains unclipped."""
         signal = np.array([100.0] * 5 + [50.0] + [100.0] * 9 + [175.0] * 5)
 
-        psr = compute_psr_legacy(signal, baseline_frames=5, tail_frames=5)
+        psr = compute_psr(signal, baseline_frames=5, tail_frames=5)
 
         assert psr == pytest.approx(250.0)
 
@@ -183,7 +178,7 @@ class TestComputePSRLegacy:
         """A curve without a positive susceptibility drop has no defined PSR."""
         signal = np.array([100.0, 101.0, 99.0, 100.0] + [105.0] * 10)
 
-        assert np.isnan(compute_psr_legacy(signal, baseline_frames=4, tail_frames=4))
+        assert np.isnan(compute_psr(signal, baseline_frames=4, tail_frames=4))
 
     def test_pooled_noise_floor_rejects_low_variance_voxel(self) -> None:
         """Spatial pooling prevents a spuriously small local noise threshold."""
@@ -192,7 +187,7 @@ class TestComputePSRLegacy:
         signal[1, 0, 0] = [98.0, 102.0, 98.0, 102.0] + [70.0] + [90.0] * 7
         mask = np.ones((2, 1, 1), dtype=bool)
 
-        psr = compute_psr_legacy(
+        psr = compute_psr(
             signal,
             baseline_frames=4,
             tail_frames=4,
@@ -204,8 +199,8 @@ class TestComputePSRLegacy:
         assert np.isfinite(psr[1, 0, 0])
 
 
-class TestComputeTTPLegacy:
-    """Tests for compute_ttp_legacy."""
+class TestComputeTTP:
+    """Tests for compute_ttp."""
 
     def test_1d_known_peak(self) -> None:
         """Concentration peak at frame 7, pre_bolus=5, dt=1.5 => TTP=10.5s."""
@@ -216,7 +211,7 @@ class TestComputeTTPLegacy:
         conc[6] = 5.0
         conc[8] = 5.0
 
-        ttp = compute_ttp_legacy(conc, pre_bolus_frames=5, dt=1.5)
+        ttp = compute_ttp(conc, pre_bolus_frames=5, dt=1.5)
 
         # post_bolus = conc[5:], peak_idx in post_bolus = 2 (frame 7 - 5)
         # ttp = (5 + 2) * 1.5 = 10.5
@@ -229,7 +224,7 @@ class TestComputeTTPLegacy:
         conc = np.zeros(shape, dtype=np.float64)
         conc[..., 99] = 10.0  # Peak at last frame
 
-        ttp = compute_ttp_legacy(conc, pre_bolus_frames=5, dt=1.0)
+        ttp = compute_ttp(conc, pre_bolus_frames=5, dt=1.0)
 
         assert ttp.shape == (2, 2, 2)
         # (5 + 94) * 1.0 = 99 — returned unclipped
@@ -239,7 +234,7 @@ class TestComputeTTPLegacy:
         """Raises ValueError when pre_bolus_frames >= n_timepoints."""
         conc = np.zeros(10, dtype=np.float64)
         with pytest.raises(ValueError, match="pre_bolus_frames"):
-            compute_ttp_legacy(conc, pre_bolus_frames=10, dt=1.0)
+            compute_ttp(conc, pre_bolus_frames=10, dt=1.0)
 
 
 class TestNormalizeCBV:

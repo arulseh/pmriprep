@@ -31,7 +31,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
     LCURVE_N_LAMBDAS,
 )
-from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
+from pmriprep.utils.dsc_signal import compute_psr, compute_ttp
 
 if TYPE_CHECKING:
     from pmriprep.models.dsc.signal_cpi.maps import CPIMaps
@@ -718,7 +718,7 @@ class ComputeDSCMaps(BaseInterface):
                 qc={"psr_from_signal": False, "psr_valid_fraction": 0.0},
             )
 
-        psr_result = compute_psr_legacy(
+        psr_result = compute_psr(
             signal,
             baseline_frames,
             tail_frames,
@@ -796,7 +796,7 @@ class ComputeDSCMaps(BaseInterface):
             AIF-arrival-referenced tissue TTP and the AIF arrival time in seconds.
 
         """
-        ttp_raw = compute_ttp_legacy(raw_concentration, detected_baseline, dt)
+        ttp_raw = compute_ttp(raw_concentration, detected_baseline, dt)
         aif_bat_frames = detection_info.get("arrival_index", detected_baseline)
         aif_bat_seconds = float(aif_bat_frames) * dt
         ttp = ttp_raw - aif_bat_seconds

@@ -5,7 +5,7 @@ are computed from signal or concentration curves and feed into clinical
 decision-making, so accuracy is critical.
 
 Exercises:
-    dsc_signal.py: compute_psr_legacy(), compute_ttp_legacy()
+    dsc_signal.py: compute_psr(), compute_ttp()
     dsc_signal.py: normalize_cbv()
 """
 
@@ -14,8 +14,8 @@ import numpy.typing as npt
 import pytest
 
 from pmriprep.utils.dsc_signal import (
-    compute_psr_legacy,
-    compute_ttp_legacy,
+    compute_psr,
+    compute_ttp,
     normalize_cbv,
     signal_to_concentration,
 )
@@ -81,7 +81,7 @@ class TestPSRAnalytic:
     def test_psr_decreases_with_leakage(self, k2: float) -> None:
         """PSR should decrease with increasing leakage (lower K2 = more recovery)."""
         signal, _, _ = _make_dsc_signal("gm", k2=k2)
-        psr = compute_psr_legacy(signal, baseline_frames=_BASELINE, tail_frames=5)
+        psr = compute_psr(signal, baseline_frames=_BASELINE, tail_frames=5)
 
         assert isinstance(psr, float)
         assert np.isfinite(psr)
@@ -93,7 +93,7 @@ class TestPSRAnalytic:
         psrs = []
         for k2 in [0.0, 0.05, 0.1, 0.2]:
             signal, _, _ = _make_dsc_signal("gm", k2=k2)
-            psr = compute_psr_legacy(signal, baseline_frames=_BASELINE, tail_frames=5)
+            psr = compute_psr(signal, baseline_frames=_BASELINE, tail_frames=5)
             psrs.append(float(psr))
 
         # PSR should generally decrease with increasing K2
@@ -105,15 +105,15 @@ class TestPSRAnalytic:
     def test_psr_no_signal_drop_is_undefined(self) -> None:
         """A flat curve has no defined percent signal recovery."""
         signal = np.ones(70, dtype=np.float64) * 1000.0
-        psr = compute_psr_legacy(signal, baseline_frames=10, tail_frames=5)
+        psr = compute_psr(signal, baseline_frames=10, tail_frames=5)
         assert np.isnan(psr)
 
     def test_psr_4d_input(self) -> None:
         """PSR should work with 4D input."""
         signal_1d, _, _ = _make_dsc_signal("gm")
         signal_4d = signal_1d[np.newaxis, np.newaxis, np.newaxis, :]
-        psr_4d = compute_psr_legacy(signal_4d, baseline_frames=_BASELINE, tail_frames=5)
-        psr_1d = compute_psr_legacy(signal_1d, baseline_frames=_BASELINE, tail_frames=5)
+        psr_4d = compute_psr(signal_4d, baseline_frames=_BASELINE, tail_frames=5)
+        psr_1d = compute_psr(signal_1d, baseline_frames=_BASELINE, tail_frames=5)
 
         assert psr_4d.shape == (1, 1, 1)
         assert abs(float(psr_4d[0, 0, 0]) - float(psr_1d)) < 1e-6
@@ -133,7 +133,7 @@ class TestTTPAnalytic:
         signal, aif_post, dt = _make_dsc_signal(tissue_key)
         conc = signal_to_concentration(signal, te=0.030, baseline_frames=_BASELINE)
 
-        ttp = compute_ttp_legacy(conc, pre_bolus_frames=_BASELINE, dt=dt)
+        ttp = compute_ttp(conc, pre_bolus_frames=_BASELINE, dt=dt)
         ttp_val = float(ttp)
 
         # TTP should be after baseline and within acquisition
@@ -147,8 +147,8 @@ class TestTTPAnalytic:
         conc_1d = signal_to_concentration(signal, te=0.030, baseline_frames=_BASELINE)
         conc_4d = conc_1d[np.newaxis, np.newaxis, np.newaxis, :]
 
-        ttp_4d = compute_ttp_legacy(conc_4d, pre_bolus_frames=_BASELINE, dt=dt)
-        ttp_1d = compute_ttp_legacy(conc_1d, pre_bolus_frames=_BASELINE, dt=dt)
+        ttp_4d = compute_ttp(conc_4d, pre_bolus_frames=_BASELINE, dt=dt)
+        ttp_1d = compute_ttp(conc_1d, pre_bolus_frames=_BASELINE, dt=dt)
 
         assert ttp_4d.shape == (1, 1, 1)
         assert abs(float(ttp_4d[0, 0, 0]) - float(ttp_1d)) < 1e-6

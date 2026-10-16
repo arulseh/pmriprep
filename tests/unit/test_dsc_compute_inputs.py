@@ -13,7 +13,7 @@ from pmriprep.interfaces.dsc_compute import (
     _DSCDeconvolutionMaps,
 )
 from pmriprep.utils.dsc_signal import (
-    compute_psr_legacy,
+    compute_psr,
 )
 
 
@@ -197,7 +197,7 @@ def test_compute_signal_metrics_computes_noise_gated_psr() -> None:
 
     result = ComputeDSCMaps()._compute_signal_metrics(signal, (1, 1, 1), 4, 3, mask)
 
-    expected_psr = compute_psr_legacy(signal, 4, 3, brain_mask=mask, min_drop_noise_sd=5.0)
+    expected_psr = compute_psr(signal, 4, 3, brain_mask=mask, min_drop_noise_sd=5.0)
     np.testing.assert_allclose(result.psr, expected_psr)
     assert result.qc["psr_from_signal"] is True
     assert result.qc["psr_valid_fraction"] == 1.0

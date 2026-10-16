@@ -384,109 +384,6 @@ def detect_bolus_arrival_gradient(
 
 def compute_psr(
     signal: npt.NDArray[np.floating],
-    baseline_frames: int = 10,
-    tail_frames: int = 10,
-) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute percent signal recovery (PSR).
-
-    PSR describes signal recovery after the bolus passage. This function
-    returns a signal ratio and does not classify blood-brain barrier integrity.
-
-    Formula:
-        PSR = 100 × (S_tail - S_min) / (S_baseline - S_min)
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        DSC signal array. Can be:
-            - 1D (time,): Single voxel time course
-            - 4D (x, y, z, time): Full 4D volume
-    baseline_frames : int, optional
-        Number of pre-bolus frames for S_baseline.
-        Default is 10.
-    tail_frames : int, optional
-        Number of post-bolus frames for S_tail.
-        Default is 10 (last 10 frames).
-
-    Returns
-    -------
-    float or np.ndarray
-        Unclipped PSR value(s) as a percentage; values may lie outside 0–100.
-        - Scalar float for 1D input
-        - 3D array (x, y, z) for 4D input
-
-    Raises
-    ------
-    ValueError
-        If signal is not 1D or 4D, or either window is less than one frame
-        or greater than or equal to the signal length.
-
-    Notes
-    -----
-        - ``compute_psr_legacy`` uses the same ratio with additional signal,
-          window and noise checks for the production DSC map interface.
-        - s_min uses post-baseline frames only (signal[..., baseline_frames:])
-          to avoid baseline contamination.
-        - Values above 100% or below zero are retained without assigning a cause.
-        - The denominator magnitude is floored at EPSILON_SIGNAL while
-          preserving its sign.
-    """
-    # Validate input dimensions
-    if signal.ndim not in (1, 4):
-        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
-
-    # Get number of timepoints
-    n_timepoints = signal.shape[-1] if signal.ndim == 4 else signal.shape[0]
-
-    if baseline_frames >= n_timepoints:
-        raise ValueError(
-            f"baseline_frames ({baseline_frames}) must be less than "
-            f"number of timepoints ({n_timepoints})"
-        )
-
-    if tail_frames >= n_timepoints:
-        raise ValueError(
-            f"tail_frames ({tail_frames}) must be less than "
-            f"number of timepoints ({n_timepoints})"
-        )
-
-    if baseline_frames < 1 or tail_frames < 1:
-        raise ValueError("baseline_frames and tail_frames must be at least 1")
-
-    # Compute signal components
-    # S_min uses post-baseline frames only to find minimum during/after bolus,
-    # avoiding spurious baseline noise minima
-    if signal.ndim == 1:
-        # 1D time series
-        s_baseline = float(np.mean(signal[:baseline_frames]))
-        s_min = float(np.min(signal[baseline_frames:]))
-        s_tail = float(np.mean(signal[-tail_frames:]))
-    else:
-        # 4D volume (x, y, z, time)
-        s_baseline = np.mean(signal[..., :baseline_frames], axis=-1)
-        s_min = np.min(signal[..., baseline_frames:], axis=-1)
-        s_tail = np.mean(signal[..., -tail_frames:], axis=-1)
-
-    # Compute PSR with epsilon guard in denominator
-    denominator = s_baseline - s_min
-    # Floor the denominator magnitude to prevent division by zero.
-    denominator_safe = np.maximum(np.abs(denominator), EPSILON_SIGNAL)
-    # Preserve sign of denominator
-    denominator_safe = np.where(
-        denominator >= 0, denominator_safe, -denominator_safe
-    )
-
-    psr = 100.0 * (s_tail - s_min) / denominator_safe
-
-    # Return appropriate type
-    if signal.ndim == 1:
-        return float(psr)
-    else:
-        return psr  # type: ignore[no-any-return]
-
-
-def compute_psr_legacy(
-    signal: npt.NDArray[np.floating],
     baseline_frames: int = 5,
     tail_frames: int = 10,
     brain_mask: npt.NDArray[np.bool_] | None = None,
@@ -506,20 +403,32 @@ def compute_psr_legacy(
     signal : np.ndarray
         DSC signal array (1D or 4D).
     baseline_frames : int, optional
-        Number of pre-bolus frames for S0.
+        Number of pre-bolus frames for S0, at least 2. Default is 5.
     tail_frames : int, optional
-        Number of post-bolus tail frames for S1 (recovery).
+        Number of final acquired frames for S1 (recovery), at least 1.
+        The baseline and recovery windows must not overlap. Default is 10.
     brain_mask : np.ndarray, optional
         Spatial mask used to pool baseline-noise estimates for 4D input.
+        Must match the spatial shape of ``signal``. It does not mask the output.
     min_drop_noise_sd : float, optional
         Minimum baseline-to-minimum signal drop in effective noise standard
-        deviations. The effective noise is the larger of the voxel estimate
-        and the median positive estimate within ``brain_mask``.
+        deviations. For 1D input, noise is the baseline sample standard
+        deviation. For 4D input, it is the larger of the voxel estimate and
+        the median positive estimate within ``brain_mask`` (all voxels when
+        the mask is omitted). Default is 0, requiring a positive drop.
 
     Returns
     -------
     float or np.ndarray
-        PSR as an unclipped percentage. Undefined voxels are NaN.
+        PSR as an unclipped percentage: a scalar for 1D input or a map with
+        the spatial shape of 4D input. Undefined values are NaN.
+
+    Raises
+    ------
+    ValueError
+        If ``baseline_frames`` is less than 2, ``tail_frames`` is less than 1,
+        the baseline and recovery windows overlap, or a non-scalar ``signal``
+        is neither 1D nor 4D.
     """
     n_timepoints = signal.shape[-1]
     if baseline_frames < 2 or tail_frames < 1:
@@ -567,12 +476,12 @@ def compute_psr_legacy(
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
 
 
-def compute_ttp_legacy(
+def compute_ttp(
     concentration: npt.NDArray[np.floating],
     pre_bolus_frames: int,
     dt: float,
-) -> npt.NDArray[np.floating]:
-    """Compute TTP as the index of maximum concentration.
+) -> np.float64 | npt.NDArray[np.floating]:
+    """Compute time to peak concentration in seconds from acquisition start.
 
     Finds time to peak concentration using unsmoothed post-bolus argmax.
     Returns unclipped acquisition-referenced peak time so callers can derive
@@ -589,12 +498,14 @@ def compute_ttp_legacy(
 
     Returns
     -------
-    np.ndarray
-        TTP map in seconds (unclipped).
+    np.float64 or np.ndarray
+        Unclipped TTP in seconds: a scalar for 1D input or a map for 4D input.
 
     Raises
     ------
-        ValueError: If pre_bolus_frames >= number of timepoints.
+    ValueError
+        If ``pre_bolus_frames`` is at least the number of timepoints, or a
+        non-scalar ``concentration`` is neither 1D nor 4D.
     """
     n_timepoints = concentration.shape[-1]
     if pre_bolus_frames >= n_timepoints:
