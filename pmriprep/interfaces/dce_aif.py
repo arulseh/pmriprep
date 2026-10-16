@@ -449,7 +449,7 @@ def detect_dce_aif_multi_bump_tail(
     """Count secondary maxima in the post-peak AIF tail.
 
     Detects local maxima in the post-first-pass region whose absolute
-    amplitude exceeds ``secondary_peak_fraction`` x first-pass peak.
+    amplitude is at or above ``secondary_peak_fraction`` x first-pass peak.
     The count feeds both pool acceptance gates and emitted-AIF QC.
     The shoulder and peak-separation intervals are converted from seconds
     to at least one frame using ``tr``.
@@ -464,7 +464,7 @@ def detect_dce_aif_multi_bump_tail(
         Number of pre-contrast frames defining baseline.
     secondary_peak_fraction : float, optional
         Fraction of first-pass peak amplitude
-        (absolute) above which a tail maximum is counted.
+        (absolute) at or above which a tail maximum is counted.
     tail_shoulder_seconds : float, optional
         Time (seconds) to skip immediately after
         the first-pass peak before searching for secondary maxima.
@@ -5091,11 +5091,14 @@ class AIFDetection(BaseInterface):
         multi_bump_warning = multi_bump_count > 1
         if multi_bump_warning:
             logger.warning(
-                "DCE AIF post-peak tail has %d secondary maxima > %.0f%% "
-                "of first-pass peak (>1 expected from physiologic "
-                "recirculation); possible motion/inflow artifact.",
+                "DCE AIF late tail has %d secondary maxima at or above %.0f%% "
+                "of the first-pass peak (warning threshold: >1). Configured "
+                "post-peak search delay: %.0f s; minimum peak separation: %.0f s "
+                "(both converted to acquisition frames).",
                 multi_bump_count,
                 DCE_AIF_TAIL_PEAK_FRACTION * 100,
+                DCE_AIF_TAIL_SHOULDER_SECONDS,
+                DCE_AIF_TAIL_MIN_SEPARATION_SECONDS,
             )
 
         # Report status uses gate confidence and peak/tail warnings.

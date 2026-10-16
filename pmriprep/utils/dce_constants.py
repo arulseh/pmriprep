@@ -322,7 +322,7 @@ AIF_THRESHOLDS_DEGRADED: Final[AIFThresholds] = AIFThresholds(
 #: QC warning fires. Suppressed for population-AIF fallback by construction.
 DCE_AIF_PEAK_RATIO_WARN_THRESHOLD: Final[float] = 1.5
 
-#: Multi-bump tail detection. Fraction of first-pass peak above which a
+#: Multi-bump tail detection. Fraction of first-pass peak at or above which a
 #: post-peak local maximum is counted as a "bump."
 DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.40
 
