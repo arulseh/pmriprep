@@ -270,13 +270,8 @@ class DSCLesionStats(BaseInterface):
         # (no-op when nawm_reference is empty).
         result.augment_with_cohens_d()
 
-        # AIF provenance — populate the PerfusionProcessing.AIF
-        # sub-block from aif_qc. Downstream consumers should read
-        # ``PerfusionProcessing.AIF.Source`` / ``CrossSubjectComparable``
-        # rather than top-level fields. Within-subject nCBV ratios cancel
-        # the AIF amplitude, so nested nCBV-derived metrics remain
-        # cross-subject-comparable even when Source == "template"; callers
-        # should consult per-map sidecars for that distinction.
+        # Carry the AIF source, detection and quality metadata into the
+        # regional statistics alongside the selected reference tissue.
         if self._has_input("aif_qc"):
             from pmriprep.utils.aif_provenance import (
                 build_aif_provenance_block,

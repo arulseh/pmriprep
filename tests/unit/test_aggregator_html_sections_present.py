@@ -230,6 +230,28 @@ def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
     assert "automatically segmented" not in disabled
 
 
+@pytest.mark.parametrize(
+    ("cbv_factor", "cbf_factor", "expected"),
+    [
+        (1.0, None, {"nCBV"}),
+        (None, 2.0, {"nCBF"}),
+        (1.0, 2.0, {"nCBV", "nCBF"}),
+        (float("nan"), float("inf"), set()),
+        (0.0, -1.0, set()),
+    ],
+)
+def test_dsc_boilerplate_reports_normalization_per_map(
+    cbv_factor: float | None, cbf_factor: float | None, expected: set[str],
+) -> None:
+    """Each normalization claim requires its own valid reference factor."""
+    text = ru._build_dsc_boilerplate({
+        "normalization_factor": cbv_factor,
+        "cbf_normalization_factor": cbf_factor,
+    })
+    for name in ("nCBV", "nCBF"):
+        assert (f"DSC {name} was obtained" in text) == (name in expected)
+
+
 def test_signal_cpi_boilerplate_distinguishes_auc_correction_from_joint_fit() -> None:
     text = ru._build_dsc_boilerplate({
         "preload": {"preload_correction_applied": True},

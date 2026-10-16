@@ -8,7 +8,7 @@ operate on numpy arrays with no I/O dependencies.
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
 
 @dataclass
@@ -32,8 +32,8 @@ class BlandAltmanResult:
 
 
 def compute_percent_difference(
-    v1: NDArray[np.floating],
-    v2: NDArray[np.floating],
+    v1: ArrayLike,
+    v2: ArrayLike,
 ) -> float:
     """Compute percent difference between two scalar or array summaries.
 
@@ -42,19 +42,20 @@ def compute_percent_difference(
         %diff = 2 * |v1 - v2| / (v1 + v2) * 100
 
     For array inputs, computes the median of voxel-wise percent differences,
-    excluding voxels where both values are near zero.
+    retaining only finite pairs whose absolute pair mean exceeds 1e-10.
 
     Parameters
     ----------
-    v1 : NDArray
-        First measurement (scalar-like or 1D array).
-    v2 : NDArray
+    v1 : array-like
+        First measurement (scalar-like or array).
+    v2 : array-like
         Second measurement (same shape as v1).
 
     Returns
     -------
     float
-        Percent difference. Returns 0.0 if both inputs are zero.
+        Percent difference. For single-element inputs, returns 0.0 when the
+        sum is zero. For larger arrays, returns 0.0 when no valid pair remains.
 
     Raises
     ------
@@ -89,25 +90,30 @@ def compute_percent_difference(
 
 
 def compute_within_subject_cv(
-    v1: NDArray[np.floating],
-    v2: NDArray[np.floating],
+    v1: ArrayLike,
+    v2: ArrayLike,
 ) -> float:
     """Compute within-subject coefficient of variation.
 
-    For two repeated measurements, CV = median_%diff / 2.
-    This is the standard approach for test-retest CV with k=2 sessions.
+    Returns half of ``compute_percent_difference(v1, v2)``, using the
+    same pair filtering and zero-result rules.
 
     Parameters
     ----------
-    v1 : NDArray
-        First measurement (scalar-like or 1D array).
-    v2 : NDArray
+    v1 : array-like
+        First measurement (scalar-like or array).
+    v2 : array-like
         Second measurement (same shape as v1).
 
     Returns
     -------
     float
         Within-subject CV as a percentage.
+
+    Raises
+    ------
+    ValueError
+        If inputs have different shapes after conversion to at least 1D.
     """
     return compute_percent_difference(v1, v2) / 2.0
 

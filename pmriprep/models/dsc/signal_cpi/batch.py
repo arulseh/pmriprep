@@ -408,6 +408,12 @@ class SignalBatchEvaluator:
         -------
         ndarray
             Signal Jacobians, with shape (rows, frames, parameters).
+
+        Raises
+        ------
+        ValueError
+            If parameter rows are not a finite 2D matrix with the model's
+            parameter count, or the domain does not admit a derivative stencil.
         """
         if (
             means.ndim != 2

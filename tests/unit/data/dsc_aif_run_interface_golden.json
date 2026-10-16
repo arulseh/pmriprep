@@ -130,10 +130,10 @@
         "s0_rejection_available": false,
         "synthetic": true,
         "synthetic_aif_warnings": [
-          "Synthetic AIF used - automatic detection failed",
-          "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-          "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
-          "Manual AIF selection recommended for clinical use"
+          "Synthetic gamma-variate AIF used after automatic detection failed",
+          "CBF, nCBF, MTT and deconvolution timing depend on the template AIF",
+          "TTP is the tissue peak time relative to the selected baseline reference",
+          "Review AIF, baseline and reference-tissue QC when interpreting maps"
         ],
         "synthetic_fallback_reason": "no_candidates",
         "synthetic_peak": {
@@ -462,10 +462,10 @@
         "s0_rejection_available": false,
         "synthetic": true,
         "synthetic_aif_warnings": [
-          "Synthetic AIF used - gamma fit R2 below threshold",
-          "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-          "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
-          "Manual AIF selection recommended for clinical use"
+          "Synthetic gamma-variate AIF used after gamma fit R2 fell below threshold",
+          "CBF, nCBF, MTT and deconvolution timing depend on the template AIF",
+          "TTP is the tissue peak time relative to the selected baseline reference",
+          "Review AIF, baseline and reference-tissue QC when interpreting maps"
         ],
         "synthetic_fallback_reason": "gamma_r2_floor",
         "synthetic_peak": {

@@ -718,6 +718,11 @@ def score_averaged_aif_fidelity(
     -------
     tuple of (float, dict)
         The composite fidelity score and the per-term sub-scores/metrics.
+
+    Raises
+    ------
+    ValueError
+        If hematocrit is outside [0, 1).
     """
     if not 0.0 <= hematocrit < 1.0:
         raise ValueError(f"hematocrit must be in [0, 1), got {hematocrit}")
@@ -1627,10 +1632,10 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
     """Output specification for DCE AIFDetection interface."""
 
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
-    out_aif_mask = File(desc="AIF voxel mask NIfTI (None for population AIF)")
+    out_aif_mask = File(desc="AIF voxel mask NIfTI (all zeros for population or external AIF)")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values (mM)")
     detection_method = traits.Str(
-        desc="Detection method used: 'atlas', 'whole_brain', 'population'"
+        desc="Detection method used: 'atlas', 'whole_brain', 'population', or 'external'"
     )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     peak_concentration = traits.Float(desc="Peak AIF concentration in mM")
@@ -1643,17 +1648,16 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
     aif_confidence = traits.Str(
         "standard",
         usedefault=True,
-        desc="AIF acceptance-gate confidence: 'standard' or 'reduced' "
-             "(G6-admitted PV-diluted but anatomically correct).",
+        desc="AIF policy confidence: 'standard', 'reduced' or 'low'; "
+             "based on detection source, acceptance gates and venous timing flags.",
     )
     aif_uncertainty_inflation_factor = traits.Float(
         1.0,
         usedefault=True,
-        desc="Base multiplier on PK posterior sigma from upstream AIF "
-             "confidence (1.0 = standard, 2.0 = G6-admitted low-scale, "
-             "3.0 = G6-admitted high-scale or population AIF). Mapped "
-             "per-parameter downstream via DCE_AIF_G6_SIGMA_INFLATION "
-             "(ve uninflated).",
+        desc="Heuristic AIF-confidence input to per-parameter uncertainty "
+             "scaling: 1.0 for standard confidence, 2.0 for reduced "
+             "confidence, and 3.0 for high-scale gate exceptions or "
+             "population AIF. The downstream policy leaves ve unchanged.",
     )
 
 
@@ -4064,6 +4068,12 @@ class AIFDetection(BaseInterface):
         -------
         runtime
             Updated Nipype runtime object.
+
+        Raises
+        ------
+        ValueError
+            If an NPZ file lacks the required AIF key, the curve is not a finite
+            1D vector matching the scan length, or its peak is below 1e-6.
         """
         import nibabel as nib  # type: ignore[import-untyped]
 
@@ -4157,14 +4167,14 @@ class AIFDetection(BaseInterface):
         # Configured peak-range warnings
         if peak < 1.0:
             logger.warning(
-                "External AIF peak (%.3f mM) is below expected range "
-                "(typical full-dose: 5-7.6 mM). Check units and dose.",
+                "External plasma AIF peak (%.3f mM) is below the 1.0 mM "
+                "warning threshold. Check units and dose.",
                 peak,
             )
         elif peak > 20.0:
             logger.warning(
-                "External AIF peak (%.1f mM) exceeds expected range "
-                "(typical full-dose: 5-7.6 mM). Check units.",
+                "External plasma AIF peak (%.1f mM) exceeds the 20.0 mM "
+                "warning threshold. Check units and dose.",
                 peak,
             )
         baseline_mean = float(np.mean(aif_curve[:baseline_frames])) if baseline_frames > 0 else 0.0

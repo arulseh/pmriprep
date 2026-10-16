@@ -238,6 +238,13 @@ def fit_selected_field(
     SpatialGuidedResult
         Image-indexed measurements and common-CBF schedule provenance. Private
         parameters are available in per-voxel diagnostics, not padded arrays.
+
+    Raises
+    ------
+    ValueError
+        If the complete field does not explicitly request spatial VB.
+    RuntimeError
+        If the spatial schedule fails to return every final voxel readout.
     """
     if any(branch.inference_method != "svb" for branch in acquisition.branches):
         raise ValueError("complete field must explicitly request svb")

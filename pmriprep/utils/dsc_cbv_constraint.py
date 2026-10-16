@@ -44,25 +44,22 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-#: Minimum CNR coverage fraction for high-quality DSC (relaxed from 0.99)
-#: Allow 5% low-CNR voxels due to sinuses, edge effects
+#: CNR coverage threshold for the high-confidence tier before dose scaling.
 CNR_COVERAGE_HIGH: float = 0.95
 
 #: Minimum CNR coverage fraction for moderate-quality DSC
 CNR_COVERAGE_MODERATE: float = 0.84
 
-#: Minimum CNR coverage fraction before skipping constraint
-#: Below this, >30% of brain has unreliable CBV
+#: CNR coverage skip threshold before dose scaling and AIF-tier overrides.
 CNR_COVERAGE_SKIP: float = 0.70
 
-#: Minimum mean CNR for CBV constraint (Rose criterion)
-#: Imported from dsc_constants for consistency
+#: Minimum mean CNR for the vp-prior quality gate.
 CNR_MEAN_MINIMUM: float = QC_MEAN_CNR_MINIMUM
 
-#: Minimum AIF peak height fraction for acceptable quality
+#: Minimum recovery proxy (producer PSR / 100) for moderate confidence.
 AIF_PEAK_HEIGHT_MIN: float = 0.15
 
-#: Marginal AIF peak height fraction
+#: Minimum recovery proxy (producer PSR / 100) for high confidence.
 AIF_PEAK_HEIGHT_MARGINAL: float = 0.25
 
 #: Maximum baseline return ratio for acceptable quality
@@ -71,11 +68,7 @@ AIF_BASELINE_RETURN_MAX: float = 0.40
 #: Marginal baseline return ratio
 AIF_BASELINE_RETURN_MARGINAL: float = 0.30
 
-#: nCBV median acceptable range for the vp-constraint feeder (dimensionless,
-#: NAWM-normalized). NAWM=1.0 by construction; normal whole-brain median
-#: ~0.7–1.5; tumor-heavy subjects up to ~2–3. Outside this range, the
-#: normalization reference or the underlying CBV map is compromised.
-#: This median range is for the whole-brain distribution.
+#: Policy interval for the median of positive brain nCBV values (dimensionless).
 CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade
@@ -83,7 +76,7 @@ CBV_NEGATIVE_FRACTION_MAX: float = 0.01
 
 # Gamma peak ratio thresholds for constraint quality gating.
 # Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
-# Wider low-confidence band captures severe AIF corruption.
+# Values outside the wider interval receive low confidence.
 GAMMA_PEAK_RATIO_LOW_MIN: float = 0.80
 GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 
@@ -100,7 +93,7 @@ SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
 SKIP_REASON_NLLS_UNSUPPORTED = "nlls_constraint_unsupported"
 NO_DSC_RUN_REASON_STRING = "No DSC data were available for a vp prior."
 SYNTHETIC_AIF_REASON_STRING = (
-    "The DSC AIF was synthetic, so its CBV scale was not suitable for a DCE vp prior."
+    "The DSC vp prior was skipped by the AIF-source quality gate."
 )
 
 
@@ -111,7 +104,7 @@ class ConstraintMode(Enum):
     """Use DSC-derived vp as Bayesian prior with uncertainty."""
 
     SKIP = "skip"
-    """Do not use DSC CBV constraint (unconstrained fit)."""
+    """Fit with the DCE model's ordinary priors and bounds."""
 
 
 @dataclass
@@ -121,10 +114,10 @@ class CBVQualityAssessment:
     Attributes
     ----------
         confidence: Quality tier - 'high', 'moderate', or 'low'.
-        use_constraint: Whether the CBV is reliable enough for constraining.
+        use_constraint: Whether the assessment permits a DSC-derived vp prior.
         cnr_coverage: Fraction of brain voxels with CNR > 4.
-        aif_peak_height: AIF peak height fraction (0-1).
-        aif_baseline_return: AIF baseline return ratio (0-1).
+        aif_peak_height: Quality proxy populated from producer signal PSR / 100.
+        aif_baseline_return: Tail-to-peak concentration ratio.
         cbv_median: Median dimensionless nCBV in brain, or None if not assessed.
         cbv_negative_fraction: Fraction of negative nCBV values, or None.
         gamma_peak_ratio: Gamma-variate peak ratio (fitted/measured), or None.
@@ -239,9 +232,9 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
 
     aif_metrics = data.get("aif_metrics") or {}
 
-    # --- AIF peak height from PSR ---
+    # Populate the quality proxy from signal recovery.
     # psr = 100 * (S_tail - S_min) / (S0 - S_min)
-    # Higher = better signal recovery. Thresholds: 0.25 (high), 0.15 (moderate)
+    # Thresholds are 0.25 for high and 0.15 for moderate confidence.
     if "psr" in aif_metrics and "aif_peak_height" not in data:
         data["aif_peak_height"] = aif_metrics["psr"] / 100.0
 
@@ -293,11 +286,8 @@ def _bolus_gd_fraction(
 ) -> float:
     """Bolus Gd dose as a fraction of the Gd-DOTA reference (0.1 mmol Gd/kg).
 
-    Peak first-pass ΔR2* and CNR scale linearly with the product
-    ``dose × agent_standard_dose`` (Rose criterion). CNR coverage
-    thresholds calibrated at full
-    standard dose must be scaled by this fraction to remain valid on
-    reduced-dose protocols or lower-dose agents.
+    Returns ``dose * agent_standard_dose / 0.1``. The vp-prior quality
+    policy multiplies its CNR coverage thresholds by this fraction.
 
     Parameters
     ----------
@@ -315,9 +305,8 @@ def _bolus_gd_fraction(
 
     Raises
     ------
-        ValueError: If ``dose`` or ``agent_standard_dose`` is non-positive.
-            A zero or negative dose would collapse the CNR gate and let
-            garbage CBV through unchecked — fail loudly instead.
+    ValueError
+        If ``dose`` or ``agent_standard_dose`` is non-positive.
     """
     dose_f = float(dose)
     agent_f = float(agent_standard_dose)
@@ -341,15 +330,13 @@ def assess_dsc_cbv_quality(
 
     Implements a three-tier quality framework (high/moderate/low) based on:
     - CNR coverage: fraction of brain voxels with CNR > 4
-    - AIF peak height: relative height of the AIF peak
+    - AIF recovery proxy: producer signal PSR / 100
     - AIF baseline return: how well AIF returns to baseline
     - nCBV value ranges: whether whole-brain median nCBV is plausible
 
     CNR coverage thresholds scale with the administered Gd dose
     (``dose × agent_standard_dose`` relative to 0.1 mmol/kg reference).
-    Half-dose protocols and lower-dose agents (gadopiclenol 0.05,
-    gadoquatrane 0.04) produce inherently lower CNR; scaling prevents
-    spurious SKIP decisions on otherwise-adequate acquisitions.
+    Lower doses reduce the required CNR coverage under this quality policy.
 
     Parameters
     ----------
@@ -383,13 +370,8 @@ def assess_dsc_cbv_quality(
     cnr_moderate = CNR_COVERAGE_MODERATE * eff_dose
     cnr_high = CNR_COVERAGE_HIGH * eff_dose
 
-    # AIF detection tier is read here (not from result.detection_level,
-    # which isn't set yet) to allow the AIF-tier fast-pass below to bypass
-    # the CNR-coverage SKIP for high-quality atlas-based AIF detections.
-    # detection_method may be a "+"-joined union (e.g. "atlas_strict+
-    # atlas_relaxed") under v3 accumulate-to-quorum semantics; treat the
-    # union as high-quality only when EVERY contributing tier is in the
-    # bypass set (otherwise a looser tier dilutes the bypass guarantee).
+    # AIF-tier overrides apply only when every contributing tier belongs
+    # to the strict/relaxed atlas set. Compound levels are joined with "+".
     from pmriprep.utils.dsc_constants import split_detection_level
 
     _detection_level_for_cnr = str(aif_qc_data.get("detection_method", ""))
@@ -409,7 +391,7 @@ def assess_dsc_cbv_quality(
         mean_cnr = None
     result.cnr_coverage = cnr_coverage
 
-    # Mean CNR failsafe: catch total acquisition failures (Rose criterion)
+    # Low mean CNR takes precedence over the coverage and AIF-tier rules.
     if mean_cnr is not None and mean_cnr < CNR_MEAN_MINIMUM:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
@@ -419,7 +401,7 @@ def assess_dsc_cbv_quality(
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
             f"CNR coverage {cnr_coverage:.1%} < {cnr_skip:.1%} "
-            f"(dose-scaled, eff={eff_dose:.2f}); >30% unreliable and AIF "
+            f"(dose-scaled, eff={eff_dose:.2f}); AIF "
             f"tier '{_detection_level_for_cnr}' does not qualify for bypass"
         )
     elif cnr_coverage < cnr_skip and aif_high_quality:
@@ -455,12 +437,8 @@ def assess_dsc_cbv_quality(
         )
 
     # --- AIF Detection Level ---
-    # A synthetic AIF produces unreliable CBV regardless of shape metrics.
-    # Under v3 accumulate-to-quorum semantics, detection_method may be a
-    # "+"-joined union (e.g. "atlas_strict+atlas_relaxed"). A single
-    # contributing tier in the LOW or MODERATE set is enough to penalise
-    # the union — looser-tier voxels dilute the AIF shape regardless of
-    # what stricter tiers contributed.
+    # Synthetic AIFs receive low confidence under the prior policy. For
+    # compound detection levels, the lowest qualifying tier sets confidence.
     _AIF_LEVELS_LOW = {"synthetic"}
     _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
 
@@ -471,18 +449,17 @@ def assess_dsc_cbv_quality(
     if _contributing & _AIF_LEVELS_LOW:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"AIF detection level '{detection_level}' -- CBV unreliable"
+            f"AIF detection level '{detection_level}': low prior confidence"
         )
     elif _contributing & _AIF_LEVELS_MODERATE:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"AIF detection level '{detection_level}' -- CBV quality uncertain"
+            f"AIF detection level '{detection_level}': moderate prior confidence"
         )
 
     # --- AIF Candidate Count ---
-    # Single-voxel AIF has no noise averaging; AIF SNR < 20 degrades
-    # SVD deconvolution.  Default 3 when key is
-    # absent without a quality penalty.
+    # Fewer than three selected candidates lower confidence. An absent
+    # count defaults to three.
     n_candidates = int(aif_qc_data.get("n_aif_voxels_selected", 3))
     result.n_aif_voxels = n_candidates
 
@@ -497,19 +474,19 @@ def assess_dsc_cbv_quality(
             f"Only {n_candidates} AIF voxels -- limited averaging"
         )
 
-    # --- AIF Peak Height ---
+    # --- AIF recovery proxy ---
     aif_peak = float(aif_qc_data.get("aif_peak_height", 0.0))
     result.aif_peak_height = aif_peak
 
     if aif_peak < AIF_PEAK_HEIGHT_MIN:
         confidence = _downgrade_confidence(confidence, "low")
         result.reasons.append(
-            f"AIF peak height {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MIN}"
+            f"AIF signal-recovery fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MIN}"
         )
     elif aif_peak < AIF_PEAK_HEIGHT_MARGINAL:
         confidence = _downgrade_confidence(confidence, "moderate")
         result.reasons.append(
-            f"AIF peak height {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MARGINAL}"
+            f"AIF signal-recovery fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MARGINAL}"
         )
 
     # --- AIF Baseline Return ---
@@ -528,9 +505,7 @@ def assess_dsc_cbv_quality(
         )
 
     # --- Gamma Peak Ratio ---
-    # Peak ratio = gamma_fit_peak / measured_peak. Values far from 1.0
-    # indicate AIF shape corruption (motion, partial volume, truncation).
-    # A corrupted AIF produces biased CBV for vp constraint.
+    # Compare gamma-fit and measured peaks against the quality-policy intervals.
     gamma_peak_ratio = aif_qc_data.get("gamma_peak_ratio")
     if gamma_peak_ratio is not None:
         result.gamma_peak_ratio = gamma_peak_ratio
@@ -679,11 +654,7 @@ def determine_constraint_mode(
     ConstraintConfig
         ConstraintConfig with mode, uncertainty, and reason.
     """
-    # Synthetic-AIF short-circuit: overrides every user selection. If the
-    # AIF cascade exhausted and the pipeline fell back to a synthetic
-    # gamma variate, the CBV magnitudes are not comparable to calibrated
-    # data, so SOFT would lock vp to an arbitrary scale; only SKIP is
-    # defensible.
+    # The vp-prior policy excludes synthetic AIFs before other quality gates.
     if dsc_quality.detection_level == "synthetic":
         if (
             user_override is not None
@@ -691,8 +662,7 @@ def determine_constraint_mode(
         ):
             logger.warning(
                 "User requested constraint mode '%s' but AIF is synthetic; "
-                "overriding to SKIP. Absolute CBV magnitudes are not "
-                "calibrated against this subject's true arterial input.",
+                "the vp-prior policy selects SKIP for this AIF source.",
                 user_override,
             )
         return ConstraintConfig(
@@ -838,17 +808,15 @@ def prepare_vp_constraint_from_data(
 
     result = VpConstraintResult()
 
-    # Synthetic AIFs do not provide a subject-measured arterial amplitude.
-    # The prior policy excludes them before checking for an nCBV file, so
-    # the skip reason records AIF provenance even if that file is absent.
+    # Apply the AIF-source gate before checking for an nCBV file. The producer
+    # sets the denominator flag for synthetic and external AIFs.
     if aif_qc_data and (
         aif_qc_data.get("detection_method") == "synthetic"
         or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
     ):
         logger.info(
-            "vp constraint skipped: AIF is synthetic (cascade exhausted "
-            "or gamma-R² fallback). Relative CBV amplitude is not "
-            "subject-calibrated; DCE vp will be fit unconstrained."
+            "DSC vp prior skipped by the AIF-source quality gate. "
+            "DCE fitting uses the model's ordinary priors and bounds."
         )
         result.config = ConstraintConfig(
             mode=ConstraintMode.SKIP,
@@ -868,7 +836,7 @@ def prepare_vp_constraint_from_data(
     if ncbv_file is None or not Path(str(ncbv_file)).is_file():
         logger.info(
             "vp constraint skipped: nCBV unavailable (no NAWM reference "
-            "mask). DCE vp will be fit unconstrained."
+            "mask). DCE fitting uses the model's ordinary priors and bounds."
         )
         reason = (
             "Automatically generated NAWM was retained for QC but excluded "
@@ -911,7 +879,8 @@ def prepare_vp_constraint_from_data(
         )
         logger.warning(
             "vp constraint skipped: quantitative DSC-to-DCE transfer has "
-            "unacceptable registration QC (%s). DCE vp will be fit unconstrained.",
+            "unacceptable registration QC (%s). "
+            "DCE fitting uses the model's ordinary priors and bounds.",
             detail,
         )
         reason = (

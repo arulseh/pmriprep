@@ -29,6 +29,11 @@ def smooth_masked_maps(
     dict
         Mapping from each available input name to its smoothed NIfTI path.
 
+    Raises
+    ------
+    ValueError
+        If a processed map and brain mask have different shapes or affines.
+
     Notes
     -----
     Normalized convolution uses only finite source voxels inside the brain.

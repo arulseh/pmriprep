@@ -2,11 +2,10 @@
 
 Exercises the full DSC datasinks factory write path with a controlled
 ``qc_metrics`` dict and asserts the resulting JSON sidecars carry the
-expected ``PerfusionProcessing.AIF`` block plus per-map ``AIFDependent``
-and ``TemplateAIFUsage`` tags.
+expected ``PerfusionProcessing.AIF`` block plus the per-map ``AIFDependent`` flag.
 
 Also verifies the drift-guard coverage check: every map emitted by the
-factory must have a corresponding entry in ``TEMPLATE_AIF_USAGE``.
+factory must have a corresponding entry in ``DSC_AIF_MAP_KEYS``.
 """
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ import pytest
 
 from pmriprep.utils.aif_provenance import (
     AIF_INDEPENDENT_MAPS,
-    TEMPLATE_AIF_USAGE,
+    DSC_AIF_MAP_KEYS,
     apply_aif_sidecar,
     build_aif_provenance_block,
 )
@@ -499,7 +498,6 @@ class TestBuildAifProvenanceBlock:
         assert block["DetectionLevel"] == "atlas_strict"
         assert block["QualityFlag"] == "pass"
         assert block["GammaFitApplied"] is False
-        assert block["CrossSubjectComparable"] is True
 
     def test_synthetic_template(self) -> None:
         block = build_aif_provenance_block({
@@ -508,7 +506,6 @@ class TestBuildAifProvenanceBlock:
         })
         assert block["Source"] == "synthetic"
         assert block["QualityFlag"] == "poor"
-        assert block["CrossSubjectComparable"] is False
         assert block["SyntheticFallbackReason"] == "no_candidates"
 
     def test_external_aif(self) -> None:
@@ -608,7 +605,6 @@ class TestApplyAifSidecar:
             {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8}},
         )
         assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
         assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == "measured"
 
     def test_independent_map_marked(self) -> None:
@@ -618,7 +614,6 @@ class TestApplyAifSidecar:
             {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.9}},
         )
         assert sidecar["AIFDependent"] is False
-        assert sidecar["TemplateAIFUsage"] == "safe"
 
     @pytest.mark.parametrize("map_key", ["parametric_r2", "fallback"])
     def test_parametric_diagnostics_are_aif_dependent(self, map_key: str) -> None:
@@ -629,7 +624,6 @@ class TestApplyAifSidecar:
             {"aif_detection": {"detection_method": "synthetic"}},
         )
         assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "qualitative_only"
 
     def test_unknown_map_raises(self) -> None:
         with pytest.raises(KeyError, match="Unknown DSC map key"):
@@ -639,7 +633,6 @@ class TestApplyAifSidecar:
         sidecar: dict = {}
         apply_aif_sidecar(sidecar, "cbf", None)
         assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
         assert "PerfusionProcessing" not in sidecar
 
 
@@ -648,25 +641,24 @@ class TestApplyAifSidecar:
 # =============================================================================
 
 
-class TestTemplateAifUsageCoverage:
+class TestAifMapRegistryCoverage:
     """Every map_key the factory might call apply_aif_sidecar with must be
-    registered in TEMPLATE_AIF_USAGE — otherwise the workflow raises
+    registered in DSC_AIF_MAP_KEYS; otherwise the workflow raises
     KeyError at runtime on a real pipeline run.
     """
 
     def test_factory_keys_subset_of_registered(self) -> None:
         from pmriprep.workflows.dsc.datasinks import _DSC_OUTPUT_KEYS
 
-        missing = _DSC_OUTPUT_KEYS - set(TEMPLATE_AIF_USAGE.keys())
+        missing = _DSC_OUTPUT_KEYS - DSC_AIF_MAP_KEYS
         assert not missing, (
-            f"Factory keys not registered in TEMPLATE_AIF_USAGE: {missing}. "
-            "Add them with the appropriate tag."
+            f"Factory keys not registered in DSC_AIF_MAP_KEYS: {missing}."
         )
 
     def test_aif_independent_subset_of_registered(self) -> None:
-        extra = AIF_INDEPENDENT_MAPS - set(TEMPLATE_AIF_USAGE.keys())
+        extra = AIF_INDEPENDENT_MAPS - DSC_AIF_MAP_KEYS
         assert not extra, (
-            f"AIF_INDEPENDENT_MAPS contains keys not in TEMPLATE_AIF_USAGE: "
+            f"AIF_INDEPENDENT_MAPS contains keys not in DSC_AIF_MAP_KEYS: "
             f"{extra}"
         )
 
@@ -696,7 +688,7 @@ class TestTemplateAifUsageCoverage:
 
 class TestWriterAifBlockPresentOnAllMaps:
     """Running the full factory with a measured-AIF qc_metrics dict stamps
-    PerfusionProcessing.AIF + AIFDependent + TemplateAIFUsage on every
+    PerfusionProcessing.AIF and AIFDependent on every
     emitted sidecar."""
 
     def test_all_core_and_rel_maps_stamped_measured(self, minimal_inputs, tmp_path) -> None:
@@ -710,7 +702,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             assert _aif_block(sidecar)["Source"] == "measured", suffix
             assert _aif_block(sidecar)["QualityFlag"] == "pass", suffix
             assert "AIFDependent" in sidecar, suffix
-            assert "TemplateAIFUsage" in sidecar, suffix
 
     def test_signed_k2_is_published_as_aif_independent(
         self, minimal_inputs, tmp_path,
@@ -728,7 +719,6 @@ class TestWriterAifBlockPresentOnAllMaps:
         sidecar = _load_sidecar(derivatives, "dscK2_stat")
         assert sidecar["Units"] == "1/s"
         assert sidecar["AIFDependent"] is False
-        assert sidecar["TemplateAIFUsage"] == "safe"
         assert sidecar["SignedCoefficient"] is True
 
     def test_k2_sink_is_conditional(self, minimal_inputs) -> None:
@@ -769,7 +759,6 @@ class TestWriterAifBlockPresentOnAllMaps:
 
         r2_meta = _load_sidecar(derivatives, "dscParametricRsquared_stat")
         assert r2_meta["AIFDependent"] is True
-        assert r2_meta["TemplateAIFUsage"] == "qualitative_only"
 
         uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
         assert uncertainty_meta["EstimationMethod"] == "svb"
@@ -822,13 +811,13 @@ class TestWriterAifBlockPresentOnAllMaps:
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
         cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert _aif_block(cbv)["Source"] == "synthetic"
-        assert _aif_block(cbv)["CrossSubjectComparable"] is False
         assert _aif_block(cbv)["SyntheticFallbackReason"] == "no_candidates"
         assert cbv["AIFDependent"] is True
-        assert cbv["TemplateAIFUsage"] == "ratio_defensible"
 
-        mtt = _load_sidecar(derivatives, "dscMtt_stat")
-        assert mtt["TemplateAIFUsage"] == "qualitative_only"
+        for suffix in ("dscMtt_stat", "dscNawmNormCbf_stat"):
+            sidecar = _load_sidecar(derivatives, suffix)
+            assert sidecar["AIFDependent"] is True
+            assert _aif_block(sidecar)["Source"] == "synthetic"
 
     def test_gamma_fit_measured_source(self, minimal_inputs, tmp_path) -> None:
         qc = {"aif_detection": {
@@ -840,7 +829,6 @@ class TestWriterAifBlockPresentOnAllMaps:
         cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert _aif_block(cbv)["Source"] == "gamma_fit_measured"
         assert _aif_block(cbv)["GammaFitApplied"] is True
-        assert _aif_block(cbv)["CrossSubjectComparable"] is True
 
 
 class TestSmoothedSidecars:
@@ -854,10 +842,8 @@ class TestSmoothedSidecars:
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
         raw = _load_sidecar(derivatives, "dscRelAUCSm3Cbv_stat")
         assert _aif_block(raw)["Source"] == "synthetic"
-        assert raw["TemplateAIFUsage"] == "ratio_defensible"
         ncbv_sm = _load_sidecar(derivatives, "dscNawmNormSm3Cbv_stat")
         assert _aif_block(ncbv_sm)["Source"] == "synthetic"
-        assert ncbv_sm["TemplateAIFUsage"] == "safe"
         assert ncbv_sm["SmoothingSupport"] == "finite source voxels within the brain mask"
         assert ncbv_sm["InvalidSupportPreserved"] is True
 
@@ -944,12 +930,10 @@ class TestSignedAucCbvProvenance:
 
 class TestMissingAifQc:
     def test_missing_qc_stamps_tags_but_no_block(self, minimal_inputs, tmp_path) -> None:
-        """Without qc_metrics the AIF block cannot be assembled, but
-        per-map AIFDependent/TemplateAIFUsage tags are still stamped."""
+        """Missing QC leaves the AIFDependent flag as the available AIF metadata."""
         derivatives = _run_writer(minimal_inputs, None, tmp_path)
         sidecar = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
 
 
 # =============================================================================

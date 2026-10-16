@@ -1565,7 +1565,7 @@ def _fit_single_voxel(
                 prior_vp, relative_uncertainty=constraint_vp_uncertainty
             )
             if is_auto:
-                # Select the model from unconstrained DCE data, then apply the
+                # Select the model from bounded DCE fits, then apply the
                 # DSC-informed prior only during Bayesian refinement.
                 result = model.fit(
                     prepared_curve, aif, time_points,
@@ -1604,7 +1604,7 @@ def _fit_single_voxel(
                 )
                 constrained = True
 
-        # Unconstrained fallback
+        # Retry with the model's ordinary priors.
         if result is None:
             if is_auto or inference == "nlls":
                 # is_auto: NLLS for BIC comparison; MAP applied to winner later
@@ -2181,12 +2181,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     aif_uncertainty_inflation_factor = traits.Float(
         1.0,
         usedefault=True,
-        desc="Base multiplier on PK posterior sigma from upstream AIF "
-             "confidence (1.0 = standard, 2.0 = G6-admitted low-scale, "
-             "3.0 = G6-admitted high-scale or population AIF). Applied "
-             "per-parameter via DCE_AIF_G6_SIGMA_INFLATION map; ve is "
-             "uninflated because ve is comparatively insensitive to AIF "
-             "peak-amplitude uncertainty.",
+        desc="Heuristic AIF-confidence input to parameter uncertainty scaling. "
+             "Values above 1 increase the configured parameter-specific "
+             "standard-error or posterior-SD factors; the policy leaves ve "
+             "unchanged.",
     )
 
     # Sloppy / reproducibility
@@ -2587,6 +2585,13 @@ class ComputeDCEMaps(BaseInterface):
         _DCEFitPreparation
             Image geometry, validated time axis, model-selection state, signal
             QC maps, and the voxel mask admitted to pharmacokinetic fitting.
+
+        Raises
+        ------
+        ValueError
+            If scan timing is missing or fails the shared time-axis validation,
+            raw-signal baseline validation fails, or a positive tSNR threshold is
+            requested but tSNR is unavailable in every brain voxel.
         """
         import nibabel as nib  # type: ignore[import-untyped]
 
@@ -2809,6 +2814,12 @@ class ComputeDCEMaps(BaseInterface):
             Prior map, constraint configuration, QC summary, and any
             constraint-driven adjustment to automatic model selection.
 
+        Raises
+        ------
+        ValueError
+            If the DSC-informed vp prior has a different spatial shape from
+            the DCE fitting mask.
+
         Notes
         -----
         The prior remains NAWM-anchored as ``vp = NAWM_VP_REFERENCE * nCBV``.
@@ -2874,7 +2885,7 @@ class ComputeDCEMaps(BaseInterface):
                     "mode": "skip",
                     "reason": (
                         "DSC-informed vp priors are supported only for Bayesian "
-                        "fitting; NLLS remained unconstrained."
+                        "fitting; NLLS used the model's ordinary bounds."
                     ),
                     "skip_reason": SKIP_REASON_NLLS_UNSUPPORTED,
                 },
@@ -3730,7 +3741,8 @@ class ComputeDCEMaps(BaseInterface):
 
         Notes
         -----
-        Automatic model selection uses unconstrained NLLS likelihoods for BIC.
+        Automatic selection uses BIC from bounded least-squares fits before
+        applying any DSC-derived vp prior.
         A qualified DSC-derived vp prior is applied only when the selected model
         is subsequently refined with Bayesian inference.
         """

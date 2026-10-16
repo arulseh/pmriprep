@@ -36,8 +36,8 @@ def signal_to_concentration(
     te : float
         Echo time in seconds. Typical values: 0.025-0.040s.
     baseline_frames : int, optional
-        Number of pre-bolus frames for S0 estimation.
-        Default is 5 frames.
+        Number of pre-bolus frames for S0 estimation, from 1 to one less
+        than the number of timepoints. Default is 5 frames.
 
     Returns
     -------
@@ -46,9 +46,9 @@ def signal_to_concentration(
 
     Raises
     ------
-        ValueError: If signal array is empty or has invalid dimensions.
-        ValueError: If te is not positive.
-        ValueError: If baseline_frames exceeds signal length.
+    ValueError
+        If the signal is empty or neither 1D nor 4D, ``te <= 0``, or
+        ``baseline_frames`` is below 1 or at least the number of timepoints.
 
     Notes
     -----
@@ -124,12 +124,19 @@ def signal_to_delta_r2_star(
     te : float
         Echo time in seconds.
     baseline_frames : int, optional
-        Number of pre-bolus frames for S0 estimation.
+        Number of pre-bolus frames for S0 estimation, from 1 to one less
+        than the number of timepoints. Default is 5.
 
     Returns
     -------
     np.ndarray
         ΔR2* array with same shape as input signal, units s⁻¹.
+
+    Raises
+    ------
+    ValueError
+        If the signal is empty or neither 1D nor 4D, ``te <= 0``, or
+        ``baseline_frames`` is below 1 or at least the number of timepoints.
     """
     return signal_to_concentration(
         signal=signal,
@@ -147,14 +154,19 @@ def get_baseline_signal(
     Parameters
     ----------
     signal : np.ndarray
-        DSC signal array (1D, 3D, or 4D).
+        DSC signal array: a 1D time course or a 4D volume with time last.
     baseline_frames : int, optional
         Number of pre-bolus frames to average.
 
     Returns
     -------
     float or np.ndarray
-        Baseline signal value (scalar for 1D) or array (for 3D/4D).
+        Baseline signal value for 1D input or a 3D spatial map for 4D input.
+
+    Raises
+    ------
+    ValueError
+        If ``signal`` is neither 1D nor 4D.
     """
     if signal.ndim == 1:
         return float(np.mean(signal[:baseline_frames]))
@@ -191,8 +203,8 @@ def find_bolus_arrival(
 
     Raises
     ------
-        ValueError: If signal is not 1D.
-        ValueError: If no bolus arrival is detected.
+    ValueError
+        If the signal is not 1D or no sample falls below the detection threshold.
     """
     if signal.ndim != 1:
         raise ValueError(f"Signal must be 1D, got {signal.ndim}D")
@@ -221,11 +233,10 @@ def detect_bolus_arrival(
 
     Uses z-score normalization (3-sigma) above the initial baseline to
     find the first frame with significant contrast arrival, then returns
-    both the arrival index and the number of usable baseline frames.
+    both the arrival index and a suggested baseline frame count.
 
-    The z-score approach is scale-invariant: z = (x - mean) / std cancels
-    any constant scaling factor, so detection returns the same frame
-    whether input is in ΔR2* (s⁻¹) or concentration (mM).
+    Z-scores cancel positive constant scaling when baseline SD exceeds the
+    numerical floor. Below that floor, detection can depend on input scale.
 
     Parameters
     ----------
@@ -233,8 +244,8 @@ def detect_bolus_arrival(
         1D concentration time course (positive values
         indicate contrast arrival in concentration space).
     baseline_frames : int, optional
-        Number of initial frames for baseline estimation.
-        Default is 3 to avoid early bolus contamination.
+        Requested number of initial frames for baseline estimation, default 3.
+        The count used is ``max(2, min(baseline_frames, n_timepoints // 4))``.
     n_consecutive : int, optional
         Number of consecutive frames that must all exceed
         the 3-sigma threshold to count as bolus arrival. Using
@@ -245,18 +256,17 @@ def detect_bolus_arrival(
     -------
     tuple
         Tuple of (arrival_idx, n_baseline_frames):
-            - arrival_idx: Frame index where bolus arrives
-            - n_baseline_frames: Number of usable pre-bolus frames
-              (always >= 2)
+            - arrival_idx: First detected arrival, or the baseline estimation
+              count when no threshold crossing is found.
+            - n_baseline_frames: ``max(2, arrival_idx - 1)``. When arrival_idx
+              is 0 or 1, the two-frame floor includes the arrival frame.
     """
     n_baseline = min(baseline_frames, len(concentration_curve) // 4)
     n_baseline = max(2, n_baseline)
     baseline_mean = np.mean(concentration_curve[:n_baseline])
     baseline_std = np.std(concentration_curve[:n_baseline])
 
-    # Use z-score normalization for scale-invariant detection.
-    # z = (x - mean) / std cancels any constant scaling factor (e.g. r2*),
-    # so detection returns the same frame whether input is in s⁻¹ or mM.
+    # Positive scaling cancels in z-scores unless the SD floor is active.
     z_scores = (concentration_curve - baseline_mean) / max(baseline_std, EPSILON_CONCENTRATION)
 
     n_consecutive = max(1, n_consecutive)
@@ -293,10 +303,9 @@ def detect_bolus_arrival_gradient(
     situations where the amplitude-based ``detect_bolus_arrival`` triggers
     on washout noise.
 
-    The gradient of a slowly-decaying preload baseline is a small negative
-    constant, while the gradient at true bolus arrival is a large positive
-    spike.  Z-scoring the gradient cleanly separates these two regimes at
-    any baseline elevation.
+    A candidate needs a positive gradient above the z-score threshold and
+    a subsequent amplitude at least two baseline SDs above the baseline mean.
+    Both SD estimates have a numerical floor.
 
     Parameters
     ----------
@@ -319,8 +328,12 @@ def detect_bolus_arrival_gradient(
     -------
     tuple
         Tuple of (arrival_idx, n_baseline_frames):
-            - arrival_idx: Frame index where bolus arrives.
-            - n_baseline_frames: Usable pre-bolus frames (always >= 2).
+            - arrival_idx: Detected arrival, or
+              ``min(baseline_window, max(0, n_timepoints - 1))`` if the
+              gradient baseline has fewer than four samples, no sustained
+              crossing is found, or the amplitude check rejects it.
+            - n_baseline_frames: ``max(2, arrival_idx - 1)``. When arrival_idx
+              is 0 or 1, the two-frame floor includes the arrival frame.
     """
     n = len(concentration_curve)
 
@@ -629,8 +642,9 @@ def normalize_cbv(
     session : str, optional
         Session ID (without 'ses-' prefix) for auto-detection.
     brain_mask : np.ndarray, optional
-        Optional brain mask for fallback normalization if NAWM
-        mask is unavailable. Uses whole-brain median.
+        Optional brain mask for fallback normalization when the NAWM reference
+        is unavailable or has no usable median. Must match the CBV
+        shape to be used. Uses the median of finite values within the mask.
     return_normalization_factor : bool, optional
         If True, returns tuple of (nCBV, factor).
 
@@ -638,14 +652,18 @@ def normalize_cbv(
     -------
     np.ndarray or tuple
         If return_normalization_factor is False:
-            Normalized CBV map (nCBV) as a 3D array.
+            Normalized CBV map (nCBV) as a 3D array. If supplied reference
+            masks yield no usable factor, the map is all NaN; without a
+            resolved reference mask, the input is returned unchanged.
         If return_normalization_factor is True:
             Tuple of (nCBV map, normalization factor).
 
     Raises
     ------
-        ValueError: If CBV map is not 3D.
-        ValueError: If mask dimensions don't match CBV map.
+    ValueError
+        If the CBV map is not 3D or a supplied or loaded NAWM mask has a
+        different shape. A brain mask with a different shape does not raise;
+        it provides no factor, so the map is all NaN when NAWM also gives none.
 
     Notes
     -----
@@ -807,7 +825,11 @@ def normalize_cbv_from_files(
 
     Raises
     ------
-        FileNotFoundError: If CBV file does not exist.
+    FileNotFoundError
+        If the CBV file does not exist.
+    ValueError
+        If an existing explicit NAWM mask has a different affine, the CBV map
+        is not 3D, or a supplied or discovered NAWM mask has a different shape.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 

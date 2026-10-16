@@ -523,6 +523,11 @@ def plot_segmentation_qc_filmstrip(
     -------
     Path
         Path to the saved figure.
+
+    Raises
+    ------
+    ValueError
+        If the background array is not 3D.
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
     from matplotlib.patches import Patch  # type: ignore[import-untyped]

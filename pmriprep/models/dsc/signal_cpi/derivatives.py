@@ -79,6 +79,12 @@ def fourth_order_partial(
     -------
     ndarray
         Partial derivative with the same shape as the function value.
+
+    Raises
+    ------
+    ValueError
+        If the derivative scale is not finite and positive, or the parameter
+        domain is too narrow for a stencil.
     """
     step = np.finfo(float).eps ** 0.2 * scale
     if not np.isfinite(step) or step <= 0:

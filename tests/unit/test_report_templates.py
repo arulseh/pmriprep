@@ -760,16 +760,33 @@ def _dsc_ctx_with_aif_level(level: str, **extra) -> dict:
     }
 
 
-def test_synthetic_aif_caveat_rendered(env):
+@pytest.mark.parametrize(
+    ("extra", "reason"),
+    [
+        ({"synthetic_fallback_reason": "no_candidates"},
+         "no arterial candidates survived automatic detection"),
+        ({"aif_detection": {"detection_method": "synthetic",
+                            "synthetic_fallback_reason": "gamma_r2_floor"}},
+         "the measured curve had a poor gamma-variate fit"),
+        ({"config": {"aif_source": "synthetic"},
+          "synthetic_fallback_reason": "no_candidates"}, "user-selected"),
+    ],
+)
+def test_synthetic_aif_caveat_rendered(env, extra, reason):
     """detection_level == 'synthetic' triggers the caveat alert block."""
     template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_aif_level("synthetic", synthetic_fallback_reason="no_candidates")
+    dsc_ctx = _dsc_ctx_with_aif_level("synthetic", **extra)
     rendered = template.render(dsc=dsc_ctx)
-    assert "Template AIF" in rendered
-    assert "no arterial candidates survived automatic detection" in rendered
+    assert "Synthetic gamma-variate AIF" in rendered
+    assert reason in rendered
     assert "no_candidates" not in rendered
-    assert "MTT, Tmax" in rendered
-    assert "BW K2" in rendered
+    assert "CBF, nCBF, MTT and deconvolution timing" in rendered
+    assert "template AIF shape and timing" in rendered
+    assert "BSW K2 uses a tissue reference" in rendered
+    assert "AUC divided by its NAWM median" in rendered
+    assert "Unaffected:" not in rendered
+    if reason == "user-selected":
+        assert "no arterial candidates survived" not in rendered
 
 
 def test_measured_aif_omits_caveat(env):
@@ -777,7 +794,7 @@ def test_measured_aif_omits_caveat(env):
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_aif_level("atlas_strict")
     rendered = template.render(dsc=dsc_ctx)
-    assert "Template AIF" not in rendered
+    assert "Synthetic gamma-variate AIF" not in rendered
 
 
 # =============================================================================
@@ -952,13 +969,18 @@ def test_summary_hides_acquisition_warnings_when_empty(env):
 
 def test_summary_renders_processing_warnings(env):
     """Processing advisory section renders when AIF fallback present."""
+    from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
+
     template = env.get_template("sections/section_summary.html")
+    warning = collect_aif_fallback_warning(
+        {"aif_detection": {"detection_method": "synthetic"}}, "DSC",
+    )
     ctx = _summary_ctx(processing_warnings={
-        "DSC Processing": ["AIF fell back to Parker population template"],
+        "DSC Processing": [warning],
     })
     rendered = template.render(**ctx)
     assert "Processing Advisory" in rendered
-    assert "Parker population template" in rendered
+    assert "synthetic gamma-variate template" in rendered
 
 
 def test_summary_hides_processing_warnings_when_empty(env):

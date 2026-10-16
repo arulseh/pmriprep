@@ -37,9 +37,7 @@ from pmriprep.utils.dsc_constants import (
 logger = logging.getLogger("nipype.interface")
 
 #: Numerical floor used as a divide guard in batched VI fits
-#: (R² denominators, sigma² floors, Jacobian column scaling). Set well
-#: below any physical scale so it only fires on truly degenerate inputs.
-#: Not a physics constant.
+#: (R² denominators, sigma² floors, Jacobian column scaling).
 _EPSILON_NUMERICAL: Final[float] = 1e-30
 
 
@@ -395,6 +393,14 @@ def batched_dsc_vi_fit(
     -------
     DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters, R², convergence, uncertainties.
+
+    Raises
+    ------
+    ValueError
+        If the adapter is absent, execution is not single-process, spatial
+        prior/update inputs are inconsistent, initialization shapes are wrong,
+        or full local factors are requested with incompatible spatial settings
+        or an inadmissible initial mean. Unsupported CBF transforms also raise.
     """
     if nprocs != 1:
         raise ValueError("model adapters and full posterior output require nprocs=1")
@@ -515,11 +521,10 @@ def batched_dsc_vi_fit(
         spatial_parameter_mask=spatial_parameter_mask,
     )
 
-    # Noise precision prior — FABBER non-informative defaults
-    # (fabber_core/noisemodel_white.cc: c=1e-6, b=1e6).
+    # Gamma noise-precision prior in shape-scale form.
     c0 = 1e-6
     s0 = 1e6
-    # Posterior init for Gamma noise (FABBER posterior init: c=50, s=1e-8)
+    # Initial Gamma noise-posterior shape and scale.
     c_post_init = 50.0
     s_post_init = 1e-8
 
@@ -583,11 +588,8 @@ def batched_dsc_vi_fit(
         raise ValueError("initial mean violates the model domain")
 
     # --- Noise posterior init ---
-    # FABBER's GetInitialPosterior c=50, s=1e-8 gives tau ~ 5e-7 — far below
-    # typical DSC concentration-residual precision (~1/0.01^2 = 1e4). To get
-    # the first VB iteration off the ground, seed tau from residuals at the
-    # initial-guess forward, which mirrors what FABBER's noise posterior
-    # converges to within 1-2 iterations anyway.
+    # Seed expected noise precision from the initial prediction's residual
+    # mean square. Use the initial Gamma mean when that estimate is unavailable.
     try:
         g_init = _evaluate(m_nat)
         init_var = np.sum((y - g_init) ** 2, axis=1) / n_obs

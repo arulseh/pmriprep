@@ -2,8 +2,7 @@
 
 The AIF timeseries, AIF mask, preprocessing, and quantitative-map sidecars
 share one ``PerfusionProcessing.AIF`` block. Quantitative maps additionally
-carry per-map ``AIFDependent`` and ``TemplateAIFUsage`` tags so downstream
-consumers can filter correctly when a non-subject-specific AIF was used.
+carry the per-map ``AIFDependent`` flag.
 
 Supports both DSC and DCE modalities via a ``modality`` parameter.
 """
@@ -31,34 +30,12 @@ AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
 })
 
 
-TemplateAIFUsageCategory = Literal[
-    "safe", "ratio_defensible", "qualitative_only"
-]
-
-
-#: How to interpret each DSC map under a synthetic AIF.
-TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
-    "cbf": "ratio_defensible",
-    "cbv": "ratio_defensible",
-    "cbv_auc": "ratio_defensible",
-    "auc": "ratio_defensible",
-    "auc_corr": "ratio_defensible",
-    "mtt": "qualitative_only",
-    "tmax": "qualitative_only",
-    "arrival_delay": "qualitative_only",
-    "psr": "safe",
-    "ttp": "qualitative_only",
-    "cnr": "safe",
-    "tsnr": "safe",
-    "ncbv": "safe",
-    "ncbf": "safe",
-    "cbf_std": "ratio_defensible",
-    "rel_cbf": "ratio_defensible",
-    "rel_cbv": "ratio_defensible",
-    "parametric_r2": "qualitative_only",
-    "fallback": "qualitative_only",
-    "k2": "safe",
-}
+#: DSC map keys registered for AIF-dependency provenance.
+DSC_AIF_MAP_KEYS: Final[frozenset[str]] = frozenset({
+    "cbf", "cbv", "cbv_auc", "auc", "auc_corr", "mtt", "tmax",
+    "arrival_delay", "psr", "ttp", "cnr", "tsnr", "ncbv", "ncbf",
+    "cbf_std", "rel_cbf", "rel_cbv", "parametric_r2", "fallback", "k2",
+})
 
 
 # ── DCE registries ────────────────────────────────────────────────────
@@ -70,41 +47,22 @@ DCE_AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
 })
 
 
-#: How to interpret each DCE map under a population AIF.
-DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
+#: DCE map keys registered for AIF-dependency provenance.
+DCE_AIF_MAP_KEYS: Final[frozenset[str]] = frozenset({
     # PK maps
-    "ktrans": "ratio_defensible",
-    "ve": "ratio_defensible",
-    "kep": "ratio_defensible",
-    "vp": "ratio_defensible",
-    "fp": "ratio_defensible",
-    "ps": "ratio_defensible",
-    "e": "ratio_defensible",
+    "ktrans", "ve", "kep", "vp", "fp", "ps", "e",
     # Uncertainty
-    "ktrans_uncertainty": "ratio_defensible",
-    "ve_uncertainty": "ratio_defensible",
-    "vp_uncertainty": "ratio_defensible",
-    "fp_uncertainty": "ratio_defensible",
-    "ps_uncertainty": "ratio_defensible",
+    "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
+    "fp_uncertainty", "ps_uncertainty",
     # IAUC (tissue concentration integral, AIF-independent)
-    "iauc60": "safe",
-    "iauc90": "safe",
-    "iauc120": "safe",
+    "iauc60", "iauc90", "iauc120",
     # Model-free (AIF-independent)
-    "peak_enhancement": "safe",
-    "ttp": "safe",
-    "ser": "safe",
+    "peak_enhancement", "ttp", "ser",
     # Smoothed PK maps
-    "ktrans_sm": "ratio_defensible",
-    "ve_sm": "ratio_defensible",
-    "kep_sm": "ratio_defensible",
-    "vp_sm": "ratio_defensible",
-    "fp_sm": "ratio_defensible",
-    "ps_sm": "ratio_defensible",
+    "ktrans_sm", "ve_sm", "kep_sm", "vp_sm", "fp_sm", "ps_sm",
     # Model selection diagnostics (AIF shapes forward-model residuals)
-    "model_selection": "qualitative_only",
-    "delta_bic": "qualitative_only",
-}
+    "model_selection", "delta_bic",
+})
 
 
 # ── Shared logic ──────────────────────────────────────────────────────
@@ -247,9 +205,6 @@ def build_aif_provenance_block(
         "Source": source,
         "DetectionLevel": aif_qc.get("detection_method", "unknown"),
         "QualityFlag": _derive_quality_flag(aif_qc, source, modality),
-        "CrossSubjectComparable": source in {
-            "measured", "gamma_fit_measured", "external",
-        },
     }
     qs = aif_qc.get("quality_score")
     if qs is not None:
@@ -375,9 +330,9 @@ def build_aif_provenance_block(
             reason = (
                 qc_metrics.get("synthetic_fallback_reason")
                 or aif_qc.get("synthetic_fallback_reason")
-                or "cascade_exhausted"
             )
-            block["SyntheticFallbackReason"] = str(reason)
+            if reason:
+                block["SyntheticFallbackReason"] = str(reason)
 
     # DCE-specific fields
     if modality == "DCE":
@@ -389,11 +344,9 @@ def build_aif_provenance_block(
             block["UncertaintyInflationFactor"] = float(inflation)
         if source == "population":
             block["PopulationModel"] = "parker"
-            reason = (
-                aif_qc.get("auto_fallback_reason")
-                or "cascade_exhausted"
-            )
-            block["PopulationFallbackReason"] = str(reason)
+            reason = aif_qc.get("auto_fallback_reason")
+            if reason:
+                block["PopulationFallbackReason"] = str(reason)
         peak_scaling = build_peak_scaling_provenance(aif_qc)
         if peak_scaling:
             block["PeakScaling"] = peak_scaling
@@ -422,31 +375,31 @@ def apply_aif_sidecar(
     qc_metrics: dict[str, Any] | None,
     modality: Modality = "DSC",
 ) -> None:
-    """Stamp AIF dependency tags and merge the provenance block.
+    """Stamp AIF dependence and merge the provenance block.
 
-    Stamps ``AIFDependent`` + ``TemplateAIFUsage`` on ``sidecar`` and
+    Stamps ``AIFDependent`` on ``sidecar`` and
     merges the ``PerfusionProcessing.AIF`` provenance block.
 
-    Raises ``KeyError`` when ``map_key`` is not registered in the
-    appropriate usage registry.
+    Raises
+    ------
+    KeyError
+        If the map key is absent from the modality's AIF-dependency registry.
     """
     if modality == "DCE":
-        usage_registry = DCE_POPULATION_AIF_USAGE
+        registered_maps = DCE_AIF_MAP_KEYS
         independent_maps = DCE_AIF_INDEPENDENT_MAPS
-        module_name = "pmriprep.utils.aif_provenance.DCE_POPULATION_AIF_USAGE"
+        module_name = "pmriprep.utils.aif_provenance.DCE_AIF_MAP_KEYS"
     else:
-        usage_registry = TEMPLATE_AIF_USAGE
+        registered_maps = DSC_AIF_MAP_KEYS
         independent_maps = AIF_INDEPENDENT_MAPS
-        module_name = "pmriprep.utils.aif_provenance.TEMPLATE_AIF_USAGE"
+        module_name = "pmriprep.utils.aif_provenance.DSC_AIF_MAP_KEYS"
 
-    if map_key not in usage_registry:
+    if map_key not in registered_maps:
         raise KeyError(
             f"Unknown {modality} map key '{map_key}'. Register it in "
-            f"{module_name} with the appropriate tag "
-            "('safe' / 'ratio_defensible' / 'qualitative_only')."
+            f"{module_name}."
         )
     sidecar["AIFDependent"] = map_key not in independent_maps
-    sidecar["TemplateAIFUsage"] = usage_registry[map_key]
     apply_aif_provenance_block(sidecar, qc_metrics, modality)
 
 
@@ -455,25 +408,24 @@ def stamp_aif_dependency(
     map_key: str,
     modality: Modality = "DCE",
 ) -> None:
-    """Stamp ``AIFDependent`` and ``TemplateAIFUsage`` without full provenance.
+    """Stamp ``AIFDependent`` for a registered map key.
 
-    For maps routed through ``_build_dce_meta`` that lack ``qc_metrics``
-    plumbing but still need the consumer-facing dependency tags.
+    Used by maps routed through ``_build_dce_meta``. Unknown nonempty keys
+    produce a warning; unknown or empty keys leave the sidecar unchanged.
     """
     if modality == "DCE":
-        usage_registry = DCE_POPULATION_AIF_USAGE
+        registered_maps = DCE_AIF_MAP_KEYS
         independent_maps = DCE_AIF_INDEPENDENT_MAPS
     else:
-        usage_registry = TEMPLATE_AIF_USAGE
+        registered_maps = DSC_AIF_MAP_KEYS
         independent_maps = AIF_INDEPENDENT_MAPS
 
-    if map_key not in usage_registry:
+    if map_key not in registered_maps:
         if map_key:
             logger.warning(
-                "%s map key %r not registered in AIF usage registry; "
-                "no AIFDependent/TemplateAIFUsage tags stamped.",
+                "%s map key %r not registered for AIF provenance; "
+                "AIFDependent tag omitted.",
                 modality, map_key,
             )
         return
     sidecar["AIFDependent"] = map_key not in independent_maps
-    sidecar["TemplateAIFUsage"] = usage_registry[map_key]

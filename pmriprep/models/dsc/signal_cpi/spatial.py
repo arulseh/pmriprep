@@ -221,6 +221,11 @@ def fit_spatial_voxels(
     SpatialGuidedResult
         Image-indexed outputs and conditional-prior/schedule provenance.
         No independent spatial chunking or alternate fallback is performed.
+
+    Raises
+    ------
+    ValueError
+        If the acquisition does not explicitly request spatial VB.
     """
     if acquisition.inference_method != "svb":
         raise ValueError("spatial fitting requires an explicit svb acquisition")

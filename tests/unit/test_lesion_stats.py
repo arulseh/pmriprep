@@ -494,7 +494,6 @@ class TestLesionStatisticsAifProvenance:
             "DetectionLevel": "atlas_strict",
             "QualityFlag": "pass",
             "GammaFitApplied": False,
-            "CrossSubjectComparable": True,
         }
         result = LesionStatisticsResult(
             subject_id="0001", session_id="0002", modality="DSC",
@@ -503,15 +502,13 @@ class TestLesionStatisticsAifProvenance:
         )
         d = result.to_dict()
         assert d["PerfusionProcessing"]["AIF"]["Source"] == "measured"
-        assert d["PerfusionProcessing"]["AIF"]["CrossSubjectComparable"] is True
 
     def test_template_aif_provenance(self) -> None:
         aif_block = {
-            "Source": "template",
+            "Source": "synthetic",
             "DetectionLevel": "synthetic",
             "QualityFlag": "poor",
             "GammaFitApplied": False,
-            "CrossSubjectComparable": False,
             "SyntheticFallbackReason": "no_candidates",
         }
         result = LesionStatisticsResult(
@@ -520,7 +517,7 @@ class TestLesionStatisticsAifProvenance:
             aif_provenance=aif_block,
         )
         d = result.to_dict()
-        assert d["PerfusionProcessing"]["AIF"]["Source"] == "template"
+        assert d["PerfusionProcessing"]["AIF"]["Source"] == "synthetic"
         assert d["PerfusionProcessing"]["AIF"]["SyntheticFallbackReason"] == "no_candidates"
 
     def test_fields_absent_by_default(self) -> None:

@@ -435,6 +435,7 @@ def lookup_standard_dose(agent: str) -> float:
     -------
     float
         Standard dose in mmol Gd/kg (0.1 for most agents, 0.05 for Vueway, etc.).
+        Unknown agents return 0.1.
     """
     name = normalize_agent_name(agent)
     return AGENT_STANDARD_DOSES.get(name, 0.1)
@@ -456,7 +457,7 @@ def lookup_gd_multiplicity(agent: str) -> int:
     -------
     int
         Number of Gd3+ ions per molecule (1 for most agents, 4 for
-        gadoquatrane).
+        gadoquatrane). Unknown agents return 1.
     """
     name = normalize_agent_name(agent)
     relaxivity = CONTRAST_AGENTS.get(name)
@@ -827,6 +828,12 @@ def build_dce_provenance(
     dict
         Dict with PerfusionProcessing namespace containing ContrastAgent,
         Relaxivity, and ContrastDose sub-dicts.
+
+    Raises
+    ------
+    ValueError
+        If r1 is omitted and the agent is unrecognized or its field entry has
+        no supported default.
     """
     agent_name = normalize_agent_name(contrast_agent) if contrast_agent else "unspecified"
     if agent_name not in CONTRAST_AGENTS:
@@ -886,10 +893,9 @@ def build_dsc_provenance(
 ) -> dict[str, Any]:
     """Build DSC provenance dict for output JSON sidecars.
 
-    DSC quantification uses relative metrics (r2* cancels in CBV/CBF),
-    so contrast agent relaxivity is not included. Agent identity is
-    recorded for reproducibility; dose and preload affect AIF detection
-    thresholds and leakage correction.
+    DSC processing uses ΔR2* curves and reports relative perfusion measures.
+    This block records agent identity, dose, preload, deconvolution and
+    leakage-correction settings, together with available scanner metadata.
 
     Parameters
     ----------
@@ -915,7 +921,7 @@ def build_dsc_provenance(
     deconv_method : str
         Deconvolution method name.
     inference : str, optional
-        Inference method (nlls/map/vb/svb) for CPI.
+        Inference method (``vi`` or ``svb``) for CPI.
     leakage_method : str
         Leakage correction method name.
     scanner_metadata : dict, optional
@@ -927,17 +933,16 @@ def build_dsc_provenance(
     -------
     dict
         Dict with PerfusionProcessing namespace containing ContrastAgent
-        (when agent is known), ContrastDose, Deconvolution, and
-        LeakageCorrection sub-dicts.
+        (when agent is supplied), ContrastDose, PreloadDetection,
+        Deconvolution, LeakageCorrection, and optional ScannerMetadata blocks.
 
     Notes
     -----
         The ``PerfusionProcessing.AIF`` sub-block is assembled
         downstream at sidecar-write time by
         :func:`pmriprep.utils.aif_provenance.apply_aif_sidecar`, which
-        reads post-detection ``qc_metrics['aif']``. This function runs
-        at workflow construction, before AIF detection, so it cannot
-        populate AIF fields itself.
+        reads post-detection ``qc_metrics['aif']``. This function records
+        the settings available at workflow construction.
     """
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
     if inference is not None and deconv_method == "cpi":
@@ -1087,7 +1092,7 @@ def collect_aif_fallback_warning(
     qc_metrics: Optional[dict[str, Any]],
     modality: str,
 ) -> Optional[str]:
-    """Return a warning string if AIF fell back to population/template.
+    """Describe a template AIF or a retained DSC AIF with a poor gamma fit.
 
     Parameters
     ----------
@@ -1099,15 +1104,16 @@ def collect_aif_fallback_warning(
     Returns
     -------
     str or None
-        Warning string if AIF used population/template, else ``None``.
+        Warning for a population/template AIF, whether selected explicitly
+        or used as fallback, or a measured DSC AIF retained despite a poor
+        gamma fit. Returns ``None`` for other detection outcomes/modalities.
     """
     if not qc_metrics:
         return None
 
     if modality == "DSC":
         aif_qc = qc_metrics.get("aif_detection") or {}
-        # A real AIF retained below the gamma-fit floor (synthetic fallback
-        # disabled) is flagged but NOT swapped, so it wouldn't otherwise surface.
+        # Retained poor-fit curves carry their own QC warning.
         if aif_qc.get("aif_gamma_fit_below_floor_retained"):
             r2 = aif_qc.get("gamma_r2_retained")
             r2_txt = ""
@@ -1117,9 +1123,10 @@ def collect_aif_fallback_warning(
                 except (TypeError, ValueError):
                     pass
             return (
-                f"DSC AIF retained despite a poor gamma-variate fit{r2_txt} "
-                f"— synthetic fallback is disabled. CBF, MTT, and Tmax may "
-                f"be unreliable; AUC-nCBV and PSR remain interpretable."
+                f"DSC measured AIF retained despite a poor gamma-variate fit{r2_txt}, "
+                "with synthetic fallback disabled. CBF, nCBF, MTT and "
+                "deconvolution timing depend on this curve. Review the AIF "
+                "and baseline QC before interpreting these maps."
             )
         if aif_qc.get("detection_method") != "synthetic":
             return None
@@ -1134,13 +1141,13 @@ def collect_aif_fallback_warning(
             "low_snr": "arterial candidates had insufficient signal quality",
             "gamma_r2_floor": "the measured curve had a poor gamma-variate fit",
         }.get(reason_code, "automatic detection found no acceptable arterial curve")
+        if (qc_metrics.get("config") or {}).get("aif_source") == "synthetic":
+            reason = "user-selected"
         return (
-            f"DSC AIF fell back to Parker population template "
-            f"\u2014 {reason}. "
-            f"nCBV and nCBF remain usable (NAWM normalisation "
-            f"cancels AIF scaling). K2-corrected rCBV inherits "
-            f"template-AIF shape bias on the first-pass integral. "
-            f"MTT / Tmax are qualitative only."
+            f"DSC AIF uses a synthetic gamma-variate template: {reason}. "
+            "CBF, nCBF, MTT and deconvolution timing depend on the assumed "
+            "AIF shape and timing. Review the AIF and baseline QC before "
+            "interpreting these maps."
         )
 
     if modality == "DCE":

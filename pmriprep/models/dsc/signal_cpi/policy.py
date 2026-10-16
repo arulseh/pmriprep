@@ -183,6 +183,13 @@ def automatic_count(
     CountDecision
         Requested and used counts with explicit baseline and domain provenance.
 
+    Raises
+    ------
+    ValueError
+        If the signal pool is empty or not voxel-by-frame, the AIF is not
+        finite with a positive bolus, the baseline window is invalid, or no
+        supported count admits feasible prior geometry.
+
     Notes
     -----
     The scan-level decay heuristic uses concentration; the model fits signal.

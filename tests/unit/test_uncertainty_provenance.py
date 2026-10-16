@@ -10,7 +10,7 @@ from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
     [
         (
             "nlls",
-            "nonlinear_least_squares",
+            "least_squares",
             "local_jacobian_covariance",
             False,
         ),

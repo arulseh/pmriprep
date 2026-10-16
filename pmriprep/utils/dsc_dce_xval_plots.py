@@ -49,6 +49,12 @@ def generate_xval_plot(
     The whole-brain and optional lesion-region domains are rendered as
     separate figures. The spatial panel retains the brain and region outlines
     so that a restricted-domain difference map remains anatomically legible.
+
+    Raises
+    ------
+    ValueError
+        If NAWM normalization medians are not finite and positive, or the
+        concordance domain and brain mask have different shapes.
     """
     import matplotlib
 

@@ -41,6 +41,11 @@ def resolve_hdbet_execution(
         Concrete Torch device.
     use_tta : bool
         True when mirrored test-time augmentation should be enabled.
+
+    Raises
+    ------
+    ValueError
+        If the device is not ``auto``, ``cpu``, ``cuda`` or ``mps``.
     """
     if device == "auto":
         from pmriprep.utils.device import detect_torch_device

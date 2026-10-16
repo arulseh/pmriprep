@@ -132,7 +132,7 @@ class TestPKMapKeyDriftGuard:
 
     def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
         """Every PK-family sink key must survive strict AIF stamping."""
-        from pmriprep.utils.aif_provenance import DCE_POPULATION_AIF_USAGE
+        from pmriprep.utils.aif_provenance import DCE_AIF_MAP_KEYS
         from pmriprep.workflows.dce.datasinks import (
             _UNCERTAINTY_MAPS,
             _PK_MAPS,
@@ -143,12 +143,7 @@ class TestPKMapKeyDriftGuard:
             for table in (_PK_MAPS, _UNCERTAINTY_MAPS)
             for spec in table
         }
-        assert emitted <= DCE_POPULATION_AIF_USAGE.keys()
-
-        for key in ("fp", "ps", "e"):
-            assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
-        for key in ("fp_uncertainty", "ps_uncertainty"):
-            assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
+        assert emitted <= DCE_AIF_MAP_KEYS
 
     def test_2cxm_sidecars_record_identifiable_domains(self) -> None:
         for map_key in ("fp", "ps"):

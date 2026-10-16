@@ -56,19 +56,13 @@ class ExtendedToftsModel(PKModel):
     Parameters
     ----------
         Ktrans: Volume transfer constant (min⁻¹), 0-5 min⁻¹
-            - Reflects permeability × surface area per unit tissue volume
-            - Typical tumor values: 0.01-0.5 min⁻¹
-            - High-grade glioma: can exceed 0.5 min⁻¹
+        - Describes transfer from plasma to the extravascular space
 
         ve: Extravascular extracellular volume fraction, 0-1
             - Fraction of tissue that is interstitial space
-            - Typical brain values: 0.1-0.3
-            - Tumor values: often increased 0.3-0.6
 
         vp: Plasma volume fraction, 0-1
             - Fraction of tissue that is blood plasma
-            - Typical brain values: 0.01-0.05
-            - Well-vascularized tumors: can exceed 0.1
 
     Constraint:
         ve + vp ≤ 1.0 (enforced during fitting)
@@ -264,8 +258,10 @@ class ExtendedToftsModel(PKModel):
         """Fit the Extended Tofts model to observed tissue concentration data.
 
         Uses scipy.optimize.curve_fit with TRF method.
-        On TRF failure, parameters are zeroed (no fallback optimizer).
-        Enforces the constraint ve + vp <= 1.0 after fitting.
+        If the box-constrained fit violates ve + vp <= 1.0, refits with
+        vp = 1 - ve. Failure of the initial fit produces clipped zero
+        parameters. Failure of the boundary refit retains projected
+        parameters, clears uncertainties and marks the fit unconverged.
 
         Parameters
         ----------
@@ -299,10 +295,8 @@ class ExtendedToftsModel(PKModel):
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 
-        # curve_fit wrapper. The ve + vp <= 1 constraint is enforced by the
-        # feasible initial guess and the post-fit projection, NOT inside the
-        # objective: an in-objective proportional rescale is non-smooth at
-        # ve + vp = 1 and corrupts the finite-difference Jacobian, trapping TRF.
+        # Evaluate natural parameters directly. The joint-volume constraint
+        # is handled by the boundary refit below.
         def _curve_func(
             t: npt.NDArray[np.floating], *params: float
         ) -> npt.NDArray[np.floating]:
@@ -340,9 +334,8 @@ class ExtendedToftsModel(PKModel):
             fitted_params = [0.0] * self.n_parameters
 
         # If the box-constrained optimum violates the joint tissue-volume
-        # constraint, refit on its active boundary. Merely projecting the
-        # optimum afterward changes the fitted curve and leaves covariance
-        # describing a parameter set that is not reported.
+        # constraint, refit on its active boundary with covariance in the
+        # reduced parameter space.
         if converged and fitted_params[1] + fitted_params[2] > VP_VE_TOTAL_MAX:
             ve_lower = max(bounds[1][0], VP_VE_TOTAL_MAX - bounds[2][1])
             ve_upper = min(bounds[1][1], VP_VE_TOTAL_MAX - bounds[2][0])

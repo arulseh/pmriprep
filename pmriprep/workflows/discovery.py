@@ -769,6 +769,12 @@ def _classify_b1_data(
         b1_precomputed_file, b1_nominal_prep_fa, b1_method_detected,
         afi_4d_file, afi_tr1_ms, afi_tr2_ms, afi_flip_angle, and the
         eligible precomputed/4D-AFI candidate lists.
+
+    Raises
+    ------
+    ValueError
+        If a selected TFL B1 map has a nominal preparation flip angle below
+        20 degrees.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 

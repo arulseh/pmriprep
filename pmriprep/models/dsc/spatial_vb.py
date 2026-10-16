@@ -1,7 +1,6 @@
 """Spatial Variational Bayes for DSC perfusion.
 
-Wraps the standard batched VI to add MRF spatial priors that couple
-neighboring voxels' parameters, reducing noise without explicit smoothing.
+Wraps batched VI with an MRF prior coupling neighboring CBF parameters.
 """
 
 import logging
@@ -172,9 +171,9 @@ def _update_aK_penny(
     degree : npt.NDArray[np.int64]
         Degree vector (N,).
     q1 : float, optional
-        Gamma hyperprior shape (FABBER default 10).
+        Gamma hyperprior scale (default 10).
     q2 : float, optional
-        Gamma hyperprior rate (FABBER default 1).
+        Gamma hyperprior shape (default 1).
 
     Returns
     -------
@@ -299,6 +298,12 @@ def batched_dsc_spatial_vi_fit(
     -------
     DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters from spatial VB.
+
+    Raises
+    ------
+    ValueError
+        If the fitted parameters do not contain ``cbf`` or fewer than one
+        spatial sweep is requested.
     """
     fit_local = batched_dsc_vi_fit if local_fit is None else local_fit
     n_params = len(fitting_param_names)

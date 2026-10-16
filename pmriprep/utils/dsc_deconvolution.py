@@ -117,6 +117,11 @@ def build_toeplitz_matrix(
     -------
     np.ndarray
         Toeplitz matrix of shape (n_timepoints, n_timepoints).
+
+    Raises
+    ------
+    ValueError
+        If the AIF contains fewer than two samples.
     """
     from scipy.linalg import toeplitz  # type: ignore[import-untyped]
 
@@ -163,6 +168,11 @@ def build_volterra_matrix(
     -------
     np.ndarray
         Volterra convolution matrix of shape (n_timepoints, n_timepoints).
+
+    Raises
+    ------
+    ValueError
+        If the AIF contains fewer than two samples.
     """
     from scipy.linalg import toeplitz  # type: ignore[import-untyped]
 
@@ -567,6 +577,11 @@ def build_block_circulant_matrix(
     -------
     np.ndarray
         Block-circulant matrix of shape (2N, 2N) where N = len(aif).
+
+    Raises
+    ------
+    ValueError
+        If the AIF contains fewer than two samples.
     """
     n = len(aif)
     if n < 2:
@@ -1650,9 +1665,9 @@ def tikhonov_deconvolve(
         Signed flow-scaled residue over all N lags. CBV is its finite
         trapezoidal integral; residue MTT is CBV/CBF, or NaN for nonpositive
         area or a peak at or below the concentration tolerance. Lags without
-        forward sensitivity are determined by the penalty and do not recover
-        an unobserved physiological tail. The interface reports AUC-CBV/CBF
-        as its primary MTT. This estimator is sensitive to bolus delay.
+        forward sensitivity are determined by the penalty. The interface
+        reports AUC-CBV/CBF as its primary MTT. This estimator is sensitive
+        to bolus delay.
 
     Raises
     ------

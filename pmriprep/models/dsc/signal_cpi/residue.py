@@ -69,6 +69,12 @@ def changed_residue(knots: np.ndarray, values: np.ndarray, alpha: float) -> PPol
     -------
     PPoly
         First-segment Hermite modification of the original PCHIP polynomial.
+
+    Raises
+    ------
+    ValueError
+        If the slope ratio is nonfinite or outside [0, 3], or knots/values
+        are invalid for PCHIP interpolation.
     """
     if not np.isfinite(alpha) or not 0 <= alpha <= 3:
         raise ValueError("slope ratio must lie in [0,3]")
@@ -138,6 +144,13 @@ def dispersed_basis(convolution: EnsembleConvolution, widths: np.ndarray,
     -------
     ndarray
         AIF convolved with gamma transport and t*(1-t/h)^2 on [0,h].
+
+    Raises
+    ------
+    ValueError
+        If widths are not a finite positive vector, delays have a different
+        shape, or gamma mode/rate pairs do not have shape (n_widths, 2).
+        The convolution evaluator also validates delay and gamma values.
     """
     n = len(widths)
     if delays.shape != widths.shape or gamma.shape != (n, 2):

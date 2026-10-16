@@ -628,7 +628,8 @@ def _read_bids_sidecar(
         - echo_time_array: True if EchoTime is an array
         - echo_time_invalid: True if a supplied EchoTime is not a finite scalar
 
-        Values are floats/str or None if not found in the sidecar.
+        Values include numeric scalars, strings, booleans and token frozensets;
+        unavailable acquisition fields are None.
     """
     import json
 
@@ -975,7 +976,7 @@ def _find_previous_dsc_outputs(
     subject_id: str,
     session_id: Optional[str],
     work_dir: Optional[Path] = None,
-) -> dict[str, Optional[str]]:
+) -> dict[str, str | dict[str, Any] | None]:
     """Find previously-computed DSC outputs in the derivatives directory.
 
     When --skip-dsc is used, the DCE workflow may still need DSC CBV and
@@ -1000,7 +1001,7 @@ def _find_previous_dsc_outputs(
         Dict with keys: rel_cbv_map, ncbv_map, dsc_to_t1w_xfm (str paths
         or None), aif_qc, preload_qc, preprocessing_stats (dict or None).
     """
-    outputs: dict[str, Optional[str]] = {
+    outputs: dict[str, str | dict[str, Any] | None] = {
         "rel_cbv_map": None,
         "ncbv_map": None,
         "dsc_to_t1w_xfm": None,

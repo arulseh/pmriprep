@@ -603,8 +603,8 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         recommendations.append(QCRecommendation(
             QCAction.REVIEW,
             "AIF retained despite a poor gamma-variate fit (R²<0) because "
-            "synthetic fallback is disabled; CBF/MTT/Tmax may be unreliable "
-            "(AUC-nCBV and PSR remain interpretable)",
+            "synthetic fallback is disabled; CBF, nCBF, MTT and deconvolution "
+            "timing depend on this curve. Review the AIF and baseline QC",
             2,
         ))
 

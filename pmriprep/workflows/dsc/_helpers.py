@@ -449,6 +449,15 @@ def _apply_dsc_leakage_policy(
     -------
     tuple of (str, str, dict, str)
         Corrected concentration, K2 map, QC, and optional guidance archive.
+
+    Raises
+    ------
+    ValueError
+        If the leakage policy is unknown, the series has fewer than four
+        timepoints, or BSW inputs fail ``apply_k2_correction`` validation.
+    RuntimeError
+        If brain-mask and concentration shapes differ, BSW lacks raw signal,
+        or requested CPI guidance is unavailable.
     """
     import numpy as np
     import nibabel as nib  # type: ignore[import-untyped]
@@ -692,6 +701,11 @@ def _transform_nawm_to_dsc(
     -------
     str
         Path to NAWM mask in DSC space, or "" if no mask.
+
+    Raises
+    ------
+    ValueError
+        If a user-supplied NAWM mask does not match the DSC shape or affine.
     """
     from nipype.interfaces.base import isdefined
 
@@ -1297,7 +1311,7 @@ def _generate_dsc_leakage_qc(
 
     Returns
     -------
-    str
+    str or None
         Path to the generated QC plot PNG, or ``None`` if K2 is unavailable.
     """
     from pathlib import Path as _P
@@ -1382,7 +1396,7 @@ def _generate_dsc_fit_qc(
 
     Returns
     -------
-    str
+    str or None
         Path to the generated QC plot PNG, or ``None`` if unavailable.
     """
     import json
@@ -1521,6 +1535,12 @@ def _merge_qc_metrics(
     -------
     dict
         Combined QC metrics dictionary.
+
+    Raises
+    ------
+    ValueError
+        If raw and corrected AUC maps and the NAWM mask have inconsistent shapes
+        or affines when computing NAWM AUC medians.
     """
     from pathlib import Path
 

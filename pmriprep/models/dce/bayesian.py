@@ -72,7 +72,7 @@ QC_ESS_MIN: int = 100
 #: Minimum concentration noise SD (mM) used by the Bayesian fitting policy.
 #: Prevents profile likelihood sigma from collapsing to near-zero when
 #: the model fits data very well, which would make log-likelihood overwhelm
-#: the prior and reduce MAP to unconstrained MLE.
+#: the prior contribution to the MAP objective.
 EPSILON_SIGMA_CONCENTRATION: float = 0.001
 
 
@@ -140,8 +140,9 @@ class BayesianPKFitter:
     - fit_vi(): FABBER-style linearized Variational Bayes
     - fit_mcmc(): Full MCMC sampling with ensemble sampler
 
-    The fitter constructs Gaussian priors from the model's parameter definitions,
-    using the typical_range to determine prior mean and standard deviation.
+    The fitter constructs Gaussian priors in transformed parameter space.
+    Natural-space centers and scales come from each parameter's typical range
+    and are mapped to transformed-space moments with the delta method.
 
     For models with both ve and vp parameters (Extended Tofts, 2CXM), the
     shared joint-volume constraint is enforced during sampling.
@@ -151,9 +152,9 @@ class BayesianPKFitter:
     model : PKModel
         PK model to fit (ToftsModel, ExtendedToftsModel, etc.)
     priors : list of BayesianPrior
-        Gaussian priors for each parameter
+        Natural-space centers/scales and transformed Gaussian prior moments.
     noise_std : float or None
-        Assumed noise standard deviation (estimated if not provided)
+        Baseline noise scale for VI's precision prior and MCMC's sigma prior.
 
     Examples
     --------
@@ -177,8 +178,8 @@ class BayesianPKFitter:
         model : PKModel
             PK model implementing the PKModel interface.
         noise_std : float or None, optional
-            Optional noise standard deviation. If None, will be
-            estimated from the data during fitting.
+            Baseline noise scale for VI and MCMC. If None, estimated from
+            baseline variability. MAP estimates its noise scale from residuals.
         vp_prior_override : BayesianPrior or None, optional
             Optional informative prior for vp parameter,
             typically derived from DSC CBV. If provided, replaces the
@@ -342,16 +343,12 @@ class BayesianPKFitter:
         time_points: npt.NDArray[np.floating],
         weights: npt.NDArray[np.floating] | None = None,
     ) -> float:
-        """Compute log likelihood using profile likelihood noise estimation.
+        """Compute a Gaussian score with a residual-derived noise scale.
 
-        Noise standard deviation is estimated from residuals at each
-        evaluation (profile likelihood).
-        This self-tunes as the model approaches the data, giving a
-        balanced likelihood-prior tradeoff.
-
-        When weights are provided, the profile likelihood uses weighted
-        residuals to estimate noise variance, and the effective sample size
-        is sum(weights) instead of n. This downweights high-motion frames.
+        Without weights, sigma is the population standard deviation of the
+        residuals. With weights, sigma is sqrt(mean(weights * residuals**2))
+        and the logarithmic term uses sum(weights) effective observations.
+        Both paths floor sigma at EPSILON_SIGMA_CONCENTRATION.
 
         Parameters
         ----------
@@ -365,7 +362,7 @@ class BayesianPKFitter:
             Time points (minutes).
         weights : numpy.ndarray or None, optional
             Optional per-frame weights in [0, 1]. If provided,
-            inflates noise variance for high-FD frames.
+            scales each frame's squared residual contribution.
 
         Returns
         -------
@@ -374,11 +371,9 @@ class BayesianPKFitter:
 
         Notes
         -----
-        With profile likelihood, the log-likelihood reduces to
-        -n * log(std(residuals)) + const, equivalent to penalized least
-        squares with the Gaussian prior providing L2 regularization.
-        Laplace approximation uncertainties are approximate under profile
-        likelihood -- use for relative voxel comparison, not calibrated CIs.
+        The score is -n_eff * log(sigma) - weighted_RSS / (2 * sigma**2).
+        MAP combines it with the Gaussian prior in transformed space and
+        uses the local objective Hessian for its Laplace approximation.
         """
         # Compute model prediction
         try:
@@ -394,7 +389,7 @@ class BayesianPKFitter:
         residuals = tissue_curve - predicted
 
         if weights is not None:
-            # Weighted profile likelihood: inflate noise variance for high-FD frames
+            # Divide weighted RSS by the acquired frame count for the scale.
             sigma_val = float(np.sqrt(np.mean(weights * residuals**2)))
             n_eff = float(np.sum(weights))
         else:
@@ -427,9 +422,8 @@ class BayesianPKFitter:
     ) -> float:
         """Compute log likelihood with explicit noise sigma (for MCMC).
 
-        Unlike _log_likelihood which uses profile likelihood, this method
-        uses the provided sigma directly, suitable for MCMC where sigma
-        is sampled as a free parameter.
+        Uses the provided sigma directly. MCMC samples its logarithm as a
+        free parameter.
 
         Parameters
         ----------
@@ -506,6 +500,12 @@ class BayesianPKFitter:
         -------
         numpy.ndarray
             Hessian matrix (n_params x n_params).
+
+        Raises
+        ------
+        ValueError
+            If the supplied or default prior SD vector has a different length
+            from the parameter vector.
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
@@ -620,7 +620,10 @@ class BayesianPKFitter:
         Returns
         -------
         FitResult
-            FitResult with parameters, uncertainties, and credible intervals.
+            Parameters and fit diagnostics, with Laplace uncertainties and
+            credible intervals when requested and available. Failed Hessian
+            inversion gives NaN uncertainties and no intervals; disabling
+            uncertainty computation leaves both dictionaries empty.
         """
         if sloppy:
             max_iter = 100
@@ -635,13 +638,8 @@ class BayesianPKFitter:
         upper_bounds_t = [p.upper_bound for p in self.priors]
 
         # Objective in transformed space.
-        # Prior is evaluated as a Gaussian directly on transformed params
-        # (== log-normal on natural-space LOG params, == logit-normal on
-        # natural-space LOG_LOGIT params). This matches the VI path's
-        # convention and the FABBER convention. Evaluating the prior in
-        # natural space and adding a Jacobian recovered the MAP of a
-        # *different* prior distribution, so MAP and VI returned different
-        # posterior modes for the same model when the prior was informative.
+        # The Gaussian prior is defined on transformed parameters, yielding
+        # log-normal natural-space LOG priors and logit-normal fraction priors.
         def neg_log_posterior_t(params_t: npt.NDArray[np.floating]) -> float:
             log_prior_t = compute_log_prior(
                 params_t, self.priors, transformed=True
@@ -670,8 +668,7 @@ class BayesianPKFitter:
             return min(-(log_prior_t + log_lik), 1e30)
 
         # Multi-start: try NLLS warm-start, prior mean, and data-driven guess.
-        # Use Nelder-Mead (gradient-free) because the profile likelihood
-        # has non-smooth gradients that cause L-BFGS-B to stall.
+        # Nelder-Mead handles the residual-derived noise scale and hard bounds.
         x0_prior_nat = np.array(self.model.get_initial_guess(), dtype=np.float64)
         x0_data_nat = np.array(
             self.model.estimate_initial_guess(tissue_curve, aif, time_points),
@@ -779,7 +776,7 @@ class BayesianPKFitter:
                 # boundary objective (1e30) or violate constraints.
                 # np.linalg.inv on a non-finite matrix returns silently
                 # NaN-laden output rather than raising, so guard explicitly
-                # to route into the prior-std fallback below.
+                # to mark uncertainty unavailable when inversion is unusable.
                 if not np.all(np.isfinite(hessian_t)):
                     raise np.linalg.LinAlgError("non-finite Hessian")
                 cov_t = np.linalg.inv(
@@ -1246,7 +1243,8 @@ class BayesianPKFitter:
         n_samples : int, optional
             Number of samples to draw (after burn-in).
         n_walkers : int or None, optional
-            Number of ensemble walkers (default: 2 * n_dims + 2).
+            Number of ensemble walkers (default: max(2 * n_dims + 2, 10)).
+            n_dims includes the sampled log noise scale.
         n_burnin : int or None, optional
             Number of burn-in samples (default: n_samples // 2).
         sloppy : bool, optional
@@ -1326,7 +1324,7 @@ class BayesianPKFitter:
             log_p -= (sigma**2) / (2.0 * noise_std_baseline**2)
             log_p += log_sigma  # Jacobian |d(sigma)/d(log_sigma)| = sigma
 
-            # Likelihood with sampled sigma (not profile)
+            # Likelihood with sampled sigma.
             log_lik = self._log_likelihood_with_sigma(
                 model_params, tissue_curve, aif, time_points, sigma,
                 weights=weights,
@@ -1483,10 +1481,10 @@ def create_vp_prior_from_dsc(
 ) -> BayesianPrior:
     """Create an informative vp prior from DSC-derived plasma volume.
 
-    The prior is a Gaussian centered on the DSC-derived vp value with
-    standard deviation proportional to the value (relative uncertainty).
-
-    A minimum std of 0.001 prevents degenerate priors when vp is very small.
+    The DSC-derived value and a natural-space scale of
+    max(vp_value * relative_uncertainty, 0.001) define the center and scale.
+    Their logit transform and delta-method scale define the Gaussian prior
+    used by the fitter in transformed space.
 
     Parameters
     ----------
@@ -1494,7 +1492,7 @@ def create_vp_prior_from_dsc(
         DSC-derived vp value for this voxel.
     relative_uncertainty : float, optional
         Relative uncertainty (fraction). Default 0.2
-        means +/- 20% of the vp value.
+        sets a natural-space scale of 20% of vp before applying the floor.
 
     Returns
     -------

@@ -302,11 +302,16 @@ def signal_to_concentration(
     ValueError
         If r1_relaxivity is missing, non-finite, or non-positive.
     ValueError
-        If baseline_frames exceeds signal timepoints.
+        If baseline_frames is below 1 or at least the number of timepoints.
     ValueError
         If T1 map dimensions don't match signal spatial dims.
     ValueError
-        If B1 map dimensions don't match signal spatial dims.
+        If a B1 map has the wrong shape for 4D signal, or a QC mask is
+        supplied without matching 4D signal.
+    ValueError
+        If plasma conversion is requested with nonfinite hematocrit or a
+        value outside [0, 1), or default T1 lookup requires a field strength
+        that is nonfinite or outside [0.5, 7] T.
 
     Notes
     -----
@@ -595,11 +600,8 @@ def signal_to_concentration(
             concentration = (r1_dynamic - r1_baseline) / effective_r1
 
     # Subtract per-voxel baseline concentration and retain signed noise.
-    # Rectifying the result would reintroduce a half-normal positive bias
-    # (~0.4 × σ_C), inflating Ktrans in low-permeability tissue.
-    # This effectively replaces the single-timepoint R1(0) from the T1 map
-    # with the temporal mean of pre-bolus R1, which is more accurate and
-    # corrects any systematic offset between VFA and dynamic acquisitions.
+    # This centers converted concentration on the mean of its finite
+    # pre-bolus samples. The supplied T1 still sets the signal inversion.
     # Works for both 4D (x,y,z,t) and 1D (t,) arrays via axis=-1.
     baseline_window = concentration[..., :baseline_frames]
     baseline_valid = np.isfinite(baseline_window)
@@ -757,6 +759,11 @@ def concentration_to_plasma(
     numpy.ndarray
         Plasma concentration in mM.
 
+    Raises
+    ------
+    ValueError
+        If hematocrit is nonfinite or outside [0, 1).
+
     Notes
     -----
     - Typical hematocrit values: 0.38-0.46 (38-46%)
@@ -789,6 +796,11 @@ def plasma_to_blood_concentration(
     -------
     numpy.ndarray
         Whole blood concentration in mM.
+
+    Raises
+    ------
+    ValueError
+        If hematocrit is nonfinite or outside [0, 1).
     """
     _validate_hematocrit(hematocrit)
     return concentration_plasma * (1.0 - hematocrit)

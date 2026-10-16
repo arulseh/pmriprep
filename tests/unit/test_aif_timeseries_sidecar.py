@@ -159,7 +159,6 @@ class TestOptionalKeysOmitted:
         block = sidecar["PerfusionProcessing"]["AIF"]
         assert block["Source"] == "synthetic"
         assert block["DetectionLevel"] == "synthetic"
-        assert block["SyntheticFallbackReason"] == "cascade_exhausted"
         assert "FWHM" not in block
 
 

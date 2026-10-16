@@ -1,8 +1,8 @@
 """Two-Compartment Exchange pharmacokinetic model (2CXM).
 
 Implements the Two-Compartment Exchange Model for
-DCE-MRI analysis. This model accounts for flow-limited contrast agent exchange
-and is appropriate for tissues with high permeability relative to flow.
+DCE-MRI analysis. This model represents plasma flow and exchange with the
+extravascular extracellular space as separate processes.
 
 The model describes contrast agent kinetics in terms of:
     - Fp: Plasma flow rate (mL/min/100mL of tissue)
@@ -39,71 +39,61 @@ from pmriprep.utils.dce_metrics import compute_kep
 
 
 class TwoCompartmentExchangeModel(PKModel):
-    """Two-Compartment Exchange Model (2CXM) for flow-limited kinetics.
+    """Two-Compartment Exchange Model (2CXM) for plasma flow and exchange.
 
     The 2CXM describes contrast agent kinetics using a two-compartment model
     where the plasma compartment (vp) exchanges with the extravascular
     extracellular space (ve) through a permeable capillary membrane.
 
     System of differential equations:
-        vp × dCp/dt = Fp × (Ca(t) - Cp) - PS × (Cp - Ce)
-        ve × dCe/dt = PS × (Cp - Ce)
+        vp × dCp/dt = fp × (Ca(t) - Cp) - ps × (Cp - Ce)
+        ve × dCe/dt = ps × (Cp - Ce)
 
     where:
         Ca = arterial input function (AIF)
         Cp = plasma compartment concentration
         Ce = EES compartment concentration
+        fp = Fp / 100 and ps = PS / 100, in min⁻¹
 
     The tissue concentration is:
         C_t(t) = vp × Cp(t) + ve × Ce(t)
 
     Analytical solution uses eigenvalue decomposition:
-        C_t(t) = Fp × [A1 × exp(-K1×t) + A2 × exp(-K2×t)] ⊗ Ca(t)
+        C_t(t) = [A1 × exp(-K1×t) + A2 × exp(-K2×t)] ⊗ Ca(t)
 
-    where K1, K2 are eigenvalues and A1, A2 are coefficients derived from
-    the model parameters.
+    K1 and K2 are positive decay rates, the negatives of the system
+    eigenvalues. A1 and A2 include the flow scale and sum to Fp / 100.
 
     Parameters
     ----------
         Fp: Plasma flow rate (mL/min/100mL), 0-500
             - Represents blood plasma flow through the tissue
             - Higher values indicate more perfusion
-            - Typical brain values: 40-60 mL/min/100mL
-            - Tumor values: often elevated 60-120 mL/min/100mL
 
         PS: Permeability-surface area product (mL/min/100mL), 0-500
             - Represents capillary permeability × surface area
             - Higher values indicate more permeable vessels
-            - Typical brain values: 0-5 mL/min/100mL (intact BBB)
-            - Tumor values: can exceed 20 mL/min/100mL
 
         ve: Extravascular extracellular volume fraction, 0-1
             - Fraction of tissue that is interstitial space
-            - Typical brain values: 0.1-0.3
-            - Tumor values: often increased 0.3-0.6
 
         vp: Plasma volume fraction, 0-1
             - Fraction of tissue that is blood plasma
-            - Typical brain values: 0.01-0.05
-            - Well-vascularized tumors: can exceed 0.1
 
     Derived parameters:
         E: Extraction fraction = PS / (Fp + PS)
             - Fraction of contrast extracted in single capillary pass
             - Range: 0 (no extraction) to 1 (complete extraction)
 
-        Ktrans: Volume transfer constant = E × Fp (min⁻¹)
-            - Equivalent to Tofts Ktrans in exchange limit
-            - Ktrans = PS when Fp >> PS (permeability limited)
-            - Ktrans = Fp when PS >> Fp (flow limited)
+        Ktrans: Derived volume transfer constant = E × Fp / 100 (min⁻¹)
 
         kep: Efflux rate constant = Ktrans / ve (min⁻¹)
             - Rate of contrast efflux from EES back to plasma
 
     Model regimes:
-        - Flow-limited (PS >> Fp): Ktrans ≈ Fp
-        - Permeability-limited (Fp >> PS): Ktrans ≈ PS
-        - Mixed regime: Ktrans = E × Fp
+        - Flow-limited (PS >> Fp): Ktrans ≈ Fp / 100
+        - Permeability-limited (Fp >> PS): Ktrans ≈ PS / 100
+        - Mixed regime: Ktrans = E × Fp / 100
     """
 
     @property
@@ -241,8 +231,8 @@ class TwoCompartmentExchangeModel(PKModel):
         The two-compartment system can be written as:
             d/dt [Cp; Ce] = A × [Cp; Ce] + B × Ca(t)
 
-        where A is the system matrix. The eigenvalues of A give the decay
-        rates K1 and K2, and the eigenvectors give the coefficients A1 and A2.
+        where A is the system matrix. K1 and K2 are the negatives of its
+        eigenvalues. A1 and A2 include the plasma flow scale Fp / 100.
 
         Parameters
         ----------
@@ -259,8 +249,8 @@ class TwoCompartmentExchangeModel(PKModel):
         -------
         tuple
             Tuple of (K1, K2, A1, A2) where:
-                K1, K2: Eigenvalues (decay rates, min⁻¹)
-                A1, A2: Coefficients for exponential terms
+                K1, K2: Positive decay rates (min⁻¹)
+                A1, A2: Flow-scaled coefficients (min⁻¹)
         """
         # Guard against division by zero
         vp = max(vp, EPSILON_VP)
@@ -275,7 +265,8 @@ class TwoCompartmentExchangeModel(PKModel):
         ps_rate = ps / 100.0
 
         # System matrix elements (after normalizing by volume fractions)
-        # Matrix A = [-(Fp + PS)/vp, PS/vp; PS/ve, -PS/ve]
+        # Matrix A = [-(fp_rate + ps_rate)/vp, ps_rate/vp;
+        #             ps_rate/ve, -ps_rate/ve]
 
         # Rate constants
         k_pe = ps_rate / vp  # Transfer rate from plasma to EES
@@ -296,7 +287,7 @@ class TwoCompartmentExchangeModel(PKModel):
         k1 = (-trace + sqrt_disc) / 2
         k2 = det / k1 if k1 > 0 else 0.0
 
-        # Ensure K1 > K2 (K1 is the larger eigenvalue)
+        # Order the decay rates so K1 >= K2.
         if k2 > k1:
             k1, k2 = k2, k1
 
@@ -308,15 +299,12 @@ class TwoCompartmentExchangeModel(PKModel):
         # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
         #
         # A1, A2 are the residues of the bi-exponential tissue impulse
-        # response I(t) = Fp·R(t) for the 2-compartment exchange system,
+        # response I(t) = fp_rate·R(t) for the 2-compartment exchange system,
         # obtained from the eigen-decomposition of the exchange matrix:
-        # A1 = Fp × (K1 - k_ep - k_pe) / (K1 - K2)
-        # A2 = Fp × (k_ep + k_pe - K2) / (K1 - K2)
+        # A1 = fp_rate × (K1 - k_ep - k_pe) / (K1 - K2)
+        # A2 = fp_rate × (k_ep + k_pe - K2) / (K1 - K2)
         #
-        # The k_pe terms cancel in A1 + A2 = Fp, so the impulse response
-        # starts at the plasma inflow rate I(0) = Fp. Omitting k_pe (which
-        # preserves I(0) but not the fast/slow partition) collapses the slow
-        # extravascular amplitude toward zero and breaks the Tofts limit.
+        # A1 + A2 = fp_rate, so I(0) equals the fractional plasma inflow rate.
 
         # Avoid division by zero in degenerate case
         if abs(k1 - k2) < EPSILON_EIGENVALUE:
@@ -432,8 +420,10 @@ class TwoCompartmentExchangeModel(PKModel):
         """Fit the 2CXM model to observed tissue concentration data.
 
         Uses scipy.optimize.curve_fit with TRF method.
-        On TRF failure, parameters are zeroed (no fallback optimizer).
-        Enforces the constraint ve + vp <= 1.0 after fitting.
+        If the box-constrained fit violates ve + vp <= 1.0, refits with
+        vp = 1 - ve. Failure of the initial fit produces clipped zero
+        parameters. Failure of the boundary refit retains projected
+        parameters, clears uncertainties and marks the fit unconverged.
 
         Parameters
         ----------
@@ -467,10 +457,8 @@ class TwoCompartmentExchangeModel(PKModel):
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 
-        # curve_fit wrapper. The ve + vp <= 1 constraint is enforced by the
-        # feasible initial guess and the post-fit projection, NOT inside the
-        # objective: an in-objective proportional rescale is non-smooth at
-        # ve + vp = 1 and corrupts the finite-difference Jacobian, trapping TRF.
+        # Evaluate natural parameters directly. The joint-volume constraint
+        # is handled by the boundary refit below.
         def _curve_func(
             t: npt.NDArray[np.floating], *params: float
         ) -> npt.NDArray[np.floating]:
@@ -512,8 +500,7 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # If the box-constrained optimum violates the joint tissue-volume
         # constraint, solve the actual three-dimensional active-boundary
-        # problem. Projection alone changes the fitted curve without finding
-        # the constrained least-squares optimum.
+        # problem with covariance in the reduced parameter space.
         if converged and fitted_params[2] + fitted_params[3] > VP_VE_TOTAL_MAX:
             ve_lower = max(bounds[2][0], VP_VE_TOTAL_MAX - bounds[3][1])
             ve_upper = min(bounds[2][1], VP_VE_TOTAL_MAX - bounds[3][0])
@@ -612,7 +599,7 @@ class TwoCompartmentExchangeModel(PKModel):
 
         Derived parameters:
             E = PS / (Fp + PS): Extraction fraction
-            Ktrans = E × Fp: Volume transfer constant (min⁻¹)
+            Ktrans = E × Fp / 100: Volume transfer constant (min⁻¹)
             kep = Ktrans / ve: Efflux rate constant (min⁻¹)
 
         Parameters
@@ -635,7 +622,7 @@ class TwoCompartmentExchangeModel(PKModel):
         # Extraction fraction
         e = ps / fp_plus_ps
 
-        # Volume transfer constant (equivalent to Tofts Ktrans, min^-1)
+        # Derived volume transfer constant in min^-1.
         ktrans = e * fp / 100.0
 
         kep = compute_kep(ktrans, ve)

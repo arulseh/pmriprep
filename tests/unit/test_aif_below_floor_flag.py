@@ -76,9 +76,9 @@ class TestFallbackWarning:
         )
         assert w is not None
         assert "retained despite a poor gamma-variate fit" in w
-        # Physics wording: CBF/MTT/Tmax unreliable; TTP/PSR/AUC-nCBV survive.
-        assert "Tmax may" in w and "AUC-nCBV" in w
-        assert "Tmax are valid" not in w
+        assert "R²=-0.40" in w
+        assert "CBF, nCBF, MTT and deconvolution timing depend on this curve" in w
+        assert "remain interpretable" not in w
 
     def test_none_for_normal_real_aif(self) -> None:
         from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
@@ -87,13 +87,13 @@ class TestFallbackWarning:
             {"aif_detection": {"detection_method": "atlas_strict"}}, "DSC",
         ) is None
 
-    def test_synthetic_message_unchanged(self) -> None:
+    def test_synthetic_message_identifies_gamma_template(self) -> None:
         from pmriprep.utils.contrast_agent import collect_aif_fallback_warning
 
         w = collect_aif_fallback_warning(
             {"aif_detection": {"detection_method": "synthetic"}}, "DSC",
         )
-        assert w is not None and "population template" in w
+        assert w is not None and "synthetic gamma-variate template" in w
 
 
 # ---------------------------------------------------------------------------

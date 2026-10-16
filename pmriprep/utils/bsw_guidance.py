@@ -120,6 +120,13 @@ def build_bsw_guidance(
     -------
     BSWGuidance
         Separate coefficient/reference guidance and explicit availability.
+
+    Raises
+    ------
+    ValueError
+        If concentration, coefficients or masks have inconsistent dimensions,
+        TR is not finite and positive, the baseline window is invalid, or
+        reference membership/coefficient provenance does not match the regression.
     """
     values = np.asarray(concentration, dtype=np.float64)
     coefficients = np.asarray(k2, dtype=np.float64).copy()

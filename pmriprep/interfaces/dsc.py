@@ -556,6 +556,11 @@ class DSCRegistration(SimpleInterface):
         -------
         Any
             Updated runtime object.
+
+        Raises
+        ------
+        RuntimeError
+            If both registration paths fail.
         """
         import logging
         import shutil

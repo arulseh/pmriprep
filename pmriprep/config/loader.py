@@ -85,7 +85,8 @@ def load_config(path: Union[str, Path]) -> Dict[str, Any]:
     Raises
     ------
     ValueError
-        If the file extension is not .yaml, .yml, or .json.
+        If the file extension is unsupported, or the configuration root,
+        section names, section mappings or option names are invalid.
     FileNotFoundError
         If the configuration file does not exist.
     """
@@ -319,6 +320,13 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     -------
     DSCConfig
         Configured DSCConfig instance.
+
+    Raises
+    ------
+    ValueError
+        If an option name is unknown or a value fails configuration validation.
+    TypeError
+        If a supplied option has a type rejected by the configuration class.
     """
     dsc_dict = config_dict.get("dsc", {}).copy()
     valid_fields = {f.name for f in DSCConfig.__dataclass_fields__.values()}
@@ -358,6 +366,13 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     -------
     DCEConfig
         Configured DCEConfig instance.
+
+    Raises
+    ------
+    ValueError
+        If an option name is unknown or a value fails configuration validation.
+    TypeError
+        If a supplied option has a type rejected by the configuration class.
     """
     dce_dict = config_dict.get("dce", {}).copy()
 
@@ -403,6 +418,13 @@ def build_anat_config(config_dict: Dict[str, Any]) -> AnatConfig:
     -------
     AnatConfig
         Configured AnatConfig instance.
+
+    Raises
+    ------
+    ValueError
+        If an option name is unknown or a value fails configuration validation.
+    TypeError
+        If a supplied option has a type rejected by the configuration class.
     """
     anat_dict = config_dict.get("anat", {}).copy()
 
@@ -429,6 +451,13 @@ def build_tumor_seg_config(config_dict: Dict[str, Any]) -> TumorSegConfig:
     -------
     TumorSegConfig
         Configured TumorSegConfig instance.
+
+    Raises
+    ------
+    ValueError
+        If an option name is unknown or a value fails configuration validation.
+    TypeError
+        If a supplied option has a type rejected by the configuration class.
     """
     tumor_seg_dict = config_dict.get("tumor_seg", {}).copy()
 

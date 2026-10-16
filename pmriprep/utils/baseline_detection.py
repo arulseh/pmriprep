@@ -1,23 +1,16 @@
 """Derivative-anchored baseline detection for DSC and DCE perfusion MRI.
 
-Two-pass approach that solves the circular dependency problem: z-score
-methods need a baseline_window, but choosing the window requires knowing
-where the baseline ends.
+The derivative stage anchors a baseline window for z-score refinement.
+At frame intervals below 4 s, it combines maximum-slope backtracking with
+the second-derivative peak. Otherwise it uses the slope estimate alone.
 
-**Stage 1 — Derivative Anchor:** Find bolus arrival from the largest
-derivative event (max-slope backtrack + 2nd derivative peak).  These
-methods need NO baseline_window and are immune to preload washout.
+Refinement uses ``max(3, anchor - 2)`` baseline frames and can move arrival
+1–3 frames earlier when enough methods agree and the magnitude check passes.
+The minimum baseline count floors the final arrival index.
 
-**Stage 2 — Z-Score Refinement:** Use the Stage 1 anchor to safely
-set ``baseline_window = anchor - 2``, then run z-score methods to
-refine ±1-2 frames.  Asymmetric: earlier detection is useful (catches
-gradual onset); much later detection is suspicious (preload noise).
-
-**Stage 3 — Multi-Signal Consensus:** When multiple signal
-representations are available (p99, p90, mean), run Stage 1+2 on each
-and take the median.
-
-**Stage 4 — Confidence:** Report HIGH/MEDIUM/LOW for QC.
+With multiple signal representations, a weighted median combines their
+arrival estimates; low-confidence estimates receive half weight. Diagnostics
+report the detection stages and high, medium or low confidence.
 """
 
 import logging
@@ -37,12 +30,11 @@ def robust_noise_sigma(
 ) -> npt.NDArray[np.floating]:
     """Robust noise SD from the MAD of successive differences along ``axis``.
 
-    Scales the MAD of first differences by 1.4826 (MAD to Gaussian sigma) and
-    1/sqrt(2) (successive differencing doubles the variance). The median is
-    insensitive to a sparse signal excursion (e.g. a bolus), so it reads the
-    effective noise level. Assumes the excursion is sparse relative to the series
-    length; a sustained deterministic slope leaks into the differences and
-    inflates sigma. Callers must ensure at least two samples along ``axis``.
+    Scales the MAD of first differences by 1.4826 and 1/sqrt(2), giving the
+    noise SD for independent Gaussian samples. Sparse signal excursions have
+    limited influence on the median. Changing deterministic slopes and temporal
+    noise correlations can affect the estimate. Callers must ensure at least
+    two samples along ``axis``.
 
     Parameters
     ----------
@@ -80,7 +72,7 @@ def _detect_max_slope_backtrack(
 ) -> Optional[int]:
     """Find bolus arrival by backtracking from the largest derivative.
 
-    Smooths the derivative with a 3-frame boxcar to reject motion spikes,
+    Smooths the derivative with a 3-frame boxcar to reduce isolated spikes,
     skips the first 2 frames (T1 recovery artifacts), then walks backward
     from the peak slope to where the derivative drops below
     ``backtrack_fraction`` of the maximum.
@@ -92,7 +84,7 @@ def _detect_max_slope_backtrack(
 
         raw_deriv = np.diff(signal.astype(np.float64))
 
-        # 3-frame boxcar smoothing to reject single-frame motion spikes
+        # Three-frame averaging reduces isolated derivative spikes.
         deriv_smooth = raw_deriv.copy()
         if len(deriv_smooth) >= 3:
             kernel = np.ones(3) / 3.0
@@ -105,7 +97,7 @@ def _detect_max_slope_backtrack(
         if len(deriv_search) == 0 or np.max(deriv_search) <= 0:
             return None
 
-        # Find peak on smoothed (motion-spike resistant)
+        # Find the largest positive smoothed derivative.
         peak_idx = int(np.argmax(deriv_search)) + search_start
         backtrack_thresh = backtrack_fraction * float(deriv_smooth[peak_idx])
 
@@ -122,10 +114,7 @@ def _detect_max_slope_backtrack(
         # the bolus derivative 1 frame backward, so source the threshold
         # from the max raw derivative within the boxcar's support
         # (peak_idx, peak_idx+1) and allow advancing up to peak_idx+1.
-        # Can only move FORWARD; never past motion spikes.
-        # Edge case: peak_idx == len(raw_deriv) - 1 collapses look_end
-        # to peak_idx + 1; loop guard then fails immediately and the
-        # block is a no-op (matches pre-patch behavior).
+        # Advance arrival while the raw derivative remains below threshold.
         look_end = min(peak_idx + 2, len(raw_deriv))
         raw_thresh = backtrack_fraction * float(np.max(raw_deriv[peak_idx:look_end]))
         while arrival < look_end and raw_deriv[arrival] < raw_thresh:
@@ -142,9 +131,9 @@ def _detect_second_derivative_peak(
 ) -> Optional[int]:
     """Find bolus onset from the peak of the 2nd derivative (acceleration).
 
-    The 2nd derivative peaks where the bolus curve accelerates most —
-    typically 1-2 frames before the maximum slope.  Only reliable when
-    the bolus rising edge spans >= 3 frames (FWHM/TR >= 2).
+    Smooths the first differences with a three-frame boxcar, then selects
+    the largest positive second difference after the initial search guard.
+    The returned index is floored at ``min_baseline``.
     """
     try:
         n = len(signal)
@@ -245,7 +234,7 @@ def _detect_cusum(
 # Core: single-signal Stage 1 + Stage 2
 # ---------------------------------------------------------------------------
 
-_TR_THRESHOLD_2ND_DERIV = 4.0  # seconds — below this, 2nd derivative is useful
+_TR_THRESHOLD_2ND_DERIV = 4.0  # Frame-interval cutoff for the second-derivative anchor.
 
 
 def _detect_single_signal(
@@ -276,7 +265,7 @@ def _detect_single_signal(
         else:
             anchor = anchor_slope if anchor_slope is not None else anchor_d2
     else:
-        # Long TR: 2nd derivative unreliable (FWHM/TR < 2)
+        # Coarser sampling uses only the slope anchor.
         anchor = anchor_slope
         anchor_d2 = None
 
@@ -321,8 +310,7 @@ def _detect_single_signal(
         if abs(bl_mean) > 1e-6:
             frac_change = abs(float(signal[refined]) - bl_mean) / abs(bl_mean)
         else:
-            # Near-zero baseline (e.g., DSC concentration domain):
-            # any detectable change above noise is meaningful
+            # Near-zero baselines use an absolute 1e-6 magnitude threshold.
             frac_change = (
                 float("inf") if abs(float(signal[refined])) > 1e-6 else 0.0
             )
@@ -385,14 +373,16 @@ def detect_baseline_ensemble(
 ) -> tuple[int, dict[str, Any]]:
     """Detect bolus arrival via derivative-anchored two-pass ensemble.
 
-    **Stage 1:** Derivative-based anchor (max-slope backtrack + 2nd
-    derivative peak).  Needs no baseline_window.  Immune to preload.
+    **Stage 1:** Derivative-based anchor from maximum-slope backtracking,
+    combined with the second-derivative peak when TR is below 4 s.
 
     **Stage 2:** Z-score refinement using Stage 1 baseline window.
-    Asymmetric: earlier detection refines; much later is suspicious.
+    Agreement can refine arrival 1–3 frames earlier; later detections
+    contribute to confidence while retaining the anchor.
 
     **Stage 3:** Multi-signal consensus (when ``additional_signals``
-    provided).  Median of per-signal Stage 1+2 results.
+    provided). Weighted median of per-signal Stage 1+2 results, with
+    half weight for low-confidence estimates.
 
     **Stage 4:** Confidence scoring (HIGH/MEDIUM/LOW).
 
@@ -403,7 +393,8 @@ def detect_baseline_ensemble(
     tr : float, optional
         Repetition time in seconds.
     min_baseline : int, optional
-        Minimum allowed baseline frames.
+        Minimum returned arrival index, also used as the fallback when
+        detection cannot establish an anchor.
     additional_signals : list of numpy.ndarray, optional
         Optional list of additional signal curves
         (e.g., p90, mean) for multi-signal consensus.

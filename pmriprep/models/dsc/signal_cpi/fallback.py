@@ -67,6 +67,13 @@ def resolve_fallbacks(
         Accepted CPI, actual oSVD replacement, or missing measurements with
         distinct reasons. Numerical nonconvergence alone never triggers oSVD.
 
+    Raises
+    ------
+    ValueError
+        If fallback concentration does not match the signal grid, the OI
+        threshold is not finite and positive, or output indices are not unique
+        in-range integers.
+
     Notes
     -----
     This does not compute or replace primary area-based CBV. Unexpected

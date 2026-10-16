@@ -602,9 +602,9 @@ class TestCollectDefaultWarnings:
         pytest.param(
             {"aif_detection": {"detection_method": "synthetic"}},
             ("DSC",),
-            ("Parker population template",
+            ("synthetic gamma-variate template", "AIF shape and timing",
              "automatic detection found no acceptable arterial curve"),
-            (),
+            ("Parker", "remain usable", "first-pass integral"),
             id="dsc-synthetic",
         ),
         pytest.param(
@@ -614,6 +614,13 @@ class TestCollectDefaultWarnings:
             ("no arterial candidates survived automatic detection",),
             (),
             id="dsc-fallback-reason",
+        ),
+        pytest.param(
+            {"aif_detection": {"detection_method": "synthetic",
+                               "synthetic_fallback_reason": "no_candidates"},
+             "config": {"aif_source": "synthetic"}},
+            ("DSC",), ("gamma-variate template", "user-selected"),
+            ("automatic detection",), id="dsc-selected-template",
         ),
         pytest.param({"preprocessing": {}}, ("DCE",), (), (),
                      id="dce-no-detection"),

@@ -435,7 +435,8 @@ def apply_t1_correction(
     t1_map : ndarray
         T1 map in milliseconds.
     field_strength : float
-        Scanner field strength in Tesla (1.5 or 3.0).
+        Scanner field strength in Tesla, from 0.5 to 7.0; assigned to the
+        nearest 1.5, 3.0 or 7.0 T reference bin.
     correction_mode : str
         Correction strategy: ``none``, ``fallback``, or ``auto``.
     brain_mask : ndarray, optional
@@ -469,6 +470,12 @@ def apply_t1_correction(
         Corrected T1 map in milliseconds.
     correction_result : T1CorrectionResult
         Information about the correction applied.
+
+    Raises
+    ------
+    ValueError
+        If field strength is outside the supported finite range, or valid T1
+        values are present and the correction mode is not recognized.
     """
     field_key = get_field_strength_key(field_strength)
     t1_ref = T1_TISSUE_REFERENCE[field_key]

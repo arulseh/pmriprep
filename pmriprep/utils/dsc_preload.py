@@ -121,6 +121,11 @@ def get_preload_thresholds(
     -------
     PreloadThresholds
         PreloadThresholds (in ΔR2* s⁻¹) scaled for the specified agent.
+
+    Raises
+    ------
+    ValueError
+        If ``agent_standard_dose`` is non-positive.
     """
     if agent_standard_dose <= 0:
         raise ValueError(
@@ -193,8 +198,8 @@ def residual_equivalent_fraction_from_delta_r2(
 
     Raises
     ------
-        ValueError: If ``agent_standard_dose <= 0`` (consistent with
-            :func:`get_preload_thresholds`).
+    ValueError
+        If ``agent_standard_dose`` is non-positive.
     """
     if agent_standard_dose <= 0:
         raise ValueError(
@@ -353,8 +358,10 @@ def detect_preload_from_signal(
 
     Raises
     ------
-        ValueError: If signal is not 4D.
-        ValueError: If TE is not positive.
+    ValueError
+        If the signal is not 4D, ``te <= 0``, or ``baseline_frames`` is at
+        least the number of timepoints. With usable baseline voxels,
+        non-positive ``agent_standard_dose`` also raises.
     """
     # Validate inputs
     if signal.ndim != 4:
@@ -859,6 +866,11 @@ def _select_bsw_reference(
     -------
     _BSWReferenceSelection or None
         Reference mean and voxel membership, or None for insufficient support.
+
+    Raises
+    ------
+    ValueError
+        If raw signal and concentration have different shapes.
     """
     # Reference support floors target a p95 whole-brain median-K2 perturbation
     # below 0.001 s^-1. The warning level additionally targets a p95 relative
@@ -1007,7 +1019,7 @@ def estimate_k2_per_voxel(
     Parameters
     ----------
     concentration : npt.NDArray[np.floating]
-        4D concentration array (x, y, z, time).
+        4D concentration array (x, y, z, time), with at least four timepoints.
     brain_mask : Optional[npt.NDArray[np.bool_]]
         Optional 3D brain mask.
     tr : float, optional
@@ -1023,7 +1035,15 @@ def estimate_k2_per_voxel(
     Returns
     -------
     npt.NDArray[np.floating]
-        3D K2 map with leakage rate per voxel (s⁻¹).
+        3D signed K2 map in s⁻¹. Unselected voxels are NaN; the entire map is
+        NaN when the reference is unavailable or its design is rank deficient.
+
+    Raises
+    ------
+    ValueError
+        If concentration is not 4D with at least four timepoints, both raw
+        signal and reference are absent, raw signal has a different shape, or
+        a provided reference is not a finite vector matching the time axis.
 
     Notes
     -----
@@ -1031,7 +1051,6 @@ def estimate_k2_per_voxel(
         - K2 > 0: BBB disruption (T1 leakage)
         - K2 < 0: Opposite-sign leakage contribution retained by the fit
         - Uses vectorized OLS for efficiency
-
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
@@ -1134,7 +1153,7 @@ def apply_k2_correction(
     Parameters
     ----------
     concentration : npt.NDArray[np.floating]
-        4D concentration array (x, y, z, time).
+        4D concentration array (x, y, z, time), with at least four timepoints.
     brain_mask : Optional[npt.NDArray[np.bool_]]
         Optional 3D brain mask for voxel selection.
     tr : float, optional
@@ -1142,8 +1161,9 @@ def apply_k2_correction(
     k2_map : Optional[npt.NDArray[np.floating]]
         Pre-computed K2 map. If None, K2 is estimated per voxel.
     baseline_frames : int, optional
-        Number of pre-bolus baseline frames for
-        baseline subtraction. Default: 5.
+        Requested pre-bolus frame count for baseline subtraction. The count
+        used is ``min(max(int(baseline_frames), 4), n_timepoints - 2)``.
+        Default: 5.
     signal : Optional[npt.NDArray[np.floating]], optional
         Motion-corrected raw signal used by the reference selector.
         Required unless ``reference_curve`` is supplied.
@@ -1157,8 +1177,18 @@ def apply_k2_correction(
     Returns
     -------
     K2CorrectionResult
-        K2CorrectionResult with corrected concentration and K2 map.
+        Corrected concentration, signed K2 map, pre-correction tissue AUC and
+        QC. If reference selection fails, returns baseline-subtracted
+        concentration, an all-NaN K2 map and ``correction_applied=False``.
 
+    Raises
+    ------
+    ValueError
+        If concentration is not 4D with at least four timepoints, both raw
+        signal and reference are absent, or raw signal has a different shape.
+        K2 estimation also rejects a nonfinite or incorrectly sized reference.
+        Guidance requests additionally validate TR, spatial masks and reference
+        consistency through ``build_bsw_guidance``.
     """
     if concentration.ndim != 4:
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")

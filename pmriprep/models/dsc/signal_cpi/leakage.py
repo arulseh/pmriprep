@@ -353,6 +353,11 @@ def fit_with_prior(
     LeakageBatch
         All restart states, assessments and selected state. The shared engine
         receives exactly one prior; independent voxels require separate calls.
+
+    Raises
+    ------
+    ValueError
+        If the signal and K2 prior do not describe exactly one voxel.
     """
     signal = np.asarray(signal, dtype=float)
     if signal.ndim != 1:
@@ -394,6 +399,11 @@ def fit_without_leakage(
     LeakageBatch
         Full vascular posterior and restart diagnostics. The leakage record
         is empty: no zero-valued leakage measurement or prior is substituted.
+
+    Raises
+    ------
+    ValueError
+        If the input does not describe exactly one measured signal.
     """
     signal = np.asarray(signal, dtype=float)
     if signal.ndim != 1:

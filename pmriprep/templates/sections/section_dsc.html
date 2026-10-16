@@ -261,24 +261,24 @@
             {% endif %}
         </div>
         {% if dsc.qc_metrics.aif_detection and dsc.qc_metrics.aif_detection.detection_method == 'synthetic' %}
-        {% set fallback_reason = dsc.qc_metrics.synthetic_fallback_reason|default('cascade_exhausted') %}
+        {% set fallback_reason = dsc.qc_metrics.synthetic_fallback_reason|default(dsc.qc_metrics.aif_detection.synthetic_fallback_reason, true)|default('cascade_exhausted', true) %}
         <div class="alert-warn" style="margin-top: 12px; padding: 10px 14px; border-left: 4px solid #d97706; background: #fef3c7; border-radius: 4px;">
-            <strong>Template AIF — interpret maps with care.</strong>
+            <strong>Synthetic gamma-variate AIF.</strong>
             Reason:
-            {% if fallback_reason == 'no_candidates' %}no arterial candidates survived automatic detection{% elif fallback_reason == 'low_snr' %}arterial candidates had insufficient signal quality{% elif fallback_reason == 'gamma_r2_floor' %}the measured curve had a poor gamma-variate fit{% else %}automatic detection found no acceptable arterial curve{% endif %}.
-            <p style="margin: 6px 0 0 0;">
-                PMRIPrep emits no absolute CBV/CBF — all outputs are
-                relative or ratio-normalised.
-            </p>
+            {% if dsc.qc_metrics.config and dsc.qc_metrics.config.aif_source == 'synthetic' %}user-selected{% elif fallback_reason == 'no_candidates' %}no arterial candidates survived automatic detection{% elif fallback_reason == 'low_snr' %}arterial candidates had insufficient signal quality{% elif fallback_reason == 'gamma_r2_floor' %}the measured curve had a poor gamma-variate fit{% else %}automatic detection found no acceptable arterial curve{% endif %}.
             <ul style="margin: 6px 0 0 1em;">
-                <li><b>Unaffected:</b> BW K2, TTP, PSR, PH, nCBV, nCBF
-                    (NAWM-normalised).</li>
-                <li><b>Defensible for ratio/grading (not absolute):</b>
-                    rCBV, rCBF, AUC-rCBV. K2-corrected rCBV inherits
-                    template-AIF shape bias on the first-pass integral
-                    — treat as ratio-only.</li>
-                <li><b>Qualitative only:</b> MTT, Tmax.</li>
+                <li><b>CBF, nCBF, MTT and deconvolution timing:</b>
+                    depend on the template AIF shape and timing.</li>
+                <li><b>AUC-CBV:</b> uses the template integral. With valid AIF
+                    and NAWM references, AUC-nCBV reduces to corrected tissue
+                    AUC divided by its NAWM median.</li>
+                <li><b>Other maps:</b> BSW K2 uses a tissue reference; PSR uses
+                    raw signal and the selected baseline and recovery windows;
+                    TTP uses the tissue peak relative to the selected baseline reference.</li>
             </ul>
+            <p style="margin: 6px 0 0 0;">
+                Review AIF, baseline and reference-tissue QC when interpreting these maps.
+            </p>
         </div>
         {% endif %}
     </div>

@@ -499,7 +499,7 @@
     }
   },
   "function_sha256": {
-    "acpc_filmstrip": "5dd01e676b2fa9a5d73cd80f6f5ee84376c9c680f40d306bbe733239c23c18d0",
+    "acpc_filmstrip": "74fd6fa1b05c3be1335babce1cd539e8c150a272f163fd9f75df445f8c80764d",
     "brain_mask_filmstrip": "7bd4c3df5ecc3525e247440564e9786f1479c94e6d1b1fe9685ac6b5fe514436",
     "check_fast_mode": "a47e9815f5fca300252ac3af59095040a4b472e4a5305ccb18618cd7823b2091",
     "coreg_qc_postcon": "0c2cb0c61009adbe3bfadd436725bae180324250a2343e436b618f73066a6164",
@@ -508,7 +508,7 @@
     "merge_fast": "6545fa79fc0caa474c1b763d564c08d7c7143205fa8b8261c98487737fd28c10",
     "merge_qc": "0d4bd99820e33b36b2d99ef3c8285d685fdda16271f3efcfc4a20ce7c3ce8fac",
     "route_subtraction": "7f7e0396b3b707d518cb2e16b56d494fb2699c77fe238486482faf54908d337c",
-    "tissue_seg_filmstrip": "f1a7bfb03435072d858f5f33acce558bb2016645c20d39da22a4b566f7bbd40a",
+    "tissue_seg_filmstrip": "5d37a345df9f52844b7492f04eb5fbc24fd0ca7a59c55d9bf070066dc978495e",
     "tissue_segment": "583afcddbac5088b0e81c191fb050215b82464d0a041c3e27c9f849ce88b248e"
   },
   "nipype_version": "1.10.0",

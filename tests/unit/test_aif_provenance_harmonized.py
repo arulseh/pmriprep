@@ -6,8 +6,8 @@ import pytest
 from pmriprep.utils.aif_provenance import (
     AIF_INDEPENDENT_MAPS,
     DCE_AIF_INDEPENDENT_MAPS,
-    DCE_POPULATION_AIF_USAGE,
-    TEMPLATE_AIF_USAGE,
+    DCE_AIF_MAP_KEYS,
+    DSC_AIF_MAP_KEYS,
     _derive_aif_source,
     _derive_quality_flag,
     _is_valid_detection_level,
@@ -83,7 +83,6 @@ class TestBuildProvenanceBlockDSC:
         )
         assert block["Source"] == "measured"
         assert block["QualityFlag"] == "pass"
-        assert block["CrossSubjectComparable"] is True
         assert block["GammaFitApplied"] is False
         assert block["QualityScore"] == pytest.approx(0.8)
 
@@ -119,7 +118,6 @@ class TestBuildProvenanceBlockDSC:
         )
         assert block["Source"] == "synthetic"
         assert block["QualityFlag"] == "poor"
-        assert block["CrossSubjectComparable"] is False
         assert block["SyntheticFallbackReason"] == "no_candidates"
 
     def test_gamma_optimizer_failure_is_explicit(self) -> None:
@@ -182,7 +180,6 @@ class TestBuildProvenanceBlockDCE:
         )
         assert block["Source"] == "measured"
         assert block["QualityFlag"] == "pass"
-        assert block["CrossSubjectComparable"] is True
         assert block["Confidence"] == "standard"
         assert block["UncertaintyInflationFactor"] == pytest.approx(1.0)
         assert block["Hematocrit"] == pytest.approx(0.42)
@@ -217,7 +214,6 @@ class TestBuildProvenanceBlockDCE:
         )
         assert block["Source"] == "population"
         assert block["QualityFlag"] == "poor"
-        assert block["CrossSubjectComparable"] is False
         assert block["PopulationModel"] == "parker"
         assert block["PopulationFallbackReason"] == "low_cnr"
 
@@ -247,20 +243,20 @@ class TestApplyAifSidecarDCE:
         ("map_key", "expected"),
         [
             pytest.param(
-                "ktrans", {"AIFDependent": True, "TemplateAIFUsage": "ratio_defensible"},
+                "ktrans", {"AIFDependent": True},
                 id="pk-map",
             ),
             pytest.param(
-                "iauc60", {"AIFDependent": False, "TemplateAIFUsage": "safe"},
+                "iauc60", {"AIFDependent": False},
                 id="iauc",
             ),
             pytest.param(
-                "ser", {"AIFDependent": False, "TemplateAIFUsage": "safe"},
+                "ser", {"AIFDependent": False},
                 id="model-free",
             ),
             pytest.param(
                 "ktrans_uncertainty",
-                {"AIFDependent": True, "TemplateAIFUsage": "ratio_defensible"},
+                {"AIFDependent": True},
                 id="absolute-uncertainty",
             ),
         ],
@@ -300,29 +296,28 @@ class TestApplyAifSidecarDCE:
 
 
 @pytest.mark.parametrize(
-    ("independent", "usage"),
+    ("independent", "registered"),
     [
-        pytest.param(DCE_AIF_INDEPENDENT_MAPS, DCE_POPULATION_AIF_USAGE, id="dce"),
-        pytest.param(AIF_INDEPENDENT_MAPS, TEMPLATE_AIF_USAGE, id="dsc"),
+        pytest.param(DCE_AIF_INDEPENDENT_MAPS, DCE_AIF_MAP_KEYS, id="dce"),
+        pytest.param(AIF_INDEPENDENT_MAPS, DSC_AIF_MAP_KEYS, id="dsc"),
     ],
 )
-def test_independent_aif_maps_are_registered_safe(
+def test_independent_aif_maps_are_registered(
     independent: frozenset[str],
-    usage: dict[str, str],
+    registered: frozenset[str],
 ) -> None:
-    assert independent <= frozenset(usage)
-    assert all(usage[key] == "safe" for key in independent)
+    assert independent <= registered
 
 
 @pytest.mark.parametrize(
     ("map_key", "expected"),
     [
         pytest.param(
-            "ktrans", {"AIFDependent": True, "TemplateAIFUsage": "ratio_defensible"},
+            "ktrans", {"AIFDependent": True},
             id="dependent",
         ),
         pytest.param(
-            "ser", {"AIFDependent": False, "TemplateAIFUsage": "safe"},
+            "ser", {"AIFDependent": False},
             id="independent",
         ),
         pytest.param("nonexistent", {}, id="unregistered"),
@@ -365,12 +360,11 @@ class TestDSCRegression:
         assert "Confidence" not in block
         assert "PopulationModel" not in block
 
-    def test_dsc_apply_sidecar_unchanged(self) -> None:
+    def test_dsc_apply_sidecar_preserves_source_and_dependence(self) -> None:
         sidecar: dict = {}
         qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8}}
         apply_aif_sidecar(sidecar, "cbf", qc, modality="DSC")
         assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
         assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == "measured"
 
 class TestPublicArtifactSchema:

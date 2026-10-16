@@ -96,6 +96,15 @@ def local_vi_state(
     LocalVIState
         Mutually consistent local Gaussian/Gamma factors and their score.
 
+    Raises
+    ------
+    ValueError
+        If prior factors or weights are nonfinite, or weights are negative
+        or have non-positive total.
+    LocalVIFactorError
+        If the mean, residual or Jacobian is nonfinite, decomposition fails,
+        or the local covariance/noise factors do not settle.
+
     Notes
     -----
     Prior-whitened singular values yield a monotonic scalar equation for

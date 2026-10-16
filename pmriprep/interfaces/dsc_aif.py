@@ -292,18 +292,17 @@ def _stamp_synthetic_fallback_common(
     qc_metrics : dict
         Mutable QC dict to stamp (fresh or prepopulated).
     reason : str
-        Fallback reason (``"no_candidates"`` or ``"gamma_r2_floor"``).
+        Selection reason: ``"user_selected"``, ``"no_candidates"`` or
+        ``"gamma_r2_floor"``.
     tiers_attempted : Sequence[str]
         Cascade tiers tried before fallback.  Only written when the
-        key is absent (Path B inherits from the real-AIF run).
+        key is absent, preserving any recorded detection attempts.
 
     Notes
     -----
-    ``detection_method`` is intentionally NOT set here — callers set it
-    via the shared ``detection_level`` variable.  Fields handled by the
-    common block downstream (``synthetic_aif_warnings``,
-    ``cbv_auc_denominator_is_synthetic``) are also omitted; they key on
-    ``detection_level == "synthetic"`` and fire for any synthetic path.
+    Callers set ``detection_method`` from the final ``detection_level``.
+    The common finalization block supplies ``synthetic_aif_warnings`` and
+    ``cbv_auc_denominator_is_synthetic`` for every synthetic selection.
     """
     qc_metrics["synthetic"] = True
     qc_metrics["n_aif_voxels_selected"] = 0
@@ -341,8 +340,8 @@ def _flag_retained_below_floor(
     qc_metrics["gamma_r2_retained"] = gamma_r2
     logging.getLogger(__name__).warning(
         "Gamma fit R²=%.3f < %.1f but synthetic AIF fallback is disabled; retaining "
-        "the detected AIF. Deconvolution maps (CBF, MTT, Tmax) may be unreliable; "
-        "AUC-nCBV and PSR remain interpretable.",
+        "the detected AIF. CBF, nCBF, MTT and deconvolution timing depend on "
+        "this curve. Review the AIF and baseline QC before interpreting these maps.",
         gamma_r2, floor,
     )
 
@@ -459,7 +458,8 @@ def _compute_aif_peak_ratio(
     Returns
     -------
     float or None
-        Peak ratio (fitted/measured), or None if gamma fit fails.
+        Peak ratio (fitted/measured), or None if fitting fails, R² is below
+        0.5, or the measured post-baseline peak is below 1e-6.
     """
     from pmriprep.utils.dsc_aif import fit_gamma_variate
 
@@ -646,10 +646,12 @@ class AIFDetectionOutputSpec(TraitedSpec):
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
     out_aif_mask = File(exists=True, desc="AIF voxel mask NIfTI")
     out_raw_aif_curve = traits.Str(
-        desc="Pre-gamma-fit raw AIF curve text file (empty if no gamma fit)",
+        desc="QC comparison curve: original AIF after an applied gamma fit, "
+             "or the rejected converged fit in auto mode; empty when unavailable",
     )
     out_gamma_aif_curve = File(
-        desc="Gamma-fitted AIF curve text file (always produced)",
+        desc="Converged gamma-fit curve, or the emitted AIF when no fitted "
+             "curve is available (always produced)",
     )
     out_measured_aif_curve = File(
         desc="Measured AIF curve text file (pre-gamma; always produced). "
@@ -659,11 +661,11 @@ class AIFDetectionOutputSpec(TraitedSpec):
     out_aif_coord = traits.List(traits.Int, desc="Best AIF voxel coordinate [x, y, z]")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
     detection_level = traits.Str(
-        desc="Detection level: 'atlas_strict', 'atlas_relaxed', 'atlas_permissive', "
-             "'brain_relaxed', 'brain_permissive', 'synthetic', or 'external'"
+        desc="Accepted atlas/brain tier or '+'-joined contributing tiers; "
+             "'synthetic' or 'external' for generated or supplied curves"
     )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
-    candidate_count = traits.Int(desc="Number of candidate voxels evaluated")
+    candidate_count = traits.Int(desc="Number of retained candidate records at finalization")
     gamma_fit_applied = traits.Bool(desc="Whether gamma-variate fitting was applied")
     aif_baseline_frames = traits.Int(
         desc="Detected pre-bolus baseline frames for downstream use",
@@ -745,6 +747,11 @@ class AIFDetection(BaseInterface):
         -------
         ndarray
             3D boolean search mask.
+
+        Raises
+        ------
+        ValueError
+            If voxel sizes are not three finite positive values.
         """
         brain_bool = brain_mask > 0.5
         if len(voxel_sizes) != 3 or any(
@@ -2296,6 +2303,12 @@ class AIFDetection(BaseInterface):
         -------
         runtime
             Updated Nipype runtime object.
+
+        Raises
+        ------
+        ValueError
+            If an NPZ file lacks the required AIF key, the curve is not a finite
+            1D vector matching the scan length, or its peak is below 1e-6.
         """
         import logging
         import nibabel as nib  # type: ignore[import-untyped]
@@ -2447,9 +2460,8 @@ class AIFDetection(BaseInterface):
             "n_baseline_frames": baseline_frames,
             "baseline_detection_method": "selected_aif_refined",
             # Detection-time AIF metrics under the canonical nested
-            # key. The external path computes a subset of fields —
-            # ttp / ph / psr / arrival are not derivable here, so they
-            # are omitted (consumers must use .get(...) for them).
+            # key. The external path records peak amplitude, FWHM in
+            # frames and tail-to-peak washout percentage.
             "aif_metrics": {
                 "peak_conc": float(peak),
                 "fwhm": float(fwhm_frames),
@@ -3525,7 +3537,11 @@ class AIFDetection(BaseInterface):
             qc_metrics = {}
             _stamp_synthetic_fallback_common(
                 qc_metrics,
-                reason="no_candidates",
+                reason=(
+                    "user_selected"
+                    if context.aif_method == "synthetic"
+                    else "no_candidates"
+                ),
                 tiers_attempted=cascade.tiers_attempted,
             )
             qc_metrics.update(synth_metrics)
@@ -3562,10 +3578,14 @@ class AIFDetection(BaseInterface):
 
         if detection_level == "synthetic":
             qc_metrics["synthetic_aif_warnings"] = [
-                "Synthetic AIF used - automatic detection failed",
-                "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
-                "Manual AIF selection recommended for clinical use",
+                (
+                    "Synthetic gamma-variate AIF selected by the user"
+                    if context.aif_method == "synthetic"
+                    else "Synthetic gamma-variate AIF used after automatic detection failed"
+                ),
+                "CBF, nCBF, MTT and deconvolution timing depend on the template AIF",
+                "TTP is the tissue peak time relative to the selected baseline reference",
+                "Review AIF, baseline and reference-tissue QC when interpreting maps",
             ]
 
         measured_aif = aif_curve.copy()
@@ -3641,10 +3661,10 @@ class AIFDetection(BaseInterface):
                     if value is not None
                 }
                 qc_metrics["synthetic_aif_warnings"] = [
-                    "Synthetic AIF used - gamma fit R2 below threshold",
-                    "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                    "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
-                    "Manual AIF selection recommended for clinical use",
+                    "Synthetic gamma-variate AIF used after gamma fit R2 fell below threshold",
+                    "CBF, nCBF, MTT and deconvolution timing depend on the template AIF",
+                    "TTP is the tissue peak time relative to the selected baseline reference",
+                    "Review AIF, baseline and reference-tissue QC when interpreting maps",
                 ]
                 gamma_fitted_curve = None
                 raw_aif_curve = None
@@ -3721,12 +3741,10 @@ class AIFDetection(BaseInterface):
     def _run_interface(self, runtime: Any) -> Any:
         """Execute the AIF detection pipeline.
 
-        1. Build attempts list: atlas (strict/relaxed/permissive) then
-           brain (relaxed/permissive).
-        2. Each attempt: prepare mask -> find candidates -> score ->
-           post-scoring distance filtering and laterality accounting.
-        3. On success, finalize metrics and break.
-        4. Synthetic fallback if all attempts fail.
+        Prepare the baseline, run the candidate cascade, then finalize
+        gamma fitting and fallback before serializing curves and QC.
+        External input bypasses detection; explicit synthetic selection
+        enters finalization directly through the cascade result.
         """
         import logging
 
@@ -3780,10 +3798,11 @@ class AIFDetection(BaseInterface):
         -------
         tuple[bool, Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]
             (gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve)
-            raw_aif_curve is the original AIF when fit is applied,
-            or the fitted curve when fit is rejected (for QC overlay).
-            gamma_fitted_curve is always the fitted curve when fit converges
-            (regardless of accept/reject decision), for AUC CBV computation.
+            raw_aif_curve is the original AIF when a fit is applied, the
+            converged rejected fit in auto mode, or None otherwise.
+            gamma_fitted_curve contains the converged fit for diagnostics,
+            regardless of acceptance. AUC CBV uses the separately retained
+            measured AIF.
         """
         from pmriprep.utils.dsc_aif import (
             fit_gamma_variate,

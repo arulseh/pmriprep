@@ -8,7 +8,7 @@ live on the per-PK-map sidecars as ``LesionStats`` fragments.
 
 Per-output sidecar enrichment uses ``apply_aif_sidecar`` from
 ``pmriprep.utils.aif_provenance`` to stamp every map with the
-detection-method block + ``AIFDependent`` + ``TemplateAIFUsage`` tags.
+detection-method block and the ``AIFDependent`` field.
 """
 from __future__ import annotations
 
@@ -281,7 +281,7 @@ _STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
 
 #: Canonical list of map_keys passed to ``apply_aif_sidecar`` from the factory.
 #: Used by the drift-guard test in ``test_dsc_outputs_sidecar.py`` to verify
-#: every emitted key is registered in :data:`TEMPLATE_AIF_USAGE`.
+#: every emitted key is registered in :data:`DSC_AIF_MAP_KEYS`.
 _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
     [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
      + _NORMALIZED_MAPS + _UNCERTAINTY_MAPS]
@@ -1324,6 +1324,11 @@ def init_dsc_datasinks_wf(
     -------
     pe.Workflow
         Derivative-writing workflow for the declared inputs.
+
+    Raises
+    ------
+    ValueError
+        If the deconvolution method is unrecognized.
     """
     if present_inputs is None:
         present_inputs = set()

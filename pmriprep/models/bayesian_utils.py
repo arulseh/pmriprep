@@ -178,6 +178,11 @@ def to_transformed(
     -------
     float or numpy.ndarray
         Parameter value(s) in transformed space.
+
+    Raises
+    ------
+    ValueError
+        If ``transform`` is ``LOG_LOGIT`` and ``upper_bound`` is omitted.
     """
     if transform == TransformType.LOG:
         result: float | npt.NDArray[np.floating] = np.log(np.maximum(theta, 1e-20))
@@ -217,6 +222,11 @@ def from_transformed(
     -------
     float or numpy.ndarray
         Parameter value(s) in natural space.
+
+    Raises
+    ------
+    ValueError
+        If ``transform`` is ``LOG_LOGIT`` and ``upper_bound`` is omitted.
     """
     if transform == TransformType.LOG:
         # Overflow protection: exp(709) ≈ 8.2e307, exp(710) overflows
@@ -309,6 +319,11 @@ def to_transformed_batch(
     -------
     numpy.ndarray
         Parameter values in transformed space, shape (N,).
+
+    Raises
+    ------
+    ValueError
+        If ``transform`` is ``LOG_LOGIT`` and ``upper_bound`` is omitted.
     """
     if transform == TransformType.LOG:
         result = np.log(np.maximum(values, 1e-20))
@@ -348,6 +363,11 @@ def from_transformed_batch(
     -------
     numpy.ndarray
         Parameter values in natural space, shape (N,).
+
+    Raises
+    ------
+    ValueError
+        If ``transform`` is ``LOG_LOGIT`` and ``upper_bound`` is omitted.
     """
     if transform == TransformType.LOG:
         clipped = np.clip(values, -500, 500)
@@ -372,9 +392,8 @@ def log_jacobian_det(
 ) -> float | npt.NDArray[np.floating]:
     """Log absolute Jacobian determinant ``|dtheta/dtheta'|``.
 
-    Used to correct the MAP objective when optimizing in transformed space::
-
-        neg_log_posterior_transformed = neg_log_posterior_natural - log|J|
+    Exponentiating this value gives the local scale factor used to map
+    transformed-space standard deviations to natural parameter units.
 
     For ``log``: ``|J| = theta``, so ``log|J| = log(theta)``.
     For ``log-logit``: ``|J| = theta*(ub-theta)/ub``, so ``log|J| = log(theta) + log(ub-theta) - log(ub)``.
@@ -392,6 +411,11 @@ def log_jacobian_det(
     -------
     float or numpy.ndarray
         Log absolute Jacobian determinant.
+
+    Raises
+    ------
+    ValueError
+        If ``transform`` is ``LOG_LOGIT`` and ``upper_bound`` is omitted.
     """
     if transform == TransformType.LOG:
         result: float | npt.NDArray[np.floating] = np.log(np.maximum(np.abs(theta), 1e-20))
@@ -491,6 +515,12 @@ def transform_prior(
     -------
     tuple of float
         Tuple of (transformed_mean, transformed_std).
+
+    Raises
+    ------
+    ValueError
+        If a log transform receives a non-positive mean, or a log-logit
+        transform is requested without ``upper_bound``.
     """
     if transform == TransformType.LOG:
         if mean <= 0:

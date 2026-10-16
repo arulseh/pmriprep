@@ -5,7 +5,7 @@ from __future__ import annotations
 
 _INFERENCE_METADATA: dict[str, dict[str, object]] = {
     "nlls": {
-        "InferenceMethod": "nonlinear_least_squares",
+        "InferenceMethod": "least_squares",
         "UncertaintyEstimationMethod": "local_jacobian_covariance",
         "UncertaintyApproximation": "local_linear_Gaussian",
         "SpatialPriorApplied": False,
@@ -53,14 +53,14 @@ def build_uncertainty_provenance(
 
     Parameters
     ----------
-    inference
+    inference : str
         Inference-engine identifier from the processing configuration.
-    map_key
-        Internal derivative key identifying standard deviation, coefficient
-        of variation, or a 95% credible-interval bound.
-    modality
-        Perfusion modality (``"DCE"`` or ``"DSC"``), used to describe the
-        modality-specific interval bounding performed by the map writer.
+    map_key : str
+        Derivative key supplied by sidecar writers. The metadata is shared
+        across parameter standard-deviation maps.
+    modality : str
+        Perfusion modality (``"DCE"`` or ``"DSC"``). DCE adds the conditioning
+        assumptions for concentration conversion and the supplied AIF.
 
     Returns
     -------

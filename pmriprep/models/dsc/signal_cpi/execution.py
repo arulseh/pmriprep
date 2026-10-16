@@ -55,6 +55,11 @@ def estimate_worker_memory_gb(n_frames: int = 120, n_points: int = 12) -> float:
     -------
     float
         Estimated worker memory in decimal gigabytes.
+
+    Raises
+    ------
+    ValueError
+        If the frame or control-point count is non-positive.
     """
     if min(n_frames, n_points) < 1:
         raise ValueError("CPI execution dimensions must be positive")
@@ -83,6 +88,13 @@ def plan_resources(
     CPIResources
         Worker cap accounting for independent interpreter/workspace overhead.
         A process pool never holds copies of the complete signal image.
+
+    Raises
+    ------
+    ValueError
+        If process count, memory allowance or execution dimensions are invalid.
+    MemoryError
+        If the allocation cannot hold the estimated serial working set.
 
     Notes
     -----

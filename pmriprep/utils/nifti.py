@@ -9,7 +9,14 @@ _ImageT = TypeVar("_ImageT")
 
 
 def physical_voxel_volume_mm3(affine: np.ndarray) -> float:
-    """Return physical voxel-cell volume from a NIfTI spatial affine."""
+    """Return physical voxel-cell volume from a NIfTI spatial affine.
+
+    Raises
+    ------
+    ValueError
+        If the affine is not a finite 4-by-4 matrix with a finite positive
+        absolute spatial determinant.
+    """
     affine_array = np.asarray(affine, dtype=float)
     if affine_array.shape != (4, 4) or not np.all(np.isfinite(affine_array)):
         raise ValueError("NIfTI affine must be a finite 4x4 matrix")

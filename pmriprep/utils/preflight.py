@@ -153,8 +153,7 @@ def validate_sidecar_exists(
             code=f"{modality.upper()}_NO_SIDECAR",
             message=(
                 f"No JSON sidecar found for {name}. "
-                f"All metadata will be missing — perfusion maps will use "
-                f"fallback defaults and may be silently wrong."
+                "Acquisition metadata are unavailable."
             ),
         ))
     return msgs
@@ -177,6 +176,12 @@ def validate_dsc_metadata(
     -------
     list of PreflightMessage
         List of validation messages.
+
+    Raises
+    ------
+    ValueError
+        If the high-relaxivity preload check encounters an unsupported
+        leakage method in the supplied configuration.
     """
     msgs: list[PreflightMessage] = []
 
@@ -497,10 +502,9 @@ def validate_dce_metadata(
                 level="error",
                 code="DCE_NO_VOLUME_TR",
                 message=(
-                    f"No volume TR found; pulse TR ({pulse_tr * 1000:.1f}ms) "
-                    f"would produce a nonsensical time vector for PK fitting. "
-                    f"Add RepetitionTime to the BIDS sidecar or provide a "
-                    f"time_points_file."
+                    f"No volume TR found. Pulse TR ({pulse_tr * 1000:.1f}ms) "
+                    "describes the excitation interval; PK fitting requires "
+                    "the interval between volumes. Add RepetitionTime to the BIDS sidecar."
                 ),
             ))
 
@@ -516,9 +520,8 @@ def validate_dce_metadata(
                 code="DCE_NO_PULSE_TR",
                 message=(
                     f"No pulse TR (RepetitionTimeExcitation) found; "
-                    f"volume TR ({volume_tr:.3f}s) cannot be used in the "
-                    f"SPGR signal equation. E1 = exp(-TR/T1) ≈ 0 at this "
-                    f"TR, making concentration conversion undefined. "
+                    f"the volume interval ({volume_tr:.3f}s) differs from "
+                    f"the excitation interval required by the SPGR signal equation. "
                     f"Add RepetitionTimeExcitation to BIDS sidecar."
                 ),
             ))
@@ -716,11 +719,9 @@ def validate_dce_metadata(
             code="DCE_HIGH_R1_AIF_SATURATION",
             message=(
                 f"High-r1 agent ({contrast_agent}, r1={r1:.1f} s-1/mM) "
-                f"with measured AIF. Arterial peak signal approaches "
-                f"the Ernst ceiling; noise amplification and E1 clipping "
-                f"systematically underestimate peak AIF concentration. "
-                f"Consider --dce-aif-method population or acknowledge "
-                f"degraded AIF accuracy."
+                "with automatic AIF detection. At high arterial concentrations, "
+                "SPGR signal saturation can reduce concentration sensitivity "
+                "and amplify conversion errors. Review AIF and signal-conversion QC."
             ),
         ))
 
@@ -1033,8 +1034,9 @@ def validate_dce_temporal_sufficiency(
             code="DCE_MARGINAL_VOLUMES",
             message=(
                 f"DCE acquisition has {n_volumes} volumes "
-                f"({DCE_MIN_VOLUMES}-{DCE_MARGINAL_VOLUMES} is marginal). "
-                f"Only Patlak model is recommended at this sampling."
+                f"(fewer than {DCE_MARGINAL_VOLUMES}). Limited temporal samples "
+                "may reduce pharmacokinetic fit precision; review temporal "
+                "coverage and fit QC."
             ),
         ))
 

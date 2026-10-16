@@ -537,13 +537,16 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             sentences.append(f"CPI parameter estimation used {_INFERENCE_TEXT[inference]}")
 
     # NAWM normalization
-    norm_factor = dsc_qc.get("normalization_factor")
-    if norm_factor is not None and norm_factor > 0:
-        sentences.append(
-            "DSC nCBF and nCBV were obtained by dividing CBF and AUC-CBV by "
-            "their respective median values within the normal-appearing "
-            "white matter reference."
-        )
+    for output_name, source_name, factor_key in (
+        ("nCBF", "CBF", "cbf_normalization_factor"),
+        ("nCBV", "AUC-CBV", "normalization_factor"),
+    ):
+        norm_factor = dsc_qc.get(factor_key)
+        if norm_factor is not None and math.isfinite(norm_factor) and norm_factor > 0:
+            sentences.append(
+                f"DSC {output_name} was obtained by dividing {source_name} by "
+                "its median value within the normal-appearing white matter reference."
+            )
 
     return " ".join(sentences)
 
@@ -579,8 +582,9 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # Registration to the anatomical reference is independent of the separate
     # VFA-to-DCE and B1+-map registrations used to prepare quantitative inputs.
     sentences.append(
-        "A rigid-body transform between DCE and T1-weighted space "
-        "was computed using FLIRT [@jenkinson_2002]."
+        "DCE and T1-weighted images were aligned by comparing header alignment "
+        "with FLIRT rigid-body registration candidates using foreground overlap "
+        "[@jenkinson_2002]."
     )
 
     # T1 mapping

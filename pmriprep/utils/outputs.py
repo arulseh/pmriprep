@@ -76,6 +76,12 @@ def write_dataset_description(
     citation_doi : str, optional
         Optional DOI string to attach to the pmriprep
         ``GeneratedBy`` entry (e.g. for cite-by-version manuscripts).
+
+    Raises
+    ------
+    ValueError
+        If existing metadata is not a valid JSON object, links to a different
+        raw dataset, or uses the reserved empty dataset-link name.
     """
     desc_path = pipeline_dir / "dataset_description.json"
     pipeline_dir.mkdir(parents=True, exist_ok=True)
@@ -367,6 +373,12 @@ def par_to_confounds_tsv(
     -------
     Path
         Path to the written TSV file.
+
+    Raises
+    ------
+    ValueError
+        If the loaded motion parameters do not have exactly six columns or
+        contain nonfinite values.
     """
     from pmriprep.utils.motion import calculate_framewise_displacement
 

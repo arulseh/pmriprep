@@ -36,6 +36,11 @@ def get_aif_smoothing_window(n_timepoints: int, tr: float) -> int:
         Odd window length no larger than ``n_timepoints``. Curves shorter
         than five frames return their largest odd length; callers decide
         whether smoothing is appropriate.
+
+    Raises
+    ------
+    ValueError
+        If ``n_timepoints`` is non-positive.
     """
     if n_timepoints < 1:
         raise ValueError("n_timepoints must be positive")

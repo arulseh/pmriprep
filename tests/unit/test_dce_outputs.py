@@ -109,5 +109,4 @@ def test_dce_diagnostic_sidecars_carry_canonical_aif_provenance() -> None:
         _build_delta_bic_meta({}, qc_metrics),
     ):
         assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "qualitative_only"
         assert sidecar["PerfusionProcessing"]["AIF"] == expected

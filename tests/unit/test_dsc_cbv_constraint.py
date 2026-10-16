@@ -232,7 +232,7 @@ class TestAssessDSCCBVQuality:
         assert any("inadequate contrast" in r for r in result.reasons)
 
     def test_cnr_coverage_below_skip_downgrades_to_low(self) -> None:
-        """CNR coverage below 0.70 triggers low confidence (>30% unreliable)."""
+        """Sub-threshold CNR coverage lowers confidence without an AIF-tier override."""
         aif_qc_data = {
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.65, "mean_cnr": 25.0},
             "aif_peak_height": 0.4,
@@ -240,7 +240,7 @@ class TestAssessDSCCBVQuality:
         }
         result = assess_dsc_cbv_quality(aif_qc_data)
         assert result.confidence == "low"
-        assert any(">30% unreliable" in r for r in result.reasons)
+        assert any("CNR coverage 65.0% < 70.0%" in r for r in result.reasons)
 
 
 # =============================================================================
@@ -1002,7 +1002,7 @@ class TestSkipReasonConstants:
         assert SKIP_REASON_REGISTRATION_QC == "cross_modal_registration_qc"
         assert SKIP_REASON_SYNTHETIC_AIF == "synthetic_aif"
         assert NO_DSC_RUN_REASON_STRING == "No DSC data were available for a vp prior."
-        assert "synthetic" in SYNTHETIC_AIF_REASON_STRING.lower()
+        assert "AIF-source quality gate" in SYNTHETIC_AIF_REASON_STRING
 
 
 # =============================================================================

@@ -94,6 +94,11 @@ def feasible_mean_update(
     ndarray
         Feasible transformed proposals; already feasible rows are unchanged.
         Rows with no representable feasible step retain the previous mean.
+
+    Raises
+    ------
+    ValueError
+        If the proposed mean is nonfinite or the current mean is inadmissible.
     """
     if not np.all(np.isfinite(proposed)):
         raise ValueError("non-finite variational mean proposal")

@@ -15,7 +15,6 @@ def test_build_aif_block_measured() -> None:
         {"aif_detection": {"detection_method": "atlas_relaxed", "quality_score": 0.8}}
     )
     assert block["Source"] == "measured"
-    assert block["CrossSubjectComparable"] is True
 
 
 def test_build_aif_block_template_via_detection_level() -> None:
@@ -23,7 +22,6 @@ def test_build_aif_block_template_via_detection_level() -> None:
 
     block = build_aif_provenance_block({"aif_detection": {"detection_method": "synthetic"}})
     assert block["Source"] == "synthetic"
-    assert block["CrossSubjectComparable"] is False
 
 
 def test_build_aif_block_accepts_flat_dict() -> None:

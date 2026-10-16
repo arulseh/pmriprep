@@ -74,6 +74,12 @@ def load_bsw_guidance(
     -------
     BSWGuidance
         Exact stored arrays; malformed or mismatched archives raise explicitly.
+
+    Raises
+    ------
+    ValueError
+        If the archive schema is unsupported or its spatial shape, affine,
+        frame count or sampling interval does not match the requested acquisition.
     """
     with np.load(path, allow_pickle=False) as data:
         if int(data["schema"]) != 1:

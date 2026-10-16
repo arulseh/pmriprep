@@ -168,6 +168,11 @@ def _create_acpc_registration_filmstrip(
     -------
     str
         Path to output filmstrip PNG.
+
+    Raises
+    ------
+    ValueError
+        If the aligned T1w and template do not share a voxel grid.
     """
     from pathlib import Path
 
@@ -279,34 +284,34 @@ def _create_coreg_qc_filmstrip(
 
 def _create_tissue_seg_filmstrip(
     t1w_file: str,
-    wm_probseg_file: str,
-    gm_probseg_file: str,
+    wm_probseg_file: str | None,
+    gm_probseg_file: str | None,
     csf_probseg_file: str,
     subject_id: str = "",
     session_id: str = "",
-) -> str:
-    """Create tissue segmentation QC filmstrip showing WM/GM/CSF contours on T1w.
+) -> str | None:
+    """Create tissue segmentation QC filmstrip showing WM and CSF boundaries.
 
-    Thresholds each probability map at p>0.5 to create binary masks,
-    then overlays colored contour edges on brain-extracted T1w.
+    Thresholds WM and CSF probability maps at p>0.5, then overlays their
+    contours on brain-extracted T1w. Gray matter lies between these boundaries.
 
     Parameters
     ----------
     t1w_file : str
         Path to brain-extracted T1w image (background).
     wm_probseg_file : str or None
-        Path to white matter probability map.
+        Path to white matter probability map; None skips figure generation.
     gm_probseg_file : str or None
-        Path to gray matter probability map.
-    csf_probseg_file : str or None
-        Path to CSF probability map.
+        Accepted from the workflow connection; the figure uses WM and CSF contours.
+    csf_probseg_file : str
+        Path to CSF probability map, required when a WM map is supplied.
     subject_id, session_id : str, optional
         Participant and session identifiers for the figure title.
 
     Returns
     -------
     str or None
-        Path to output filmstrip PNG, or None if tissue maps are unavailable.
+        Path to output filmstrip PNG, or None when ``wm_probseg_file`` is None.
     """
     if wm_probseg_file is None:
         return None

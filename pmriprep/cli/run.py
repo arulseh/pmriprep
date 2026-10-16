@@ -1378,6 +1378,12 @@ def _load_plugin_config(path: Path) -> tuple[str, dict[str, Any]]:
     tuple
         ``(plugin_name, plugin_args)`` ready to pass to
         ``workflow.run(...)``.
+
+    Raises
+    ------
+    ValueError
+        If a plugin file has an unsupported extension, lacks a plugin name,
+        or supplies a non-string name or non-mapping arguments.
     """
     text = path.read_text()
     if path.suffix.lower() in (".yaml", ".yml"):

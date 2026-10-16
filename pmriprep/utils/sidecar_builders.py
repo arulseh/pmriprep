@@ -616,7 +616,13 @@ def build_anat_preproc_sidecar(
     reference_source: PathLike | None = None,
     processing_kind: str = "reference",
 ) -> Dict[str, Any]:
-    """Build sidecar for a preprocessed/coregistered anat NIfTI."""
+    """Build sidecar for a preprocessed/coregistered anat NIfTI.
+
+    Raises
+    ------
+    ValueError
+        If ``processing_kind`` is unrecognized.
+    """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
     sources = build_sources_list(source_paths, bids_dir)
@@ -1012,11 +1018,25 @@ def build_dce_base_sidecar(
 
     Parameters
     ----------
-    minimal
+    source_paths : sequence of str or Path
+        Source files recorded relative to ``bids_dir``.
+    reference_voxel_source : str or Path
+        NIfTI source of voxel-size metadata.
+    bids_dir : str or Path
+        Root of the source dataset.
+    subject : str
+        Participant identifier without the BIDS prefix.
+    session : str or None
+        Session identifier without the BIDS prefix, when available.
+    provenance_dict : dict, optional
+        Additional provenance fields merged into the sidecar.
+    qc_metrics : dict, optional
+        QC used to enrich perfusion provenance when ``minimal=False``.
+    minimal : bool, optional
         Suppress perfusion-specific provenance enrichment and
         PK-input metadata (used for masks, structural underlays,
         motion-corrected 4D, T1map, B1+map, etc.).
-    pk_dependent
+    pk_dependent : bool, optional
         Record that the derivative uses a plasma input function. Only
         relevant when ``minimal=False``; set to ``False`` for model-free
         and QC maps.
@@ -1259,7 +1279,7 @@ def build_anat_probseg_sidecar(
 
 
 # ---------------------------------------------------------------------------
-# Per-image anat sidecar enrichment (Option A QC distribution)
+# Per-image anatomical sidecar enrichment
 #
 # These helpers take a base sidecar dict + the upstream `qc_metrics` dict
 # and inject the relevant subset of pipeline QC state into the sidecar.
@@ -1338,13 +1358,18 @@ def aif_timeseries_columns(modality: str) -> tuple[str, str, str]:
     -------
     tuple of (str, str, str)
         ``(column_name, units, column_description)``.
+
+    Raises
+    ------
+    ValueError
+        If modality is neither ``DCE`` nor ``DSC``.
     """
     if modality not in {"DCE", "DSC"}:
         raise ValueError(f"modality must be 'DCE' or 'DSC'; got {modality!r}")
 
     # AIF curve content differs by modality:
     #   DSC: ΔR2* (1/s) — susceptibility-induced relaxation-rate change
-    #   DCE: plasma [Gd] in mM (after /(1-Hct) conversion)
+    #   DCE: plasma [Gd] in mM
     if modality == "DSC":
         return (
             "delta_r2_star",
@@ -1500,10 +1525,8 @@ def _preprocessing_cosmetic_keys(
 ) -> Dict[str, Any]:
     """Flat motion/signal QC keys for the DSC preproc-4D sidecar.
 
-    No top-level prefix — the sidecar's ``desc-`` entity already conveys
-    "preprocessing." Future ``desc-dcePreproc_dce.json`` will reuse the
-    same key names. ``RepetitionTime`` is the canonical BIDS key (in
-    seconds, converted from the producer's ``tr_ms``).
+    Uses unprefixed keys shared with DCE preprocessing sidecars.
+    ``RepetitionTime`` is in seconds, converted from the producer's ``tr_ms``.
     """
     if not preprocessing_stats or not isinstance(preprocessing_stats, dict):
         return {}
@@ -1544,7 +1567,7 @@ def enrich_dsc_preproc_sidecar(
     Mutates and returns ``sidecar``. Adds ``Preload*`` and unprefixed
     motion/signal keys from the producer-shape input dicts. Existing
     sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-    ``Resolution``) are preserved.
+    ``VoxelSize``) are preserved.
     """
     sidecar.update(_preload_cosmetic_keys(preload_qc))
     sidecar.update(_preprocessing_cosmetic_keys(preprocessing_stats))
@@ -1552,13 +1575,12 @@ def enrich_dsc_preproc_sidecar(
 
 
 # ---------------------------------------------------------------------------
-# QC recommendation / warnings enrichment (PR2 of arc-finishing work)
+# QC recommendation and warning enrichment
 #
 # Adds flat top-level ``QC*``-prefixed keys carrying the recommendation
 # block and three categories of warnings to the canonical anchor
 # sidecars (``desc-preproc_T1w.json``, ``desc-dscPreproc_dsc.json``,
-# ``desc-dcePreproc_dce.json``). Eliminates the need for separate
-# ``desc-*QC_quality.json`` orphan summary files at session root.
+# ``desc-dcePreproc_dce.json``).
 # ---------------------------------------------------------------------------
 
 
@@ -1605,6 +1627,11 @@ def enrich_recommendation_keys(
     -------
     dict
         The mutated *sidecar* dict (for chaining).
+
+    Raises
+    ------
+    ValueError
+        If modality is not ``DCE``, ``DSC`` or ``ANAT``.
     """
     modality = modality.upper()
     if modality not in {"DSC", "DCE", "ANAT"}:
@@ -1675,7 +1702,7 @@ def enrich_recommendation_keys(
 
 
 # ---------------------------------------------------------------------------
-# DCE cosmetic enrichment (PR1 of arc-finishing work)
+# DCE sidecar enrichment
 #
 # Enriches the sidecar with QC metrics read from the
 # producer-shape ``qc_metrics`` sub-blocks (``t1_mapping``, ``b1_mapping``,
@@ -1836,7 +1863,7 @@ def enrich_dce_preproc_sidecar(
     Mutates and returns ``sidecar``. Adds ``T1*``, ``B1*``, and motion/signal
     fields from the producer-shape ``qc_metrics`` envelope. Existing
     sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-    ``Resolution``) are preserved.
+    ``VoxelSize``) are preserved.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
@@ -1860,8 +1887,8 @@ def enrich_dce_pk_map_sidecar(
 ) -> Dict[str, Any]:
     """Enrich a DCE per-PK-map sidecar with AIF provenance and cross-modality fields.
 
-    Stamps ``PerfusionProcessing.AIF`` block plus flat ``AIFDependent``
-    and ``TemplateAIFUsage`` tags via the shared AIF provenance module.
+    Stamps the ``PerfusionProcessing.AIF`` block and ``AIFDependent``
+    field via the shared AIF provenance module.
     Cross-modality fields land only on the maps they apply to.
     """
     if map_key == "kep":

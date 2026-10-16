@@ -66,9 +66,8 @@ class FixedLayoutSignalCPI:
     Notes
     -----
     The final knot is at the last acquired time; its amplitude is inferred.
-    Priors are Gaussian in the inferred coordinates, with no softmax-spacing
-    penalty masquerading as a Gaussian prior. Knot-motion inference is absent
-    in this diagnostic. Posterior support near a guard remains approximate.
+    Priors are Gaussian in the inferred coordinates. Knot positions are fixed
+    for this diagnostic. Posterior support near a guard remains approximate.
     """
 
     def __init__(

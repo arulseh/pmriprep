@@ -98,6 +98,11 @@ def local_free_energy(
     -------
     float
         Local variational free energy, retaining all normalization terms.
+
+    Raises
+    ------
+    ValueError
+        If noise is unknown but no Gamma posterior is supplied.
     """
     if known_precision is None:
         if noise is None:

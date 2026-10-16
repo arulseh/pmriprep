@@ -1129,6 +1129,10 @@ class TestDCEAgentGuardrails:
         msgs = validate_dce_metadata(sc, cfg)
         codes = [m.code for m in msgs]
         assert "DCE_HIGH_R1_AIF_SATURATION" in codes
+        message = next(m.message for m in msgs if m.code == "DCE_HIGH_R1_AIF_SATURATION")
+        assert "can reduce concentration sensitivity" in message
+        assert "systematically underestimate" not in message
+        assert "--dce-aif-method population" not in message
 
     def test_high_r1_population_aif_no_warning(self):
         sc = _valid_dce_sidecar()
@@ -1247,6 +1251,10 @@ def test_temporal_sufficiency_boundaries(
 
     prefix = modality.upper()
     codes = {message.code for message in messages}
+    if modality == "dce" and "DCE_MARGINAL_VOLUMES" in codes:
+        message = next(m.message for m in messages if m.code == "DCE_MARGINAL_VOLUMES")
+        assert "review temporal coverage" in message
+        assert "Patlak" not in message
     assert {f"{prefix}_{suffix}" for suffix in expected} <= codes
     assert not any(fragment in code for fragment in forbidden for code in codes)
     if error is not None:

@@ -50,14 +50,10 @@ class ToftsModel(PKModel):
     Parameters
     ----------
         Ktrans: Volume transfer constant (min⁻¹), 0-5 min⁻¹
-            - Reflects permeability × surface area per unit tissue volume
-            - Typical tumor values: 0.01-0.5 min⁻¹
-            - High-grade glioma: can exceed 0.5 min⁻¹
+        - Describes transfer from plasma to the extravascular space
 
         ve: Extravascular extracellular volume fraction, 0-1
             - Fraction of tissue that is interstitial space
-            - Typical brain values: 0.1-0.3
-            - Tumor values: often increased 0.3-0.6
 
     Derived parameter:
         kep = Ktrans / ve: Efflux rate constant (min⁻¹)

@@ -23,6 +23,12 @@ def checked_weights(weights: Array | None, frames: int) -> Array | None:
     ndarray or None
         Read-only weights, or None for the exact unweighted path. Weights are
         not normalized: their sum determines the effective observation count.
+
+    Raises
+    ------
+    ValueError
+        If weights do not provide one finite value in [0, 1] per frame
+        with a positive total.
     """
     if weights is None:
         return None

@@ -563,6 +563,12 @@ def generate_dsc_fit_qc_plot(
     -------
     tuple[str, dict[str, Any]]
         Tuple of (path to saved QC plot PNG, voxel metrics dict).
+
+    Raises
+    ------
+    ValueError
+        If the fitting domain is unknown or signal-domain QC is requested
+        without the original measured signal.
     """
     import matplotlib.pyplot as plt
 

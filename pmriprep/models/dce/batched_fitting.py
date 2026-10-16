@@ -38,9 +38,7 @@ from pmriprep.utils.dce_constants import (
 logger = logging.getLogger("nipype.interface")
 
 #: Numerical floor used as a divide/log guard in batched fits (R²
-#: denominators, normal-equation denominators, ftol scaling). Set well
-#: below any physical scale (~24 orders below a noise-floor RSS in mM²)
-#: so it only fires on truly degenerate inputs. Not a physics constant.
+#: denominators, normal-equation denominators, ftol scaling).
 _EPSILON_NUMERICAL: Final[float] = 1e-30
 
 # Model parameter configurations

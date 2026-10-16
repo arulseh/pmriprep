@@ -72,7 +72,13 @@ def _validate_uniform_time_points(
     Returns
     -------
     float
-        Time step dt in minutes.
+        Time step in minutes, or 1.0 for a zero- or one-sample axis.
+
+    Raises
+    ------
+    ValueError
+        If the axis is not one-dimensional, contains nonfinite values, or has
+        nonpositive or nonuniform intervals.
     """
     time_points = np.asarray(time_points, dtype=np.float64)
     if time_points.ndim != 1:
@@ -135,9 +141,9 @@ def batched_tofts_model(
     Raises
     ------
     ValueError
-        If ktrans and ve have different shapes.
-    ValueError
-        If aif and time_points have different lengths.
+        If ktrans and ve have different shapes. Also raised if the AIF is empty or
+        differs in length from the time axis, or the time axis is not a finite,
+        uniformly spaced, strictly increasing 1D vector.
     """
     if ktrans.shape != ve.shape:
         raise ValueError(
@@ -232,9 +238,9 @@ def batched_extended_tofts_model(
     Raises
     ------
     ValueError
-        If ktrans, ve, and vp have different shapes.
-    ValueError
-        If aif and time_points have different lengths.
+        If ktrans, ve, and vp have different shapes. Also raised if the AIF is empty or
+        differs in length from the time axis, or the time axis is not a finite,
+        uniformly spaced, strictly increasing 1D vector.
     """
     if ktrans.shape != ve.shape or ktrans.shape != vp.shape:
         raise ValueError(
@@ -332,9 +338,9 @@ def batched_patlak_model(
     Raises
     ------
     ValueError
-        If ktrans and vp have different shapes.
-    ValueError
-        If aif and time_points have different lengths.
+        If ktrans and vp have different shapes. Also raised if the AIF is empty or
+        differs in length from the time axis, or the time axis is not a finite,
+        uniformly spaced, strictly increasing 1D vector.
     """
     if ktrans.shape != vp.shape:
         raise ValueError(
@@ -421,10 +427,9 @@ def batched_2cxm_model(
     Raises
     ------
     ValueError
-        If parameter arrays have different shapes.
-    ValueError
-        If aif and time_points have different lengths.
-
+        If parameter arrays have different shapes. Also raised if the AIF is empty or
+        differs in length from the time axis, or the time axis is not a finite,
+        uniformly spaced, strictly increasing 1D vector.
     """
     if not (fp.shape == ps.shape == ve.shape == vp.shape):
         raise ValueError(

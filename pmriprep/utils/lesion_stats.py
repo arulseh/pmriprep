@@ -149,8 +149,8 @@ class LesionStatisticsResult:
     qc_filtered_derived_metrics: Optional[Dict[str, Any]] = None
     # AIF provenance for DSC stats: a prebuilt ``PerfusionProcessing.AIF``
     # sub-block (Source, DetectionLevel, QualityFlag, GammaFitApplied,
-    # CrossSubjectComparable, optionally SyntheticFallbackReason /
-    # ExternalAIFVerified). None for DCE stats or when AIF QC is
+    # optionally SyntheticFallbackReason / ExternalAIFVerified).
+    # None for DCE stats or when AIF QC is
     # unavailable.
     aif_provenance: Optional[Dict[str, Any]] = None
 
@@ -372,7 +372,8 @@ def compute_fraction_above_threshold(
     Returns
     -------
     float or None
-        Fraction (0-1) of voxels above threshold, or None if mask empty.
+        Fraction (0–1) of finite masked values strictly above the threshold,
+        or None when the mask contains no finite values.
     """
     values = map_data[mask]
     if len(values) == 0:
@@ -409,7 +410,8 @@ def compute_hotspot_value(
     Returns
     -------
     float or None
-        Hotspot value or None if mask empty.
+        Percentile of finite masked values, or None when the mask contains
+        no finite values.
     """
     values = map_data[mask]
     if len(values) == 0:
@@ -815,6 +817,12 @@ def load_validated_tumor_dseg(
     The image must contain finite integer labels from the registered set
     ``{0, 1, 2}``. Voxel volume is derived from the affine determinant so
     oblique or sheared grids are represented by their physical cell volume.
+
+    Raises
+    ------
+    ValueError
+        If labels are nonfinite, noninteger or outside the allowed label set,
+        or the affine does not define a finite positive voxel volume.
     """
     import nibabel as nib  # type: ignore[import-untyped]
     from pmriprep.utils.nifti import physical_voxel_volume_mm3

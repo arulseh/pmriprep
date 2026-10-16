@@ -619,6 +619,12 @@ def generate_pk_parameter_maps_qc_plot(
     -------
     str
         Path to the saved QC plot PNG.
+
+    Raises
+    ------
+    ValueError
+        If a parameter map or supplied QC mask has a different shape from
+        the brain mask.
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
 

@@ -1,6 +1,6 @@
 """Model-free DCE maps.
 
-Computes model-assumption-free quantitative maps from DCE signal and concentration data:
+Computes maps directly from DCE signal and concentration time courses:
 IAUC, peak enhancement, time-to-peak, signal enhancement ratio, and bolus
 arrival time.
 """
@@ -48,6 +48,13 @@ def compute_iauc(
     numpy.ndarray
         3D IAUC map (mM·min). Returns NaN when the requested interval is not
         fully acquired or its samples are non-finite.
+
+    Raises
+    ------
+    ValueError
+        If ``cutoff_s <= 0``, the time axis is not a finite, strictly increasing
+        1D vector matching the concentration length, or the reference frame is
+        out of range.
     """
     if cutoff_s <= 0:
         raise ValueError("cutoff_s must be positive")
@@ -103,13 +110,19 @@ def compute_peak_enhancement(
     signal_data : numpy.ndarray
         4D raw signal data (x, y, z, time).
     baseline_frames : int, optional
-        Number of pre-contrast baseline frames.
+        Number of precontrast baseline frames, at least 1 and less than the
+        number of timepoints. Default is 5.
 
     Returns
     -------
     numpy.ndarray
         3D peak enhancement percentage map. Voxels with a non-positive
         baseline or any non-finite signal samples are NaN.
+
+    Raises
+    ------
+    ValueError
+        If the baseline count is below 1 or leaves no post-baseline frame.
     """
     if baseline_frames < 1 or baseline_frames >= signal_data.shape[-1]:
         raise ValueError("baseline_frames must leave at least one post-baseline frame")
@@ -141,6 +154,8 @@ def compute_time_to_peak(
         Selected global contrast-reference frame. Peak searching begins here.
     baseline_frames : int, optional
         Number of precontrast frames used to estimate concentration noise.
+        Must be at least 1 and less than the number of timepoints; a count
+        of 1 produces an all-NaN map. Default is 5.
     brain_mask : numpy.ndarray, optional
         Brain mask used to pool a robust spatial noise floor. When omitted,
         all spatial voxels contribute.
@@ -149,8 +164,18 @@ def compute_time_to_peak(
     -------
     numpy.ndarray
         3D reference-relative time-to-peak map in seconds. Voxels with
-        non-finite samples or peak enhancement not exceeding five baseline
-        noise standard deviations are NaN.
+        non-finite samples or insufficient peak enhancement are NaN. The
+        threshold is the larger of five effective baseline noise standard
+        deviations and a floating-point tolerance. Effective noise is the
+        larger of voxel noise and the median noise within ``brain_mask``.
+
+    Raises
+    ------
+    ValueError
+        If the time axis is not a finite, strictly increasing 1D vector
+        matching the concentration length, the reference frame is out of range,
+        the baseline count is below 1 or leaves no post-baseline frame, or the
+        brain mask has a different spatial shape.
     """
     if time_points.ndim != 1 or concentration.shape[-1] != time_points.size:
         raise ValueError("time_points must be 1D and match the concentration time axis")
@@ -224,7 +249,9 @@ def compute_signal_enhancement_ratio(
     bolus_arrival_frame : int, optional
         Frame index of bolus arrival.
     baseline_frames : int, optional
-        Number of pre-contrast frames used to estimate S0.
+        Number of precontrast frames used to estimate S0 and its sample noise.
+        Must be at least 1 and less than the number of timepoints; a count
+        of 1 produces an all-NaN map before checking timing values. Default 5.
     early_time_s : float, optional
         Early sample time in seconds after the selected global reference.
     late_time_s : float, optional
@@ -233,7 +260,17 @@ def compute_signal_enhancement_ratio(
     Returns
     -------
     numpy.ndarray
-        3D SER map. Undefined voxels are NaN.
+        3D dimensionless SER map. Undefined voxels are NaN; inadequate
+        acquisition coverage or a one-frame baseline gives an all-NaN map.
+
+    Raises
+    ------
+    ValueError
+        If time and signal lengths differ, the time axis is not 1D, or the
+        baseline count is below 1 or leaves no post-baseline frame. With at
+        least two baseline frames, also rejects an invalid reference frame,
+        nonfinite or nonincreasing times, and early/late offsets that are not
+        finite, positive and strictly ordered.
     """
     if time_points.ndim != 1 or signal_data.shape[-1] != time_points.size:
         raise ValueError("time_points must be 1D and match the signal time axis")

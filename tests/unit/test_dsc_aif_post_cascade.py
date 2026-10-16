@@ -282,11 +282,13 @@ def test_gamma_fit_refreshes_final_peak_provenance(
     assert state.qc_metrics["aif_metrics"]["peak_conc"] == 5.5
 
 
-def test_cascade_exhaustion_builds_complete_synthetic_qc(
+@pytest.mark.parametrize("aif_method", ["auto", "synthetic"])
+def test_synthetic_selection_builds_complete_qc(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    aif_method: str,
 ) -> None:
-    """No-candidate fallback stamps acquisition and postfilter QC in one state."""
+    """Synthetic output carries acquisition QC and the actual selection reason."""
     detector = dsc_aif.AIFDetection()
     synthetic = np.array([0.0, 0.0, 2.0, 8.0, 3.0, 1.0])
     monkeypatch.setattr(
@@ -305,13 +307,16 @@ def test_cascade_exhaustion_builds_complete_synthetic_qc(
     )
     with caplog.at_level(logging.WARNING):
         state = detector._finalize_post_cascade(
-            _context(), exhausted, 3, logging.getLogger(__name__)
+            _context()._replace(aif_method=aif_method),
+            exhausted, 3, logging.getLogger(__name__),
         )
 
     assert state.detection_level == "synthetic"
     assert state.candidate_count == 0
     assert state.baseline_frames == 3
-    assert state.qc_metrics["synthetic_fallback_reason"] == "no_candidates"
+    assert state.qc_metrics["synthetic_fallback_reason"] == (
+        "user_selected" if aif_method == "synthetic" else "no_candidates"
+    )
     assert state.qc_metrics["gamma_fit_rejected_reason"] == "synthetic_aif"
     assert state.qc_metrics["aif_baseline_frames"] == 3
     assert state.qc_metrics["bootstrap_baseline_frames"] == 2
@@ -319,9 +324,16 @@ def test_cascade_exhaustion_builds_complete_synthetic_qc(
     assert state.qc_metrics["cascade_postfilter_diags"] == (
         _cascade(accepted=False).postfilter_diagnostics
     )
-    assert "exhausted all candidate tiers" in caplog.text
-    assert "using the synthetic AIF fallback" in caplog.text
-    assert "3 candidates excluded by lesion distance" in caplog.text
+    warnings = state.qc_metrics["synthetic_aif_warnings"]
+    if aif_method == "auto":
+        assert "automatic detection failed" in warnings[0]
+        assert "exhausted all candidate tiers" in caplog.text
+        assert "using the synthetic AIF fallback" in caplog.text
+        assert "3 candidates excluded by lesion distance" in caplog.text
+    else:
+        assert "selected by the user" in warnings[0]
+        assert "automatic detection failed" not in " ".join(warnings)
+        assert "exhausted all candidate tiers" not in caplog.text
     assert state.qc_metrics["cascade_spatial_filter_diags"] == (
         exhausted.spatial_filter_diagnostics
     )

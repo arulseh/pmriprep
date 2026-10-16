@@ -200,6 +200,13 @@ def prepare_acquisition(
         Immutable input snapshots and a single automatic acquisition count,
         reusable for arbitrary processing order and subsets. Bad voxel signals
         remain identifiable without contaminating the count-selection pool.
+
+    Raises
+    ------
+    ValueError
+        If the inference, family or leakage policy is unsupported; signal,
+        AIF, time, TE, mask or baseline dimensions/values are invalid; or BSW
+        guidance is missing or inconsistent with the acquisition/regression.
     """
     if inference_method not in ("vi", "svb"):
         raise ValueError("signal CPI supports vi or svb only")
@@ -408,6 +415,12 @@ def fit_voxels(
     ------
     GuidedVoxel
         Measurement or explicit fallback request with the original image index.
+
+    Raises
+    ------
+    ValueError
+        If the acquisition requests spatial fitting or the requested indices
+        are not unique in-range integers.
 
     Notes
     -----

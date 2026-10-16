@@ -118,7 +118,7 @@ SYNTH_AIF_MIN_PEAK: Final[float] = 3.0
 SYNTH_AIF_RECIRC_FRACTION: Final[float] = 0.12
 #: Recirculation gamma-variate shape parameter; flatter than the first pass.
 SYNTH_AIF_RECIRC_ALPHA: Final[float] = 3.0
-#: Seconds from the first-pass peak to the recirculation peak.
+#: Seconds from the first-pass peak to the onset of the recirculation lobe.
 SYNTH_AIF_RECIRC_DELAY_S: Final[float] = 20.0
 #: Recirculation gamma-variate time-to-peak (s); broader than the first pass.
 SYNTH_AIF_RECIRC_DISPERSION_S: Final[float] = 8.0

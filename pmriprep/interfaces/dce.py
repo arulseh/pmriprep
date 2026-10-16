@@ -309,15 +309,23 @@ class B1Mapping(SimpleInterface):
         1. RepetitionTimeExcitation array (BIDS standard for per-volume TRs)
         2. RepetitionTime array (if present)
         3. PerFrameFunctionalGroupsSequence (enhanced DICOM)
-        4. Fallback to default TR values (20/100ms) if no JSON metadata
+        Explicit ``tr1``/``tr2`` inputs override the timing values; per-volume
+        metadata still determines volume ordering when available. Without both
+        overrides or usable per-volume TR metadata, loading raises.
 
         Returns
         -------
         tuple
             (s1, s2, affine, header, tr1_ms, tr2_ms, coreg_info) where s1 is the short-TR
             signal, s2 is the long-TR signal, TRs are in milliseconds, and coreg_info
-            contains coregistration metadata including s1_original, s2_original if
-            coregistration was performed.
+            contains ``coregistered=False``: the two volumes share one acquisition
+            grid and this loader does not register them.
+
+        Raises
+        ------
+        ValueError
+            If the AFI file is absent, is not 4D with exactly two volumes, or
+            TR1/TR2 cannot be obtained from metadata or explicit overrides.
         """
         import json as _json
 
@@ -3672,6 +3680,11 @@ class DCEPreprocess(SimpleInterface):
         -------
         str
             Expected MCFLIRT motion-parameter path.
+
+        Raises
+        ------
+        RuntimeError
+            If MCFLIRT exits with a nonzero status.
         """
         import subprocess
 
@@ -3708,6 +3721,11 @@ class DCEPreprocess(SimpleInterface):
         -------
         _DCEPreprocessOutputs
             Paths for the selected series, motion parameters, and mean images.
+
+        Raises
+        ------
+        FileNotFoundError
+            If motion-corrected data or the generated mean image is absent.
         """
         moco_path = f"{mcflirt_plan.out_base}.nii.gz"
         if not Path(moco_path).exists():

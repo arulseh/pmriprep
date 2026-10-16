@@ -57,6 +57,12 @@ def convolve(
         Integrated curves, or None when the compiled module or native float64
         inputs are unavailable. Calculation failures propagate to the caller.
 
+    Raises
+    ------
+    ValueError
+        If native float64 execution is selected but elapsed times are not 2D.
+        Native-kernel input validation errors also propagate.
+
     Notes
     -----
     Copies only noncontiguous or unaligned input buffers. This function adds no

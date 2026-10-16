@@ -299,6 +299,12 @@ class ContinuousCPIConvolution:
         -------
         ndarray
             Tissue concentration in the units implied by AIF and flow.
+
+        Raises
+        ------
+        ValueError
+            If the residue does not start at zero or flow/delay is nonfinite.
+            Invalid residue geometry also raises during interpolation.
         """
         if knots[0] != 0 or not np.isfinite(flow) or not np.isfinite(delay):
             raise ValueError("residue must start at zero; flow/delay must be finite")
@@ -324,6 +330,12 @@ class ContinuousCPIConvolution:
         -------
         ndarray
             Concentration at each supplied elapsed time, in the supplied order.
+
+        Raises
+        ------
+        ValueError
+            If the residue does not start at zero, flow is nonfinite, or target
+            times are not a finite vector. Invalid residue geometry also raises.
         """
         if (
             knots[0] != 0

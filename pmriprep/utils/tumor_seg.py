@@ -153,6 +153,11 @@ def _create_spherical_kernel(
     ndarray of bool
         3D binary array representing the spherical kernel
 
+    Raises
+    ------
+    ValueError
+        If a kernel radius exceeds ``MAX_KERNEL_RADIUS_VOXELS`` on any axis.
+
     Notes
     -----
     The kernel size in each dimension is calculated as:
@@ -650,6 +655,11 @@ def _create_hemisphere_mask(
     midline : _MidlineEstimate, optional
         Subject-space midsagittal plane. If unavailable, world x=0 is used.
 
+    Raises
+    ------
+    ValueError
+        If a supplied midline estimate has a different shape from the mask.
+
     Notes
     -----
     Voxels exactly on the selected midsagittal plane are excluded from both
@@ -855,6 +865,12 @@ def create_nawm_roi(
     ... )
     >>> print(f"NAWM voxels: {result['analysis']['n_voxels']}")  # doctest: +SKIP
     NAWM voxels: 2847
+
+    Raises
+    ------
+    ValueError
+        If the WM probability map or supplied brain mask has a different
+        spatial shape from the tumor mask.
 
     Notes
     -----

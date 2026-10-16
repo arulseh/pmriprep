@@ -76,6 +76,9 @@ class ContinuousDispersedCPI:
 
         Raises
         ------
+        ValueError
+            If flow, delay, mode or rate is nonfinite, mode is negative, rate is
+            not positive, or the resulting gamma shape is nonfinite.
         DispersionIntegrationError
             Adaptive integration fails to meet its relative error criterion.
         """

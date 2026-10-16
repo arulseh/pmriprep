@@ -97,6 +97,12 @@ def choose_transport(rows: Sequence[GuidedVoxel]) -> GuidedVoxel:
     GuidedVoxel
         Selected valid/provisional fit, or rejection with all branch reasons.
         A failed branch cannot override a valid alternative.
+
+    Raises
+    ------
+    ValueError
+        If rows are not distinct branches of one voxel, complete ordinary-VI
+        scores are absent, or a retained state has a nonfinite score.
     """
     if (not rows or len({r.flat_index for r in rows}) != 1
             or any(r.family not in ("cpi", "cpi_vtf") for r in rows)
@@ -149,6 +155,11 @@ def fit_selected_voxels(
     ------
     GuidedVoxel
         Selected result with both branch scores and its unchanged spatial index.
+
+    Raises
+    ------
+    ValueError
+        If requested spatial indices are not unique in-range integers.
     """
     if executor is not None:
         selected = (np.flatnonzero(acquisition.branches[0].fit_support).tolist()

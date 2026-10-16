@@ -169,6 +169,12 @@ def validate_vp_cbv(
     NAWM is used only to establish a subject-specific scale for each map. The
     universal comparison domain is whole brain; a lesion-region comparison is
     emitted only when at least ``MIN_VALID_VOXELS`` jointly valid voxels exist.
+
+    Raises
+    ------
+    ValueError
+        If the NAWM mask is missing or the maps and supplied masks have
+        inconsistent spatial shapes.
     """
     vp = np.asarray(vp_data, dtype=np.float64)
     cbv = np.asarray(cbv_data, dtype=np.float64)
@@ -265,7 +271,15 @@ def validate_vp_cbv_from_files(
     prior_relative_sd: Optional[float] = None,
     prior_informed_fraction: Optional[float] = None,
 ) -> ValidationResult:
-    """Load NIfTI inputs and measure DSC-DCE vascular concordance."""
+    """Load NIfTI inputs and measure DSC-DCE vascular concordance.
+
+    Raises
+    ------
+    FileNotFoundError
+        If a required input file does not exist.
+    ValueError
+        If the loaded arrays fail the spatial-shape checks in ``validate_vp_cbv``.
+    """
     import nibabel as nib  # type: ignore[import-untyped]
 
     paths = [Path(vp_path), Path(ncbv_path), Path(mask_path), Path(nawm_mask_path)]

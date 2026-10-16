@@ -97,6 +97,11 @@ def _transform_mask_to_dce_conditional(
     -------
     str
         Path to mask in DCE space, or "" if no mask.
+
+    Raises
+    ------
+    ValueError
+        If a user-supplied mask does not match the DCE spatial shape or affine.
     """
     from nipype.interfaces.base import isdefined
 
@@ -639,6 +644,12 @@ def _signal_to_concentration_node(
     -------
     tuple
         Path to the 4D concentration NIfTI file and conversion QC metrics.
+
+    Raises
+    ------
+    ValueError
+        If the brain-mask shape differs from the signal spatial shape, or
+        signal-conversion inputs fail ``signal_to_concentration`` validation.
     """
     from pathlib import Path
 
@@ -1091,6 +1102,11 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
     -------
     str
         Path to the 3D mean NIfTI file.
+
+    Raises
+    ------
+    ValueError
+        If the input image is not 4D.
     """
     from pathlib import Path
 
@@ -1485,7 +1501,15 @@ def _transform_b1_to_vfa(
     Returns
     -------
     str or None
-        Path to B1+ map resampled to VFA space, or original if same space.
+        Path to the B1+ map on the VFA grid. With no target reference,
+        returns the supplied path unchanged. None indicates absent B1+ data,
+        rejected registration QC, or no support after header-based resampling.
+
+    Raises
+    ------
+    RuntimeError
+        If B1+ data are available but the required VFA registration transform
+        is missing or registration fails.
     """
     if b1_map_file is None or vfa_ref_file is None:
         return b1_map_file
@@ -1585,7 +1609,15 @@ def _transform_b1_to_dce(
     Returns
     -------
     str or None
-        Path to B1+ map resampled to DCE space, or original if same space.
+        Path to the B1+ map on the DCE grid. With no target reference,
+        returns the supplied path unchanged. None indicates absent B1+ data,
+        rejected registration QC, or no support after header-based resampling.
+
+    Raises
+    ------
+    RuntimeError
+        If AFI B1+ data are available but the required DCE registration
+        transform is missing or registration fails.
     """
     if b1_map_file is None or reference_file is None:
         return b1_map_file
@@ -1935,7 +1967,14 @@ def _transform_t1_to_dce(
     Returns
     -------
     str or None
-        Registered T1 map, or ``None`` when registration is unavailable or poor.
+        Registered T1 map, or None when no T1 map was supplied or known
+        registration QC is neither PASS nor WARN.
+
+    Raises
+    ------
+    RuntimeError
+        If a VFA T1 map is available but its DCE reference/transform is
+        missing, registration fails, or registration QC cannot be evaluated.
     """
     if t1_map_file is None:
         return None
@@ -2535,6 +2574,12 @@ def _derive_smoothed_kep(
     dict
         Copy of ``smoothed_pk`` with a derived ``kep`` path when its inputs
         are available and geometrically compatible.
+
+    Raises
+    ------
+    ValueError
+        If smoothed Ktrans/ve, native Kep or the brain mask have inconsistent
+        spatial shapes or affines.
     """
     from pathlib import Path
     from typing import cast
@@ -2691,6 +2736,11 @@ def _generate_dce_pk_maps_qc(
     tuple
         Tuple of (pk_param_maps_qc_plot, model_selection_qc_plot,
         model_selection_regions).
+
+    Raises
+    ------
+    ValueError
+        If the brain mask is absent or map/QC-mask shapes differ from it.
     """
     import logging
 

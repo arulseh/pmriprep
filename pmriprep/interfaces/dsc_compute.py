@@ -376,7 +376,7 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
     out_ttp = File(
         exists=True,
-        desc="Tissue time to peak relative to AIF bolus arrival",
+        desc="Tissue time to peak relative to the finalized baseline reference",
     )
     out_cnr = File(exists=True, desc="CNR map (contrast-to-noise ratio)")
 
@@ -695,8 +695,8 @@ class ComputeDSCMaps(BaseInterface):
         Parameters
         ----------
         signal : npt.NDArray, optional
-            Raw DSC signal array. Concentration is intentionally not used as a
-            substitute because PSR is defined on the signal curve.
+            Raw DSC signal array used to measure the baseline, bolus minimum
+            and recovery levels for PSR.
         spatial_shape : tuple of int
             Output map shape.
         baseline_frames : int
@@ -882,7 +882,8 @@ class ComputeDSCMaps(BaseInterface):
             )
             if aif_auc < EPSILON_SIGNAL:
                 logger.warning(
-                    "AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc
+                    "AIF AUC %.6f is below %.6f; AUC-CBV unavailable",
+                    aif_auc, EPSILON_SIGNAL,
                 )
                 cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
             else:
@@ -893,7 +894,7 @@ class ComputeDSCMaps(BaseInterface):
                 cbv_auc_aif_integral=round(aif_auc, 6),
             )
         else:
-            logger.warning("Measured AIF not available; AUC CBV set to NaN")
+            logger.warning("AIF curve for AUC integration unavailable; AUC-CBV set to NaN")
             cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
             qc["cbv_auc_measured_aif_missing"] = True
 
@@ -921,7 +922,7 @@ class ComputeDSCMaps(BaseInterface):
         detected_baseline : int
             Detected pre-bolus frame count.
         spatial_shape : tuple of int
-            Output map shape when raw signal is unavailable.
+            Output map shape.
         brain_mask : np.ndarray
             Brain domain used to pool the CNR noise floor.
 
