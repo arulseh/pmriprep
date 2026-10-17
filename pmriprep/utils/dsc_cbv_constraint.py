@@ -212,13 +212,6 @@ def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
     dict[str, Any]
         Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
 
-    Notes
-    -----
-        This function defines the contract for the producer-shape ``aif_qc``
-        dict that the ``--skip-dsc`` resume sidecar must round-trip
-        verbatim. If you add a new producer key consumed here, also add it
-        to the oracle in ``tests/unit/test_resume_qc_round_trip_consumer_keys.py``
-        so the round-trip parity guard catches future schema drift.
     """
     data = dict(aif_qc_data)
 

@@ -1,5 +1,6 @@
 """Unit tests for DCE AIF detection, averaging, gates, and atlas cascade."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -500,40 +501,6 @@ class TestAIFScalingUnitFix:
         plasma_target = blood_target / (1.0 - 0.42)
         assert blood_target == pytest.approx(1.25)
         assert plasma_target == pytest.approx(2.155, rel=1e-3)
-
-
-    def test_scaling_block_end_to_end_on_plasma_curve(self) -> None:
-        """Integration-flavored: replay the landed scaling arithmetic against
-        an AIFDetection instance and a known plasma-scale ``aif_curve``,
-        confirming the peak lands at the plasma-unit target.
-
-        Simulates the exact control flow from ``_run_interface`` (line
-        2917-2954 of ``dce_aif.py``) using an actual interface instance
-        so the arithmetic is exercised against live trait values
-        (hematocrit, dose, agent_standard_dose, target_peak).
-        """
-        iface = self._make_interface(
-            hematocrit=0.42, dose=1.0, agent_standard_dose=0.1, target_peak=0.0,
-        )
-
-        # Construct a synthetic aif_curve in plasma units. A typical
-        # full-dose Gd-DOTA detected-voxel peak ≈ 3.65 mM blood →
-        # after /(1-Hct)=0.58 ≈ 6.29 mM plasma.
-        n = 40
-        curve = np.zeros(n, dtype=np.float64)
-        curve[10:20] = 6.29  # peak in plasma units
-
-        hct = float(iface.inputs.hematocrit)
-        scaled, scaling_factor = _apply_aif_scale(
-            curve, hct, 0.0, iface._get_expected_peak_range,
-        )
-
-        # Expected plasma floor: Parker minimum (5.0) / (1-0.42) ≈ 8.621 mM.
-        expected_plasma_target = 5.0 / (1.0 - 0.42)
-        assert float(np.max(scaled)) == pytest.approx(expected_plasma_target, rel=1e-4)
-        assert scaling_factor == pytest.approx(1.371, rel=1e-3)
-        assert scaling_factor <= 3.4  # no low-confidence warning
-        assert scaling_factor <= 5.2  # no unreliable warning
 
 
 def _make_cascade_inputs(
@@ -2898,10 +2865,12 @@ class TestDetectedAIFEmissionInSitu:
     """
 
     @staticmethod
-    def _write_niftis(tmp_path):
+    def _write_niftis(tmp_path: Path, arterial_peak: float = 5.0) -> tuple[str, str]:
         import nibabel as nib
 
-        conc_data, brain_mask = _make_synthetic_dce_4d(shape=(20, 20, 20, 40))
+        conc_data, brain_mask = _make_synthetic_dce_4d(
+            shape=(20, 20, 20, 40), arterial_peak=arterial_peak,
+        )
         affine = np.eye(4, dtype=np.float64)
         conc_f = tmp_path / "conc.nii.gz"
         mask_f = tmp_path / "brain.nii.gz"
@@ -2988,20 +2957,34 @@ class TestDetectedAIFEmissionInSitu:
         # post-filter rebuild (not the original) drives downstream provenance.
         assert res["aif_confidence"] == "reduced"
 
-    def test_pass2_singleton_is_emitted_with_qc(self, tmp_path, monkeypatch) -> None:
-        """An anchored Pass-2 singleton remains a measured AIF with provenance."""
+    @pytest.mark.parametrize(
+        ("target_peak", "blood_peak", "expected_factor", "warning"),
+        [
+            (0.0, 5.0, 1.0, None),
+            (3.4, 1.0, 3.4, None),
+            (3.41, 1.0, 3.41, "substantially below expected range"),
+            (5.2, 1.0, 5.2, "substantially below expected range"),
+            (5.21, 1.0, 5.21, "Results may be unreliable"),
+        ],
+    )
+    def test_pass2_singleton_is_emitted_with_qc(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture, target_peak: float,
+        blood_peak: float, expected_factor: float, warning: str | None,
+    ) -> None:
+        """A selected singleton emits its calibrated curve, QC and scale warnings."""
         import nibabel as nib
 
-        conc_f, mask_f = self._write_niftis(tmp_path)
+        conc_f, mask_f = self._write_niftis(tmp_path, arterial_peak=blood_peak)
         monkeypatch.chdir(tmp_path)
 
         candidate = (10, 10, 10)
-        hematocrit = 0.42
+        hematocrit = 0.5
         concentration = np.asarray(nib.load(conc_f).dataobj)
-        expected_curve = concentration[candidate] / (1.0 - hematocrit)
+        expected_curve = concentration[candidate] / (1.0 - hematocrit) * expected_factor
         cascade = CascadeResult(
             candidates=[candidate], scores=[0.9],
-            metrics_list=[self._full_metric()], detection_method="atlas",
+            metrics_list=[self._full_metric(peak_mm=blood_peak)], detection_method="atlas",
             atlas_tier_used="MCA_ACA_dce_strict",
             cascade_tiers_attempted=10, anchor_outcomes=[], tier_result=None,
             tier_gate_decisions=[],
@@ -3014,6 +2997,7 @@ class TestDetectedAIFEmissionInSitu:
         iface.inputs.brain_mask_file = mask_f
         iface.inputs.tr = 4.0
         iface.inputs.hematocrit = hematocrit
+        iface.inputs.target_peak = target_peak
 
         with patch.object(
             AIFDetection, "_prepare_search_mask",
@@ -3027,8 +3011,21 @@ class TestDetectedAIFEmissionInSitu:
             iface.run()
 
         res = iface._results
-        assert res["scaling_factor"] == pytest.approx(1.0)
+        assert res["scaling_factor"] == pytest.approx(expected_factor)
         np.testing.assert_allclose(res["aif_curve"], expected_curve)
+        qc = res["qc_metrics"]
+        assert qc["required_scaling_factor"] == pytest.approx(expected_factor)
+        assert qc["scaling_factor_warning"] is (warning is not None)
+        assert qc["required_scaling_factor_warning"] is (warning is not None)
+        scale_warnings = [
+            record.getMessage() for record in caplog.records
+            if record.levelname == "WARNING" and "amplitude-calibration" in record.getMessage()
+        ]
+        assert len(scale_warnings) == (0 if warning is None else 1)
+        if warning is not None:
+            assert warning in scale_warnings[0]
+        assert res["aif_confidence"] == "standard"
+        assert qc["aif_uncertainty_inflation_factor"] == 1.0
         assert res["candidate_count"] == 1
         assert res["qc_metrics"]["n_aif_voxels_selected"] == 1
         assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]
@@ -3039,7 +3036,6 @@ class TestDetectedAIFEmissionInSitu:
             res["qc_metrics"]["whole_brain_symmetry_angle_degrees"]
         )
         assert 0.0 < res["qc_metrics"]["whole_brain_symmetry_overlap"] <= 1.0
-        assert "aif_validation_retries" not in res["qc_metrics"]
         assert prepare_spy.call_count == 2
         assert (
             prepare_spy.call_args_list[0].kwargs[

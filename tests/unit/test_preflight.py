@@ -105,25 +105,14 @@ class TestPreflightReport:
     def test_has_errors_empty(self):
         report = PreflightReport()
         assert not report.has_errors
+        report.raise_if_errors()
 
     def test_has_errors_with_warnings_only(self):
         report = PreflightReport(messages=[
             PreflightMessage("warning", "TEST", "a warning"),
         ])
         assert not report.has_errors
-
-    def test_has_errors_with_error(self):
-        report = PreflightReport(messages=[
-            PreflightMessage("warning", "W1", "warning"),
-            PreflightMessage("error", "E1", "error msg"),
-        ])
-        assert report.has_errors
-
-    def test_raise_if_errors_no_errors(self):
-        report = PreflightReport(messages=[
-            PreflightMessage("warning", "W1", "ok"),
-        ])
-        report.raise_if_errors()  # should not raise
+        report.raise_if_errors()
 
     def test_raise_if_errors_with_errors(self):
         report = PreflightReport(messages=[
@@ -131,6 +120,7 @@ class TestPreflightReport:
             PreflightMessage("warning", "W1", "a warning"),
             PreflightMessage("error", "E2", "second error"),
         ])
+        assert report.has_errors
         with pytest.raises(PreflightError, match="2 error"):
             report.raise_if_errors()
 

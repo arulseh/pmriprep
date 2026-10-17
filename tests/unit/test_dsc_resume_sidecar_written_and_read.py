@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from pmriprep.utils.dsc_cbv_constraint import _normalize_aif_qc_keys
 from pmriprep.workflows.base import _find_previous_dsc_outputs
 from pmriprep.workflows.dsc.datasinks import _write_dsc_resume_checkpoint
 
@@ -24,11 +25,17 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
         "detection_method": "atlas_strict",
         "n_aif_voxels_selected": 6,
         "cbv_auc_denominator_is_synthetic": False,
+        "synthetic": False,
+        "gamma_fit_applied": True,
+        "gamma_fit_auto_metrics": {"peak_ratio": 1.05, "shape_score": 0.9},
+        "hematocrit": 0.42,
+        "quality_score": 0.81,
         "cnr_whole_brain": {"fraction_cnr_gt_4": 0.81, "mean_cnr": 5.4},
         "aif_metrics": {
             "ph": 41.2,
             "peak_conc": 12.5,
             "fwhm": 6.2,
+            "ttp": 18.0,
             "psr": 78.0,
             "brr": 92.0,
         },
@@ -40,11 +47,31 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
         "k2_median": -0.002,
         "k2_signed": True,
         "percent_negative_k2": 61.0,
+        "k2_mean": 0.011, "k2_std": 0.005,
+        "k2_min": -0.021, "k2_max": 0.087,
+        "k2_p05": -0.004, "k2_p95": 0.033,
+        "n_brain_voxels": 142_000,
+        "n_k2_valid": 141_000,
+        "auc_mean": 1.23,
+        "percent_k2_undefined": 1000 / 1420,
+        "k2_reference_available": True,
+        "k2_reference_total_voxels": 1000,
+        "k2_reference_selected_voxels": 600,
+        "k2_reference_selected_fraction": 0.6,
+        "k2_reference_baseline_frames": 20,
+        "k2_reference_tail_frames": 10,
+        "k2_reference_selection": "raw_signal_final10_mean_1_baseline_sample_sd",
+        "k2_reference_selection_domain": "raw_signal",
+        "k2_reference_peak": 4.0,
+        "k2_reference_failure_reason": "",
+        "leakage_correction_disabled": False,
     }
     preprocessing_stats = {
         "fd_mean": 0.18, "fd_max": 0.62,
         "mean_cnr": 5.4, "fraction_cnr_gt_4": 0.81,
         "tr_ms": 1500.0, "n_volumes": 60,
+        "percent_outliers": 1.5,
+        "motion_status": "PASS",
     }
     return aif_qc, preload_qc, preprocessing_stats
 
@@ -129,6 +156,10 @@ class TestRoundTripViaResumeHelper:
         assert recovered["aif_qc"] == aif_qc
         assert recovered["preload_qc"] == preload_qc
         assert recovered["preprocessing_stats"] == preprocessing_stats
+        normalized = _normalize_aif_qc_keys(dict(recovered["aif_qc"]))
+        assert normalized["aif_peak_height"] == pytest.approx(0.412)
+        assert normalized["baseline_return_ratio"] == pytest.approx(0.92)
+        assert normalized["gamma_peak_ratio"] == pytest.approx(1.05)
 
     def test_no_work_dir_returns_none(self, tmp_path: Path) -> None:
         recovered = _find_previous_dsc_outputs(

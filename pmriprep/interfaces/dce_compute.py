@@ -1879,9 +1879,7 @@ def _resolve_bat_tissue_reference(
 #:
 #: These keys are part of the producer-shape ``preload_qc`` dict that the
 #: ``--skip-dsc`` resume checkpoint (``work/<wf>/dsc_resume.json``)
-#: must round-trip verbatim. If you add a new key here, also add it to
-#: the oracle in ``tests/unit/test_resume_qc_round_trip_consumer_keys.py``
-#: so the round-trip parity guard catches future schema drift.
+#: preserves verbatim.
 _K2_QC_KEYS = {
     "k2_mean", "k2_std", "k2_min", "k2_max", "k2_median", "k2_p05", "k2_p95",
     "percent_negative_k2", "percent_k2_undefined",

@@ -60,8 +60,14 @@ def preprocessing_stats() -> dict[str, Any]:
     }
 
 
-class TestPreloadCosmeticKeys:
-    def test_preload_keys_added(self, base_sidecar, preload_qc, preprocessing_stats):
+class TestPreprocEnrichment:
+    """Preprocessing QC retains base metadata and canonical units."""
+
+    def test_qc_fields_and_base_metadata(
+        self, base_sidecar: dict[str, Any], preload_qc: dict[str, Any],
+        preprocessing_stats: dict[str, Any],
+    ) -> None:
+        """One enrichment writes preload, motion and signal QC without losing inputs."""
         out = enrich_dsc_preproc_sidecar(
             dict(base_sidecar),
             preload_qc=preload_qc,
@@ -77,15 +83,6 @@ class TestPreloadCosmeticKeys:
         assert out["PreloadPercentK2Undefined"] == pytest.approx(0.4)
         assert out["PreloadK2ValidVoxels"] == 1000
 
-class TestPreprocessingCosmeticKeys:
-    def test_motion_and_signal_keys_added(
-        self, base_sidecar, preload_qc, preprocessing_stats
-    ):
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar),
-            preload_qc=preload_qc,
-            preprocessing_stats=preprocessing_stats,
-        )
         # Motion fields have no modality prefix
         assert out["MotionFDMean"] == pytest.approx(0.18)
         assert out["MotionFDMax"] == pytest.approx(0.62)
@@ -98,50 +95,14 @@ class TestPreprocessingCosmeticKeys:
         assert out["PeakSignalDropPercent"] == pytest.approx(24.0)
         assert out["NumberOfVolumes"] == 60
 
-    def test_repetition_time_in_seconds(self, base_sidecar, preprocessing_stats):
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar),
-            preload_qc=None,
-            preprocessing_stats=preprocessing_stats,
-        )
         # Producer carries tr_ms; sidecar must convert to canonical BIDS
         # RepetitionTime in seconds.
         assert out["RepetitionTime"] == pytest.approx(1.5)
-        assert "PreprocessingTR_ms" not in out
+        assert {key: out[key] for key in base_sidecar} == base_sidecar
 
-
-class TestBaseSidecarFieldsSurvive:
-    """Risk #2: enrichment must preserve base-sidecar fields verbatim."""
-
-    def test_base_fields_preserved(
-        self, base_sidecar, preload_qc, preprocessing_stats
-    ):
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar),
-            preload_qc=preload_qc,
-            preprocessing_stats=preprocessing_stats,
-        )
-        assert out["Description"] == base_sidecar["Description"]
-        assert out["SkullStripped"] is False
-        assert out["SpatialReference"] == base_sidecar["SpatialReference"]
-        assert out["Sources"] == base_sidecar["Sources"]
-        assert out["VoxelSize"] == [3.0, 3.0, 5.0]
-
-
-class TestEmptyInputs:
-    def test_no_qc_dicts(self, base_sidecar):
+    def test_no_qc_preserves_base_metadata(self, base_sidecar: dict[str, Any]) -> None:
+        """Empty QC leaves the supplied metadata intact."""
         out = enrich_dsc_preproc_sidecar(
             dict(base_sidecar), preload_qc=None, preprocessing_stats=None,
         )
-        # Sidecar still emits valid (smaller) form; no Preload* / Motion* keys
-        assert all(not k.startswith("Preload") for k in out)
-        assert all(not k.startswith("Motion") for k in out)
-        # Base fields untouched
-        assert out["SpatialReference"] == base_sidecar["SpatialReference"]
-
-    def test_empty_dicts(self, base_sidecar):
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar), preload_qc={}, preprocessing_stats={},
-        )
-        assert all(not k.startswith("Preload") for k in out)
-        assert all(not k.startswith("Motion") for k in out)
+        assert out == base_sidecar

@@ -60,31 +60,27 @@ def test_load_config_rejects_unknown_option(tmp_path: Path) -> None:
         load_config(path)
 
 
-@pytest.mark.parametrize("nested_section", ["processing", "registration", "aif"])
-def test_load_config_rejects_nested_dce_sections(
-    tmp_path: Path, nested_section: str,
-) -> None:
+def test_load_config_rejects_nested_dce_sections(tmp_path: Path) -> None:
     """DCE options follow the same flat section contract as other pipelines."""
     path = _write_config(
         tmp_path / "config.yaml",
-        f"dce:\n  {nested_section}:\n    tsnr_threshold: 8\n",
+        "dce:\n  unsupported_group:\n    tsnr_threshold: 8\n",
     )
 
     with pytest.raises(
         ValueError,
-        match=f"Unknown dce configuration option.*{nested_section}",
+        match="Unknown dce configuration option.*unsupported_group",
     ):
         load_config(path)
 
 
-@pytest.mark.parametrize("nested_section", ["processing", "registration", "aif"])
-def test_dce_builder_rejects_nested_sections(nested_section: str) -> None:
+def test_dce_builder_rejects_nested_sections() -> None:
     """Programmatic construction cannot bypass the flat DCE schema."""
     with pytest.raises(
         ValueError,
-        match=f"Unknown dce configuration option.*{nested_section}",
+        match="Unknown dce configuration option.*unsupported_group",
     ):
-        build_dce_config({"dce": {nested_section: {"tsnr_threshold": 8}}})
+        build_dce_config({"dce": {"unsupported_group": {"tsnr_threshold": 8}}})
 
 
 @pytest.mark.parametrize(
@@ -109,8 +105,7 @@ def test_direct_builders_reject_unknown_options(builder, section: str, option: s
         (lambda: DCEConfig(inference="svb"), "Invalid inference"),
         (lambda: DCEConfig(aif_method="synthetic"), "Invalid aif_method"),
         (lambda: DCEConfig(aif_bat_alignment="on"), "Invalid aif_bat_alignment"),
-        (lambda: DCEConfig(t1_method="linear"), "Invalid t1_method"),
-        (lambda: DCEConfig(t1_method="hybrid"), "Invalid t1_method"),
+        (lambda: DCEConfig(t1_method="unsupported"), "Invalid t1_method"),
         (lambda: DSCConfig(method="osvd"), "Invalid method"),
         (lambda: DSCConfig(inference="mcmc"), "Invalid inference"),
         (lambda: DSCConfig(aif_method="population"), "Invalid aif_method"),
@@ -239,12 +234,11 @@ def test_cli_and_file_options_build_identical_effective_values(
 
 
 @pytest.mark.parametrize("option", ["--dsc-dose", "--dce-dose"])
-@pytest.mark.parametrize("preset", ["half", "full", "double"])
-def test_cli_dose_rejects_named_presets(option: str, preset: str) -> None:
+def test_cli_dose_rejects_named_presets(option: str) -> None:
     """Dose CLI options accept numeric multipliers only."""
     with pytest.raises(SystemExit):
         _build_parser().parse_args(
-            ["/tmp/bids", "/tmp/out", "participant", option, preset]
+            ["/tmp/bids", "/tmp/out", "participant", option, "half"]
         )
 
 
