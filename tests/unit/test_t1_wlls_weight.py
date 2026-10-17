@@ -148,6 +148,8 @@ class TestVFAFitNRMSECorrectedAngles:
         assert qc["edge_voxels_eroded"] == np.count_nonzero(~expected_support)
         assert qc["t1_support"]["directly_measured_voxels"] == np.count_nonzero(expected_support)
         asymmetry = qc["hemispheric_asymmetry"]
+        assert asymmetry["median_left_ms"] == pytest.approx(t1_s * 1000.0, abs=0.1)
+        assert asymmetry["median_right_ms"] == pytest.approx(upper_t1_s * 1000.0, abs=0.1)
         assert asymmetry["asymmetry_index"] == pytest.approx(expected_asymmetry, abs=1e-4)
         assert asymmetry["warn"] is warn
         assert asymmetry["fail"] is fail

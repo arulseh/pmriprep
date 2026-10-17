@@ -1960,12 +1960,12 @@ class T1Mapping(SimpleInterface):
             "n_flip_angles": n_fa,
         }
 
-        # Hemispheric asymmetry: detect systematic left/right coverage loss
+        # Compare median T1 across the left and right halves of the RAS array.
         midplane = shape[0] // 2
-        right_valid = brain_mask[:midplane] & np.isfinite(t1_map_arr[:midplane])
-        left_valid = brain_mask[midplane:] & np.isfinite(t1_map_arr[midplane:])
-        right_t1 = t1_map_arr[:midplane][right_valid]
-        left_t1 = t1_map_arr[midplane:][left_valid]
+        left_valid = brain_mask[:midplane] & np.isfinite(t1_map_arr[:midplane])
+        right_valid = brain_mask[midplane:] & np.isfinite(t1_map_arr[midplane:])
+        left_t1 = t1_map_arr[:midplane][left_valid]
+        right_t1 = t1_map_arr[midplane:][right_valid]
         if len(right_t1) > 100 and len(left_t1) > 100:
             med_r = float(np.median(right_t1))
             med_l = float(np.median(left_t1))
