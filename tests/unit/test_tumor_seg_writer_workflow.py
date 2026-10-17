@@ -43,92 +43,26 @@ def _make_seg(path: Path, label: int = 2) -> Path:
     return path
 
 
-def _make_mask(path: Path) -> Path:
-    nib.save(
-        nib.Nifti1Image(np.ones((4, 4, 4), dtype=np.float32), np.eye(4)),
-        path,
-    )
-    return path
-
-
-def test_tumor_seg_datasinks_smoke(
+def test_tumor_seg_derivatives_and_sidecars(
     tmp_path: Path, minimal_bids_with_tumor_inputs: tuple[Path, dict]
 ) -> None:
-    """All 6 NIfTI outputs + lesionStats + volumes.txt + QC JSON written."""
-    from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
-
-    bids, sources = minimal_bids_with_tumor_inputs
-    out_root = tmp_path / "out"
-
-    seg = _make_seg(tmp_path / "seg.nii.gz")
-    enhancing = _make_mask(tmp_path / "enhancing.nii.gz")
-    nonenhancing = _make_mask(tmp_path / "nonenhancing.nii.gz")
-    wholetumor = _make_mask(tmp_path / "wholetumor.nii.gz")
-    nawm = _make_mask(tmp_path / "nawm.nii.gz")
-
-    wf = init_tumor_seg_datasinks_wf(
-        output_dir=str(out_root),
-        bids_dir=str(bids),
-        subject_id="01",
-        session_id="0001",
-    )
-    wf.base_dir = str(tmp_path / "work")
-    inp = wf.inputs.inputnode
-    inp.source_t1w = str(sources["source_t1w"])
-    inp.source_t1w_postcon = str(sources["source_t1w_postcon"])
-    inp.source_t2w = str(sources["source_t2w"])
-    inp.source_flair = str(sources["source_flair"])
-    inp.segmentation = str(seg)
-    inp.enhancing_mask = str(enhancing)
-    inp.non_enhancing_mask = str(nonenhancing)
-    inp.whole_tumor_mask = str(wholetumor)
-    inp.nawm_mask = str(nawm)
-    inp.qc_metrics = {
-        "segmentation": {
-            "validation": {
-                "total_tumor_volume_ml": 8.0,
-                "enhancing_volume_ml": 8.0,
-                "non_enhancing_volume_ml": 0.0,
-                "total_tumor_voxels": 8,
-                "enhancing_voxels": 8,
-                "non_enhancing_voxels": 0,
-                "voxel_volume_mm3": 1.0,
-            }
-        }
-    }
-    wf.run()
-
-    ses = out_root / "pmriprep" / "sub-01" / "ses-0001"
-    anat = ses / "anat"
-    expected = [
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.nii.gz",
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.tsv",
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-enhancing_mask.nii.gz",
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-nonenhancing_mask.nii.gz",
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-wholetumor_mask.nii.gz",
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-lesion_mask.nii.gz",
-        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-nawm_mask.nii.gz",
-    ]
-    for p in expected:
-        assert p.exists(), f"Missing: {p.name}"
-
-    dd = out_root / "pmriprep" / "dataset_description.json"
-    assert dd.exists()
-
-
-def test_tumor_seg_sidecar_sources_populated(
-    tmp_path: Path, minimal_bids_with_tumor_inputs: tuple[Path, dict]
-) -> None:
-    """Every tumor segmentation sidecar must carry Sources."""
+    """Tumor images carry source provenance, measured volumes and forwarded NAWM QC."""
     from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
 
     bids, sources = minimal_bids_with_tumor_inputs
     out_root = tmp_path / "out"
     seg = _make_seg(tmp_path / "seg.nii.gz")
-    masks = {
-        n: _make_mask(tmp_path / f"{n}.nii.gz")
-        for n in ("enhancing", "nonenhancing", "wholetumor", "nawm")
+    tumor = nib.load(seg).get_fdata() > 0
+    mask_data = {
+        "enhancing": tumor,
+        "nonenhancing": np.zeros_like(tumor),
+        "wholetumor": tumor,
+        "nawm": ~tumor,
     }
+    masks = {}
+    for name, data in mask_data.items():
+        masks[name] = tmp_path / f"{name}.nii.gz"
+        nib.save(nib.Nifti1Image(data.astype(np.uint8), np.eye(4)), masks[name])
 
     wf = init_tumor_seg_datasinks_wf(
         output_dir=str(out_root),
@@ -165,7 +99,7 @@ def test_tumor_seg_sidecar_sources_populated(
             "erosion_voxels_final": 1,
             "erosion_mm_final": 1.25,
             "valid": False,
-            "n_voxels": 75,
+            "n_voxels": 56,
             "minimum_required_voxels": 100,
             "quantitative_use_exclusion_reason": (
                 "insufficient_voxels_after_erosion_relaxation"
@@ -175,8 +109,24 @@ def test_tumor_seg_sidecar_sources_populated(
     wf.run()
 
     anat = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    sidecars = sorted(anat.glob("*.json"))
-    assert sidecars, "No sidecars written"
+    expected = [
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.tsv",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-enhancing_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-nonenhancing_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-wholetumor_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-lesion_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-nawm_mask.nii.gz",
+    ]
+    for p in expected:
+        assert p.exists(), f"Missing: {p.name}"
+
+    dd = out_root / "pmriprep" / "dataset_description.json"
+    assert dd.exists()
+    sidecars = [
+        p.with_suffix("").with_suffix(".json") for p in expected
+        if p.name.endswith(".nii.gz")
+    ]
 
     for sc in sidecars:
         body = json.loads(sc.read_text())
@@ -208,7 +158,7 @@ def test_tumor_seg_sidecar_sources_populated(
             assert body["ErosionVoxels"] == 1
             assert body["ErosionMillimeters"] == 1.25
             assert body["ValidForQuantification"] is False
-            assert body["VoxelCount"] == 75
+            assert body["VoxelCount"] == 56
             assert body["MinimumRequiredVoxels"] == 100
             assert body["QuantitativeUseExclusionReason"] == (
                 "insufficient_voxels_after_erosion_relaxation"
@@ -225,37 +175,6 @@ def test_tumor_seg_sidecar_sources_populated(
         assert "Resolution" not in body, sc.name
         assert isinstance(body.get("VoxelSize"), list), sc.name
 
-
-def test_tumor_seg_dseg_sidecar_has_volumetrics(
-    tmp_path: Path, minimal_bids_with_tumor_inputs: tuple[Path, dict]
-) -> None:
-    """dseg.json TumorVolumetrics block carries per-region volumes."""
-    from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
-
-    bids, sources = minimal_bids_with_tumor_inputs
-    out_root = tmp_path / "out"
-    seg = _make_seg(tmp_path / "seg.nii.gz", label=2)  # 8 enhancing voxels
-    masks = {
-        n: _make_mask(tmp_path / f"{n}.nii.gz")
-        for n in ("enhancing", "nonenhancing", "wholetumor", "nawm")
-    }
-
-    wf = init_tumor_seg_datasinks_wf(
-        output_dir=str(out_root), bids_dir=str(bids),
-        subject_id="01", session_id="0001",
-    )
-    wf.base_dir = str(tmp_path / "work")
-    inp = wf.inputs.inputnode
-    for tag, p in sources.items():
-        setattr(inp, tag, str(p))
-    inp.segmentation = str(seg)
-    inp.enhancing_mask = str(masks["enhancing"])
-    inp.non_enhancing_mask = str(masks["nonenhancing"])
-    inp.whole_tumor_mask = str(masks["wholetumor"])
-    inp.nawm_mask = str(masks["nawm"])
-    inp.qc_metrics = {}
-    wf.run()
-
     dseg_json = (
         out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
         / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.json"
@@ -266,6 +185,7 @@ def test_tumor_seg_dseg_sidecar_has_volumetrics(
     assert tv["Regions"]["contrast_enhancing_tumor"]["voxel_count"] == 8
     assert tv["Regions"]["non_enhancing_tumor"]["voxel_count"] == 0
     assert tv["EnhancingFraction"] == 1.0
+    assert tv["Regions"]["whole_tumor"]["volume_ml"] == pytest.approx(0.008)
 
 
 def test_init_pmriprep_wf_skip_anat_with_tumor_seg(tmp_path: Path) -> None:

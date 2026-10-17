@@ -12,37 +12,26 @@ from pmriprep.utils.qc_utils import (
 class TestGetRadiologicalSlice:
     """Tests for radiological slice extraction."""
 
-    def test_axial_middle_slice(self) -> None:
-        """Axial slice (axis=2) of (10,10,10) returns a 2D array of shape (10,10)."""
-        data = np.random.default_rng(42).random((10, 10, 10))
-        result = get_radiological_slice(data, axis=2)
-        assert result.ndim == 2
-        assert result.shape == (10, 10)
-
-    def test_coronal_slice(self) -> None:
-        """Coronal slice (axis=1) returns correct 2D extraction."""
-        data = np.random.default_rng(42).random((10, 12, 14))
-        result = get_radiological_slice(data, axis=1)
-        assert result.ndim == 2
-        # Coronal: data[:, slice_idx, :] is (10, 14), then rot90 -> (14, 10), then fliplr -> (14, 10)
-        assert result.shape == (14, 10)
-
-    def test_sagittal_slice(self) -> None:
-        """Sagittal slice (axis=0) returns correct 2D extraction."""
-        data = np.random.default_rng(42).random((10, 12, 14))
-        result = get_radiological_slice(data, axis=0)
-        assert result.ndim == 2
-        # Sagittal: data[slice_idx, :, :] is (12, 14), then rot90 -> (14, 12)
-        assert result.shape == (14, 12)
-
-    def test_custom_index(self) -> None:
-        """Specifying slice_idx=3 extracts that particular slice."""
-        data = np.zeros((10, 10, 10))
-        # Mark axial slice 3 distinctly
-        data[:, :, 3] = 1.0
-        result = get_radiological_slice(data, axis=2, slice_idx=3)
-        # All values in this slice should be 1.0
-        assert np.all(result == 1.0)
+    @pytest.mark.parametrize("axis,slice_idx,expected", [
+        (2, None, [[232, 132, 32], [222, 122, 22], [212, 112, 12], [202, 102, 2]]),
+        (1, None, [
+            [224, 124, 24], [223, 123, 23], [222, 122, 22],
+            [221, 121, 21], [220, 120, 20],
+        ]),
+        (0, None, [
+            [104, 114, 124, 134], [103, 113, 123, 133], [102, 112, 122, 132],
+            [101, 111, 121, 131], [100, 110, 120, 130],
+        ]),
+        (2, 1, [[231, 131, 31], [221, 121, 21], [211, 111, 11], [201, 101, 1]]),
+    ], ids=["axial", "coronal", "sagittal", "custom_axial"])
+    def test_slice_orientation(
+        self, axis: int, slice_idx: int | None, expected: list[list[int]],
+    ) -> None:
+        """Coordinate-coded voxels retain their radiological display positions."""
+        x, y, z = np.indices((3, 4, 5))
+        data = 100 * x + 10 * y + z
+        result = get_radiological_slice(data, axis=axis, slice_idx=slice_idx)
+        np.testing.assert_array_equal(result, expected)
 
     def test_non_3d_raises(self) -> None:
         """Non-3D input raises ValueError."""
@@ -60,25 +49,15 @@ class TestCalculateFramewiseDisplacement:
 
     def test_known_motion_params(self) -> None:
         """Known translation step of 1mm in x gives FD=1 for that frame."""
-        # 3 frames: no motion, then 1mm x-translation, then no further change
+        # 3 frames: nonzero initial pose, then a 1 mm step and no further change.
         # Format: [rx, ry, rz, tx, ty, tz]
         params = np.array([
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],  # +1mm in tx
-            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],  # no further change
+            [0.1, 0.0, 0.0, 2.0, 0.0, 0.0],
+            [0.1, 0.0, 0.0, 3.0, 0.0, 0.0],
+            [0.1, 0.0, 0.0, 3.0, 0.0, 0.0],
         ])
         fd = calculate_framewise_displacement(params)
-        assert fd[0] == pytest.approx(0.0)
-        assert fd[1] == pytest.approx(1.0)
-        assert fd[2] == pytest.approx(0.0)
-
-    def test_first_frame_always_zero(self) -> None:
-        """First FD value is always 0 regardless of motion parameters."""
-        rng = np.random.default_rng(42)
-        params = rng.random((10, 6))
-        fd = calculate_framewise_displacement(params)
-        assert fd[0] == pytest.approx(0.0)
-        assert len(fd) == 10
+        np.testing.assert_array_equal(fd, [0.0, 1.0, 0.0])
 
     def test_constant_params_zero_fd(self) -> None:
         """Constant (non-zero) motion parameters give FD=0 for all frames."""

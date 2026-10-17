@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 
-def _write_nii(path: Path) -> str:
-    nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), np.eye(4)), path)
+def _write_nii(path: Path, value: float = 0.0) -> str:
+    nib.save(nib.Nifti1Image(np.full((4, 4, 4), value, dtype=np.float32), np.eye(4)), path)
     return str(path)
 
 
@@ -172,7 +172,7 @@ def test_registered_vfa_t1map_skips_population_fallback(
 def test_dce_writer_recreates_deleted_cached_derivative(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """External derivatives are rewritten even when the node cache survives."""
+    """NLLS parameter and standard-error derivatives are rewritten despite cached nodes."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -181,23 +181,27 @@ def test_dce_writer_recreates_deleted_cached_derivative(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="tofts", inference="nlls",
+        present_inputs={"ktrans_uncertainty"},
     )
     wf.base_dir = str(tmp_path / "work")
     wf.inputs.inputnode.source_dce = src
-    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
+    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz", 0.25)
+    wf.inputs.inputnode.ktrans_uncertainty = _write_nii(tmp_path / "se.nii.gz", 0.03125)
+    wf.inputs.inputnode.config_dict = {"inference": "nlls"}
     wf.inputs.inputnode.qc_metrics = {}
 
-    wf.run()
     perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    nii = perf / "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz"
-    sidecar = nii.with_suffix("").with_suffix(".json")
-    assert nii.exists() and sidecar.exists()
-
-    nii.unlink()
-    sidecar.unlink()
-    wf.run()
-
-    assert nii.exists() and sidecar.exists()
+    expected = {"dceKtrans": 0.25, "dceStandardErrorKtrans": 0.03125}
+    for run in range(2):
+        wf.run()
+        for desc, value in expected.items():
+            nii = perf / f"sub-01_ses-0001_desc-{desc}_stat.nii.gz"
+            sidecar = nii.with_suffix("").with_suffix(".json")
+            np.testing.assert_array_equal(nib.load(nii).get_fdata(), value)
+            assert json.loads(sidecar.read_text())["Units"] == "1/min"
+            if run == 0:
+                nii.unlink()
+                sidecar.unlink()
 
 
 def test_dce_factory_with_bayesian_uncertainty(
@@ -209,43 +213,35 @@ def test_dce_factory_with_bayesian_uncertainty(
     bids, src = minimal_bids
     out = tmp_path / "out"
 
-    present = {
-        "ve_map", "vp_map",
-        "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
-        "r2_map",
+    outputs = {
+        "ve_map": ("dceVe", 0.25, "1"),
+        "vp_map": ("dceVp", 0.125, "1"),
+        "ktrans_uncertainty": ("dcePosteriorSDKtrans", 0.03125, "1/min"),
+        "ve_uncertainty": ("dcePosteriorSDVe", 0.0625, "1"),
+        "vp_uncertainty": ("dcePosteriorSDVp", 0.015625, "1"),
+        "r2_map": ("dceRsquared", 0.875, "1"),
     }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="extended_tofts", inference="vi",
-        present_inputs=present,
+        present_inputs=set(outputs),
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dce = src
-    inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
-    for attr in present:
-        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz"))
+    inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz", 0.5)
+    for attr, (_, value, _) in outputs.items():
+        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz", value))
     inp.qc_metrics = {}
     inp.config_dict = {"inference": "vi"}
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    expected = [
-        "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceVe_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceVp_stat.nii.gz",
-        "sub-01_ses-0001_desc-dcePosteriorSDKtrans_stat.nii.gz",
-    ]
-    for fname in expected:
-        assert (perf_out / fname).exists(), f"Missing: {fname}"
-
-    expected_units = {
-        "desc-dcePosteriorSDKtrans_stat.json": "1/min",
-        "desc-dceRsquared_stat.json": "1",
-    }
-    for ending, units in expected_units.items():
-        sidecar = next(perf_out.glob(f"*{ending}"))
+    for desc, value, units in [("dceKtrans", 0.5, "1/min"), *outputs.values()]:
+        nii = perf_out / f"sub-01_ses-0001_desc-{desc}_stat.nii.gz"
+        np.testing.assert_array_equal(nib.load(nii).get_fdata(), value)
+        sidecar = nii.with_suffix("").with_suffix(".json")
         assert json.loads(sidecar.read_text())["Units"] == units
 
     uncertainty_meta = json.loads(
@@ -259,10 +255,7 @@ def test_dce_factory_with_bayesian_uncertainty(
     )
     assert uncertainty_meta["ConditionalOnConvertedConcentration"] is True
     assert uncertainty_meta["ConditionalOnSuppliedAIF"] is True
-    posterior_sd = json.loads(
-        next(perf_out.glob("*desc-dcePosteriorSDKtrans_stat.json")).read_text()
-    )
-    assert posterior_sd["UncertaintyStatistic"] == "posterior_standard_deviation"
+    assert uncertainty_meta["UncertaintyStatistic"] == "posterior_standard_deviation"
 
 
 def test_map_uncertainty_sidecar_records_run_accounting(
@@ -316,25 +309,6 @@ def test_map_uncertainty_sidecar_records_run_accounting(
     inflation = metadata["AIFUncertaintyInflation"]
     assert inflation["Applied"] is True
     assert inflation["ParameterScaleFactors"]["Ktrans"] == 1.5
-
-
-def test_nlls_absolute_uncertainty_uses_frequentist_derivative_name(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """NLLS absolute uncertainty uses the standard-error name."""
-    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-    bids, _ = minimal_bids
-    workflow = init_dce_datasinks_wf(
-        output_dir=str(tmp_path / "out"),
-        bids_dir=str(bids),
-        subject_id="01",
-        session_id="0001",
-        pk_model="tofts",
-        inference="nlls",
-        present_inputs={"ktrans_uncertainty"},
-    )
-    assert workflow.get_node("ktrans_uncertainty_sink").inputs.desc == "dceStandardError"
 
 
 def test_dce_factory_model_free_no_model_entity(
@@ -559,19 +533,21 @@ def test_pk_parameter_montage_receives_qc_mask_and_preserves_nan(
     assert np.isnan(param_maps["ve"][1, 1, 1])
 
 
-def test_2cxm_bayesian_fp_ps_absolute_uncertainty(
+def test_2cxm_extraction_fraction_and_bayesian_uncertainty(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """2CXM Bayesian inference emits Fp/PS posterior-SD maps."""
+    """2CXM emits dimensionless extraction fraction and Fp/PS posterior SDs."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
     out = tmp_path / "out"
 
-    present = {
-        "ve_map", "kep_map", "vp_map",
-        "fp_uncertainty", "ps_uncertainty",
+    outputs = {
+        "e_map": ("dceE", 0.25, "1"),
+        "fp_uncertainty": ("dcePosteriorSDFp", 2.0, "mL/min/100mL"),
+        "ps_uncertainty": ("dcePosteriorSDPS", 4.0, "mL/min/100mL"),
     }
+    present = {"ve_map", "kep_map", "vp_map", *outputs}
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
@@ -583,51 +559,22 @@ def test_2cxm_bayesian_fp_ps_absolute_uncertainty(
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
     for attr in present:
-        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz"))
+        value = outputs[attr][1] if attr in outputs else 0.0
+        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz", value))
     inp.qc_metrics = {}
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorSDFp_stat.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorSDPS_stat.nii.gz").exists()
     assert not (
         perf_out / "sub-01_ses-0001_desc-dcePosteriorSDKtrans_stat.nii.gz"
     ).exists()
-    for parameter in ("Fp", "PS"):
-        sidecar = perf_out / f"sub-01_ses-0001_desc-dcePosteriorSD{parameter}_stat.json"
-        assert json.loads(sidecar.read_text())["Units"] == "mL/min/100mL"
-
-
-def test_2cxm_extraction_fraction_derivative(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """The existing 2CXM extraction-fraction result reaches derivatives."""
-    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-    bids, src = minimal_bids
-    out = tmp_path / "out"
-    wf = init_dce_datasinks_wf(
-        output_dir=str(out),
-        bids_dir=str(bids),
-        subject_id="01",
-        session_id="0001",
-        pk_model="2cxm",
-        inference="nlls",
-        present_inputs={"e_map"},
-    )
-    wf.base_dir = str(tmp_path / "work")
-    wf.inputs.inputnode.source_dce = src
-    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
-    wf.inputs.inputnode.e_map = _write_nii(tmp_path / "e.nii.gz")
-    wf.inputs.inputnode.qc_metrics = {}
-    wf.run()
-
-    perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    derivative = perf / "sub-01_ses-0001_desc-dceE_stat.nii.gz"
-    sidecar = json.loads(derivative.with_suffix("").with_suffix(".json").read_text())
-    assert derivative.exists()
-    assert sidecar["Units"] == "1"
-    assert "Extraction fraction" in sidecar["Description"]
+    for desc, value, units in outputs.values():
+        nii = perf_out / f"sub-01_ses-0001_desc-{desc}_stat.nii.gz"
+        np.testing.assert_array_equal(nib.load(nii).get_fdata(), value)
+        sidecar = nii.with_suffix("").with_suffix(".json")
+        assert json.loads(sidecar.read_text())["Units"] == units
+    e_meta = json.loads((perf_out / "sub-01_ses-0001_desc-dceE_stat.json").read_text())
+    assert "Extraction fraction" in e_meta["Description"]
 
 
 def test_dce_factory_warnings_in_anchor_sidecar(

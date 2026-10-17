@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -30,6 +31,8 @@ def test_dce_transform_sink_names_both_directions(tmp_path: Path) -> None:
     assert Path(inverse).name == (
         "sub-01_ses-02_from-dceref_to-T1w_mode-image_xfm.h5"
     )
+    assert Path(forward).read_bytes() == source.read_bytes()
+    assert Path(inverse).read_bytes() == source.read_bytes()
 
 
 def test_dce_transform_sink_rejects_fsl_matrix(tmp_path: Path) -> None:
@@ -78,6 +81,7 @@ def test_anat_transform_sink_preserves_x5(tmp_path: Path) -> None:
     assert Path(result).name == (
         "sub-01_ses-02_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.h5"
     )
+    assert Path(result).read_bytes() == source.read_bytes()
 
 
 def test_source_entity_prefix_preserves_canonical_distinguishers() -> None:
@@ -422,8 +426,10 @@ def test_perf_map_copies_image_and_sidecar(tmp_path: Path, modality: str) -> Non
         desc=desc, suffix=suffix, meta_dict={"Description": "test"},
     )
     assert out.endswith(expected)
-    assert Path(out).is_file()
-    assert Path(out.replace(".nii.gz", ".json")).is_file()
+    assert Path(out).read_bytes() == source.read_bytes()
+    assert json.loads(Path(out.replace(".nii.gz", ".json")).read_text()) == {
+        "Description": "test",
+    }
 
 
 @pytest.mark.parametrize("modality", ["dsc", "dce"])

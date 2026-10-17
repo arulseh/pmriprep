@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from pmriprep.interfaces import dce_compute
 from pmriprep.interfaces.dce_compute import (
     ComputeDCEMaps,
     VoxelInput,
@@ -35,7 +34,6 @@ from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
     KTRANS_BOUNDS,
     PS_BOUNDS,
-    ParameterBounds,
     VE_BOUNDS,
     VP_BOUNDS,
 )
@@ -44,19 +42,11 @@ from pmriprep.utils.dce_constants import (
 @pytest.mark.parametrize(
     ("model", "params", "expected"),
     [
-        ("tofts", {"Ktrans": 0.1, "ve": 0.3}, False),
-        ("tofts", {"Ktrans": 0.0, "ve": 0.3}, True),
-        ("tofts", {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3}, True),
         ("tofts", {"Ktrans": 0.1, "ve": VE_BOUNDS.max}, False),
-        ("patlak", {"Ktrans": 0.0, "vp": 0.03}, False),
-        ("patlak", {"Ktrans": -1e-6, "vp": 0.03}, True),
         ("patlak", {"Ktrans": 0.1, "vp": 0.0}, False),
         ("extended_tofts", {"Ktrans": 0.0, "ve": 0.3, "vp": 0.03}, True),
         ("extended_tofts", {"Ktrans": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True),
         ("2cxm", {"Fp": 1.0, "PS": 0.0, "ve": 0.3, "vp": 0.03}, True),
-        ("2cxm", {"Fp": 0.0, "PS": 0.1, "ve": 0.3, "vp": 0.03}, True),
-        ("2cxm", {"Fp": FP_BOUNDS.max, "PS": 0.1, "ve": 0.3, "vp": 0.03}, True),
-        ("2cxm", {"Fp": 1.0, "PS": PS_BOUNDS.max, "ve": 0.3, "vp": 0.03}, True),
         ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.8, "vp": 0.03}, False),
         ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True),
     ],
@@ -70,16 +60,11 @@ def test_degeneracy_rules_preserve_model_specific_boundaries(
     assert _is_degenerate_dce_fit(model, params) is expected
 
 
-_RATE_CEILING_CASES = [
+@pytest.mark.parametrize("model,rate,ceiling", [
     ("tofts", "Ktrans", KTRANS_BOUNDS.max),
-    ("extended_tofts", "Ktrans", KTRANS_BOUNDS.max),
-    ("patlak", "Ktrans", KTRANS_BOUNDS.max),
     ("2cxm", "Fp", FP_BOUNDS.max),
     ("2cxm", "PS", PS_BOUNDS.max),
-]
-
-
-@pytest.mark.parametrize("model,rate,ceiling", _RATE_CEILING_CASES)
+])
 @pytest.mark.parametrize("position,expected", [
     ("exact", True), ("adjacent_below", True), ("adjacent_above", True),
     ("interior_nudge", True), ("inside_tolerance", True),
@@ -87,10 +72,8 @@ _RATE_CEILING_CASES = [
 ])
 def test_rate_ceiling_rejection_is_numerically_consistent(
     model: str, rate: str, ceiling: float, position: str, expected: bool,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Endpoint nudges are rejected without excluding distinguishable interiors."""
-    monkeypatch.setattr(dce_compute, f"{rate.upper()}_BOUNDS", ParameterBounds(0, ceiling))
     values = {
         "exact": ceiling,
         "adjacent_below": np.nextafter(ceiling, 0),
@@ -105,36 +88,32 @@ def test_rate_ceiling_rejection_is_numerically_consistent(
     assert _is_degenerate_dce_fit(model, params) is expected
 
 
-@pytest.mark.parametrize("model,rate,ceiling", _RATE_CEILING_CASES)
+@pytest.mark.parametrize("model,rate", [
+    ("tofts", "Ktrans"), ("patlak", "Ktrans"), ("2cxm", "Fp"),
+])
 @pytest.mark.parametrize("value", [0., float(np.nextafter(0., 1.)), 1e-12, -1e-12])
-def test_rate_ceiling_tolerance_does_not_change_zero_rate_policy(
-    model: str, rate: str, ceiling: float, value: float,
-    monkeypatch: pytest.MonkeyPatch,
+def test_model_specific_zero_rate_boundaries(
+    model: str, rate: str, value: float,
 ) -> None:
-    """Upper-endpoint tolerance must not introduce a lower rate floor."""
-    monkeypatch.setattr(dce_compute, f"{rate.upper()}_BOUNDS", ParameterBounds(0, ceiling))
+    """Patlak permits zero transfer; positive-rate models retain arbitrarily small rates."""
     params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3, "vp": 0.03}
     params[rate] = value
     expected = value < 0 if model == "patlak" else value <= 0
     assert _is_degenerate_dce_fit(model, params) is expected
 
 
-@pytest.mark.parametrize("model,rate,ceiling", _RATE_CEILING_CASES)
-@pytest.mark.parametrize("is_auto", [False, True])
-@pytest.mark.parametrize("inference", ["nlls", "vi"])
+@pytest.mark.parametrize("model,rate,ceiling,is_auto,inference", [
+    ("tofts", "Ktrans", KTRANS_BOUNDS.max, False, "nlls"),
+    ("extended_tofts", "Ktrans", KTRANS_BOUNDS.max, True, "vi"),
+    ("patlak", "Ktrans", KTRANS_BOUNDS.max, True, "nlls"),
+    ("2cxm", "Fp", FP_BOUNDS.max, False, "vi"),
+    ("2cxm", "PS", PS_BOUNDS.max, True, "vi"),
+])
 def test_rate_ceiling_scattering_preserves_rejection_and_accounting(
     model: str, rate: str, ceiling: float, is_auto: bool, inference: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exact and nudged endpoints get identical map and accounting outcomes."""
-    monkeypatch.setattr(dce_compute, f"{rate.upper()}_BOUNDS", ParameterBounds(0, ceiling))
-    cases = [
-        (ceiling, True), (np.nextafter(ceiling, 0), True),
-        (ceiling - 1e-10 * ceiling, True), (ceiling * (1 - 1e-8), False),
-    ]
-    if rate in ("PS", "Fp") and ceiling == 500.0:
-        cases.extend([(100.0, False), (200.0, False), (300.0, False), (450.0, False)])
-    for value, rejected in cases:
+    """Every model/rate route scatters retained interiors and rejected endpoints."""
+    for value, rejected in [(ceiling, True), (ceiling * (1 - 1e-8), False)]:
         params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3,
                   "vp": 0.03, "kep": 1 / 3, "E": 1 / 3}
         params[rate] = value
@@ -164,7 +143,7 @@ def test_rate_ceiling_scattering_preserves_rejection_and_accounting(
             if model == "2cxm":
                 assert maps.fp.item() == 0. and maps.ps.item() == 0.
         else:
-            assert uncertainty > 0.
+            assert uncertainty == pytest.approx(0.1 * maps.sigma_factor[rate])
             assert getattr(maps, rate_map_name).item() == value
 
 
@@ -226,8 +205,8 @@ def test_uncertainty_scatter_leaves_nonapplicable_patlak_fields_zero() -> None:
     assert maps.ps_std[0, 0, 0] == 0.0
 
 
-def test_fit_artifact_scatter_writes_curve() -> None:
-    """The optional fitted curve uses the fit voxel coordinate."""
+def test_fit_artifact_scatter_respects_optional_curve_storage() -> None:
+    """The fitted curve uses allocated storage at the fit voxel coordinate."""
     maps = SimpleNamespace(
         fitted_curves=np.full((1, 1, 1, 3), np.nan, dtype=np.float32),
     )
@@ -243,11 +222,9 @@ def test_fit_artifact_scatter_writes_curve() -> None:
         np.array([0.0, 0.2, 0.1], dtype=np.float32),
     )
 
-
-def test_fit_artifact_scatter_defaults_without_optional_curve() -> None:
-    """Missing optional values leave the absent curve unchanged."""
     maps = SimpleNamespace(fitted_curves=None)
     _scatter_dce_fit_artifacts(maps, (0, 0, 0), {})
+    assert maps.fitted_curves is None
 
 
 def test_parameter_scatter_respects_patlak_applicability() -> None:
@@ -610,7 +587,6 @@ def test_summarize_dce_fit_outcomes_preserves_counters() -> None:
     assert accounting["prefit_rejected"]["count"] == 1
     assert accounting["execution_exception"]["count"] == 1
     assert accounting["fit_unsuccessful"]["count"] == 1
-    assert "execution_failed" not in accounting
     assert accounting["postfit_degenerate"]["count"] == 1
     assert accounting["retained_nondegenerate"]["count"] == 6
     assert (

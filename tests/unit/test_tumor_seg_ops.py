@@ -55,42 +55,28 @@ def test_extract_nawm_outputs_passes_valid_mask_to_quantification() -> None:
 class TestCreateSphericalKernel:
     """Tests for spherical structuring element creation."""
 
-    def test_isotropic_kernel_shape(self) -> None:
-        """Isotropic 5mm kernel with 1mm voxels produces (11,11,11) shape."""
+    def test_isotropic_kernel_extent(self) -> None:
+        """A 5 mm sphere includes its center and axis tips, but excludes corners."""
         kernel = _create_spherical_kernel(5.0, (1.0, 1.0, 1.0))
         assert kernel.shape == (11, 11, 11)
-
-    def test_isotropic_kernel_center_true(self) -> None:
-        """Center voxel of isotropic kernel is True (distance=0)."""
-        kernel = _create_spherical_kernel(5.0, (1.0, 1.0, 1.0))
-        center = tuple(s // 2 for s in kernel.shape)
-        assert kernel[center] is np.True_
-
-    def test_isotropic_kernel_corners_false(self) -> None:
-        """Corner voxels of isotropic kernel are outside the sphere."""
-        kernel = _create_spherical_kernel(5.0, (1.0, 1.0, 1.0))
-        # Corner distance = sqrt(5^2 + 5^2 + 5^2) = 8.66 > 5.0
+        assert kernel[5, 5, 5]
+        assert kernel[10, 5, 5]
+        assert kernel[5, 10, 5]
+        assert kernel[5, 5, 10]
         assert not kernel[0, 0, 0]
         assert not kernel[-1, -1, -1]
 
-    def test_anisotropic_kernel_shape(self) -> None:
-        """Anisotropic 5mm kernel with (1,1,3)mm voxels produces (11,11,5)."""
+    def test_anisotropic_kernel_extent_in_millimeters(self) -> None:
+        """A 5 mm sphere respects the 3 mm through-plane spacing."""
         kernel = _create_spherical_kernel(5.0, (1.0, 1.0, 3.0))
-        # z: ceil(5/3) = 2, so size_z = 2*2+1 = 5
         assert kernel.shape == (11, 11, 5)
-
-    def test_anisotropic_kernel_still_spherical(self) -> None:
-        """Anisotropic kernel represents a sphere in physical space."""
-        kernel = _create_spherical_kernel(5.0, (1.0, 1.0, 3.0))
-        # Center should be True
-        cx, cy, cz = kernel.shape[0] // 2, kernel.shape[1] // 2, kernel.shape[2] // 2
-        assert kernel[cx, cy, cz]
-        # A point at 4mm in x (4 voxels) should be inside
-        assert kernel[cx + 4, cy, cz]
-        # A point at 6mm in x (6 voxels) would be outside radius of 5mm
-        # But kernel edge is at nx=5, so index cx+5 is the boundary
-        # 5 voxels * 1mm = 5mm = exactly radius, so it should be True (<=)
-        assert kernel[cx + 5, cy, cz]
+        assert kernel[5, 5, 2]
+        assert kernel[9, 5, 2]
+        assert kernel[10, 5, 2]
+        assert kernel[5, 5, 3]  # 3 mm from center
+        assert not kernel[5, 5, 4]  # 6 mm from center
+        assert kernel[9, 5, 3]  # 4 mm in-plane and 3 mm through-plane: 5 mm
+        assert not kernel[10, 5, 3]
 
     def test_safety_cap_raises(self) -> None:
         """Enormous kernel (1000mm, 0.001mm voxels) raises ValueError."""
@@ -107,25 +93,14 @@ class TestDilateMaskFromArray:
         mask[15, 15, 15] = True
         dilated = dilate_mask_from_array(mask, 3.0, (1.0, 1.0, 1.0))
         assert dilated.sum() > mask.sum()
-
-    def test_single_voxel_contains_original(self) -> None:
-        """Dilated mask contains the original seed voxel."""
-        mask = np.zeros((31, 31, 31), dtype=bool)
-        mask[15, 15, 15] = True
-        dilated = dilate_mask_from_array(mask, 3.0, (1.0, 1.0, 1.0))
         assert dilated[15, 15, 15]
 
     def test_very_small_radius_unchanged(self) -> None:
-        """Dilation with radius smaller than voxel size barely changes mask."""
+        """A radius smaller than the nearest voxel spacing leaves the mask intact."""
         mask = np.zeros((21, 21, 21), dtype=bool)
         mask[10, 10, 10] = True
-        # Radius 0.1mm with 2mm voxels: ceil(0.1/2)=1, kernel size=3
-        # The kernel center + face-adjacent voxels within 0.1mm
-        # Only center is within 0.1mm, so dilation adds nothing beyond kernel center
         dilated = dilate_mask_from_array(mask, 0.01, (2.0, 2.0, 2.0))
-        # With such a tiny radius, kernel is essentially just the center voxel
-        # ceil(0.01/2) = 1, so kernel is (3,3,3) but only center is <= 0.01mm
-        assert dilated[10, 10, 10]
+        np.testing.assert_array_equal(dilated, mask)
 
 
 class TestErodeMaskFromArray:
@@ -137,13 +112,6 @@ class TestErodeMaskFromArray:
         mask[5:36, 5:36, 5:36] = True  # 31x31x31 filled cube
         eroded = erode_mask_from_array(mask, 3.0, (1.0, 1.0, 1.0))
         assert 0 < eroded.sum() < mask.sum()
-
-    def test_large_cube_eroded_contained(self) -> None:
-        """Eroded mask is a subset of the original."""
-        mask = np.zeros((41, 41, 41), dtype=bool)
-        mask[5:36, 5:36, 5:36] = True
-        eroded = erode_mask_from_array(mask, 3.0, (1.0, 1.0, 1.0))
-        # Every True voxel in eroded must also be True in original
         assert np.all(mask[eroded])
 
     def test_zero_radius_returns_copy(self) -> None:

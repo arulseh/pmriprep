@@ -109,6 +109,10 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     ]
     assert sidecar["VoxelSize"] == [1.0, 1.0, 1.0]
     assert sidecar["OriginalResolution"]["VoxelDimensions"] == [2.0, 2.0, 2.0]
+    warnings = sidecar.get("QCWarnings", [])
+    assert any("Tissue segmentation" in w for w in warnings), warnings
+    assert not any("FLAIR not available" in w for w in warnings), warnings
+    assert not any("T2w not available" in w for w in warnings), warnings
 
     mask_sidecar = json.loads(mask_json.read_text())
     assert "SkullStripped" not in mask_sidecar
@@ -121,133 +125,8 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     assert dd.exists()
 
 
-def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> None:
-    """Cross-check every produced sidecar carries required provenance fields."""
-    from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
-
-    out_root = tmp_path / "out"
-    src_t1w = minimal_bids / "sub-01" / "ses-0001" / "anat" / "sub-01_ses-0001_T1w.nii.gz"
-    deriv_t1w = _make_nifti(tmp_path / "t1w.nii.gz")
-    deriv_mask = _make_nifti(tmp_path / "mask.nii.gz")
-    deriv_csf = _make_nifti(tmp_path / "csf.nii.gz")
-    deriv_gm = _make_nifti(tmp_path / "gm.nii.gz")
-    deriv_wm = _make_nifti(tmp_path / "wm.nii.gz")
-    fake_xfm = tmp_path / "acpc.h5"
-    fake_xfm.write_text("ok\n")
-
-    wf = init_anat_datasinks_wf(
-        output_dir=str(out_root),
-        bids_dir=str(minimal_bids),
-        subject_id="01",
-        session_id="0001",
-        has_t1w_pre=True,
-        has_t1w_postcon=False,
-        has_t2w=False,
-        has_flair=False,
-        has_flair_postcon=False,
-        has_tissue_seg=True,
-        has_subtraction=False,
-    )
-    wf.base_dir = str(tmp_path / "work")
-    inp = wf.inputs.inputnode
-    inp.source_t1w = str(src_t1w)
-    inp.t1w_preproc = str(deriv_t1w)
-    inp.brain_mask = str(deriv_mask)
-    inp.csf_probseg = str(deriv_csf)
-    inp.gm_probseg = str(deriv_gm)
-    inp.wm_probseg = str(deriv_wm)
-    inp.acpc_xfm = str(fake_xfm)
-    wf.run()
-
-    anat_dir = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    sidecars = sorted(anat_dir.glob("*.json"))
-    assert sidecars, "No sidecars written"
-
-    for sc in sidecars:
-        # xfm files have no sidecar in BIDS; skip if any sneak in
-        if "xfm" in sc.name:
-            continue
-        body = json.loads(sc.read_text())
-        assert "Sources" in body, f"{sc.name} missing Sources"
-        assert isinstance(body["Sources"], list)
-        assert all(s.startswith("bids:raw:") for s in body["Sources"])
-        assert body.get("SpatialReference", "").startswith("bids::"), sc.name
-        assert "Resolution" not in body, sc.name
-        assert isinstance(body.get("VoxelSize"), list), sc.name
-
-
-def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
-    """Postcon-only mode must still write t1w_preproc, brain_mask, acpc_xfm."""
-    from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
-
-    # Build a minimal raw BIDS source — only the postcon T1w exists.
-    bids = tmp_path / "bids"
-    raw = bids / "sub-01" / "ses-0001" / "anat"
-    raw.mkdir(parents=True)
-    (bids / "dataset_description.json").write_text(
-        json.dumps({"Name": "T", "BIDSVersion": "1.9.0", "DatasetType": "raw"})
-    )
-    src_postcon = raw / "sub-01_ses-0001_ce-GAD_T1w.nii.gz"
-    nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), np.eye(4)),
-        src_postcon,
-    )
-    (raw / "sub-01_ses-0001_ce-GAD_T1w.json").write_text(
-        json.dumps({"RepetitionTime": 2.0, "ContrastBolusAgent": "Gadovist"})
-    )
-
-    out_root = tmp_path / "out"
-    deriv_t1w = _make_nifti(tmp_path / "t1w.nii.gz")
-    deriv_mask = _make_nifti(tmp_path / "mask.nii.gz")
-    fake_xfm = tmp_path / "acpc.h5"
-    fake_xfm.write_text("ok\n")
-
-    wf = init_anat_datasinks_wf(
-        output_dir=str(out_root),
-        bids_dir=str(bids),
-        subject_id="01",
-        session_id="0001",
-        has_t1w_pre=False,           # postcon-only mode
-        has_t1w_postcon=True,
-        has_t2w=False,
-        has_flair=False,
-        has_flair_postcon=False,
-        has_tissue_seg=False,        # FAST is skipped in postcon-only mode
-        has_subtraction=False,
-        is_postcon_ref=True,
-    )
-    wf.base_dir = str(tmp_path / "work")
-    inp = wf.inputs.inputnode
-    inp.source_t1w_postcon = str(src_postcon)
-    inp.t1w_preproc = str(deriv_t1w)
-    inp.brain_mask = str(deriv_mask)
-    inp.acpc_xfm = str(fake_xfm)
-    inp.qc_metrics = {"resolution_tier": "good"}
-    wf.run()
-
-    anat_dir = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-
-    # All three unconditional outputs must be present
-    t1w_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
-    mask_out = anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-brain_mask.nii.gz"
-    xfm_out = anat_dir / "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.h5"
-
-    assert t1w_out.exists(), f"Missing t1w preproc in postcon-only: {t1w_out}"
-    assert mask_out.exists(), f"Missing brain mask in postcon-only: {mask_out}"
-    assert xfm_out.exists(), f"Missing acpc xfm in postcon-only: {xfm_out}"
-
-    # SpatialReference must point at the ce-GAD reference, not a precon one
-    sidecar = json.loads(t1w_out.with_suffix("").with_suffix(".json").read_text())
-    assert "ce-GAD" in sidecar["SpatialReference"], (
-        f"SpatialReference URI does not target the postcon ref: "
-        f"{sidecar['SpatialReference']}"
-    )
-    # Sources must include the postcon source (not an absent precon)
-    assert any("ce-GAD" in s for s in sidecar["Sources"]), sidecar["Sources"]
-
-
 def test_postcon_only_secondary_anat_references_postcon_t1w(tmp_path: Path) -> None:
-    """Secondary-anatomy sidecars identify the actual postcon-only reference."""
+    """Postcontrast-reference outputs and secondary anatomy share the actual reference."""
     from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
 
     bids = tmp_path / "bids"
@@ -293,48 +172,18 @@ def test_postcon_only_secondary_anat_references_postcon_t1w(tmp_path: Path) -> N
         "sub-01_ses-0001_acq-gre_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
     )
 
-
-def test_warnings_block_populated_in_anchor_sidecar(
-    tmp_path: Path, minimal_bids: Path,
-) -> None:
-    """``QCWarnings`` flat keys land on the T1w preproc anchor sidecar."""
-    from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
-
-    out_root = tmp_path / "out"
-    src_t1w = minimal_bids / "sub-01" / "ses-0001" / "anat" / "sub-01_ses-0001_T1w.nii.gz"
-    deriv_t1w = _make_nifti(tmp_path / "t1w.nii.gz")
-    deriv_mask = _make_nifti(tmp_path / "mask.nii.gz")
-    fake_xfm = tmp_path / "acpc.h5"
-    fake_xfm.write_text("ok\n")
-
-    # Missing optional T2w/FLAIR inputs are not warnings. Missing tissue
-    # segmentation remains consequential output provenance.
-    wf = init_anat_datasinks_wf(
-        output_dir=str(out_root), bids_dir=str(minimal_bids),
-        subject_id="01", session_id="0001",
-        has_t1w_pre=True, has_t1w_postcon=False,
-        has_t2w=False, has_flair=False, has_flair_postcon=False,
-        has_tissue_seg=False, has_subtraction=False,
-    )
-    wf.base_dir = str(tmp_path / "work")
-    inp = wf.inputs.inputnode
-    inp.source_t1w = str(src_t1w)
-    inp.t1w_preproc = str(deriv_t1w)
-    inp.brain_mask = str(deriv_mask)
-    inp.acpc_xfm = str(fake_xfm)
-    inp.qc_metrics = {"resolution_tier": "excellent"}
-    wf.run()
-
-    anchor = (
-        out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-        / "sub-01_ses-0001_space-T1w_desc-preproc_T1w.json"
-    )
-    assert anchor.exists(), f"Anchor sidecar missing: {anchor}"
-    sidecar = json.loads(anchor.read_text())
-    warnings = sidecar.get("QCWarnings", [])
-    assert any("Tissue segmentation" in w for w in warnings), warnings
-    assert not any("FLAIR not available" in w for w in warnings), warnings
-    assert not any("T2w not available" in w for w in warnings), warnings
+    anat = sidecar_path.parent
+    t1w = anat / "sub-01_ses-0001_acq-gre_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
+    mask = anat / "sub-01_ses-0001_acq-gre_ce-GAD_space-T1w_desc-brain_mask.nii.gz"
+    xfm = anat / "sub-01_ses-0001_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.h5"
+    assert t1w.exists()
+    assert mask.exists()
+    assert xfm.read_bytes() == fake_xfm.read_bytes()
+    t1w_meta = json.loads(t1w.with_suffix("").with_suffix(".json").read_text())
+    assert t1w_meta["SpatialReference"] == sidecar["SpatialReference"]
+    assert t1w_meta["Sources"] == [
+        "bids:raw:sub-01/ses-0001/anat/sub-01_ses-0001_acq-gre_ce-GAD_T1w.nii.gz"
+    ]
 
 
 def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None:
@@ -356,10 +205,10 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     (raw / "sub-01_ses-0001_FLAIR.json").write_text("{}")
 
     out_root = tmp_path / "out"
-    def deriv(name):
+    def deriv(name: str) -> Path:
         return _make_nifti(tmp_path / name)
-    def fake_xfm(name):
-        return (tmp_path / name).write_text("ok\n") or (tmp_path / name)
+    def fake_xfm(name: str) -> None:
+        (tmp_path / name).write_text("ok\n")
 
     wf = init_anat_datasinks_wf(
         output_dir=str(out_root), bids_dir=str(minimal_bids),
@@ -412,6 +261,14 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     ]
     for name in expected:
         assert (anat_dir / name).exists(), f"Missing: {name}"
+        if name.endswith(".nii.gz"):
+            sidecar = anat_dir / name.replace(".nii.gz", ".json")
+            body = json.loads(sidecar.read_text())
+            assert isinstance(body["Sources"], list) and body["Sources"], name
+            assert all(s.startswith("bids:raw:") for s in body["Sources"]), name
+            assert body["SpatialReference"].startswith("bids::"), name
+            assert "Resolution" not in body, name
+            assert body["VoxelSize"] == [1.0, 1.0, 1.0], name
 
     wm_sidecar = json.loads(
         (anat_dir / "sub-01_ses-0001_space-T1w_label-WM_probseg.json").read_text()

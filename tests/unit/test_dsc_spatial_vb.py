@@ -14,8 +14,8 @@ from pmriprep.models.dsc.spatial_vb import (
 class TestBuildNeighborhoodGraph:
     """Tests for 3D neighborhood graph construction."""
 
-    def test_3x3x1_center_has_4_neighbors(self) -> None:
-        """Center voxel of 3x3x1 grid has 4 in-plane neighbors."""
+    def test_in_plane_neighbor_degrees(self) -> None:
+        """A 3x3 slice has two, three and four neighbors at corners, edges and center."""
         coords = np.array([
             [0, 0, 0, 1, 1, 1, 2, 2, 2],
             [0, 1, 2, 0, 1, 2, 0, 1, 2],
@@ -25,44 +25,16 @@ class TestBuildNeighborhoodGraph:
             (coords[0], coords[1], coords[2]),
             spatial_shape=(3, 3, 1),
         )
-        center_idx = 4  # (1,1,0)
-        assert degree[center_idx] == 4
-
-    def test_corner_has_2_neighbors(self) -> None:
-        """Corner voxel of 3x3x1 grid has 2 neighbors."""
-        coords = np.array([
-            [0, 0, 0, 1, 1, 1, 2, 2, 2],
-            [0, 1, 2, 0, 1, 2, 0, 1, 2],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        ])
-        adj, degree = _build_neighborhood_graph(
-            (coords[0], coords[1], coords[2]),
-            spatial_shape=(3, 3, 1),
-        )
-        corner_idx = 0  # (0,0,0)
-        assert degree[corner_idx] == 2
-
-    def test_edge_has_3_neighbors(self) -> None:
-        """Edge voxel of 3x3x1 grid has 3 neighbors."""
-        coords = np.array([
-            [0, 0, 0, 1, 1, 1, 2, 2, 2],
-            [0, 1, 2, 0, 1, 2, 0, 1, 2],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        ])
-        adj, degree = _build_neighborhood_graph(
-            (coords[0], coords[1], coords[2]),
-            spatial_shape=(3, 3, 1),
-        )
-        edge_idx = 1  # (0,1,0)
-        assert degree[edge_idx] == 3
+        np.testing.assert_array_equal(degree, [2, 3, 2, 3, 4, 3, 2, 3, 2])
 
     def test_3d_center_has_6_neighbors(self) -> None:
-        """Center voxel of 3x3x3 grid has 6 neighbors."""
-        x, y, z = np.mgrid[0:3, 0:3, 0:3]
+        """A rectangular 3D grid has symmetric adjacency and six interior neighbors."""
+        x, y, z = np.mgrid[0:3, 0:4, 0:5]
         coords = (x.ravel(), y.ravel(), z.ravel())
-        adj, degree = _build_neighborhood_graph(coords, spatial_shape=(3, 3, 3))
-        center_idx = 13  # (1,1,1) in flattened 3x3x3
+        adj, degree = _build_neighborhood_graph(coords, spatial_shape=(3, 4, 5))
+        center_idx = 32  # (1,2,2) in flattened (3,4,5)
         assert degree[center_idx] == 6
+        assert (adj - adj.T).nnz == 0
 
     def test_sparse_mask_skips_missing_neighbors(self) -> None:
         """Non-contiguous mask: neighbors outside mask are excluded."""
@@ -74,14 +46,6 @@ class TestBuildNeighborhoodGraph:
         adj, degree = _build_neighborhood_graph(coords, spatial_shape=(3, 1, 1))
         assert degree[0] == 0
         assert degree[1] == 0
-
-    def test_adjacency_symmetric(self) -> None:
-        """Adjacency matrix is symmetric."""
-        x, y, z = np.mgrid[0:4, 0:4, 0:2]
-        coords = (x.ravel(), y.ravel(), z.ravel())
-        adj, _ = _build_neighborhood_graph(coords, spatial_shape=(4, 4, 2))
-        diff = adj - adj.T
-        assert diff.nnz == 0
 
     def test_inadmissible_voxel_is_removed_from_neighbor_lists(self) -> None:
         """Rejected curves neither receive nor contribute spatial information."""
