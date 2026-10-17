@@ -85,6 +85,7 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
     lesion_mask[2, 1, 1] = 1
     context = SimpleNamespace(
         concentration=np.zeros((3, 3, 3, 8)),
+        signal=None,
         brain_mask=np.ones((3, 3, 3)),
         affine=np.eye(4),
         tr=1.5,

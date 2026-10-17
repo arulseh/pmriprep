@@ -263,9 +263,11 @@ def test_nonfinite_gamma_initialization_fails_candidate_gate_gracefully(
 def test_gamma_fit_refreshes_final_peak_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Peak provenance follows the emitted fitted curve, not its candidate."""
+    """Gamma peak provenance changes while measured-denominator QC is retained."""
     detector = dsc_aif.AIFDetection()
-    monkeypatch.setattr(detector, "_finalize_detected_aif", lambda *args: _detected_result())
+    detected = _detected_result()
+    detected.qc_metrics["aif_metrics"] = {"ph": 31.0, "brr": 17.0}
+    monkeypatch.setattr(detector, "_finalize_detected_aif", lambda *args: detected)
 
     fitted = np.array([0.0, 0.0, 1.0, 5.5, 2.0, 0.5])
 
@@ -279,7 +281,10 @@ def test_gamma_fit_refreshes_final_peak_provenance(
     )
 
     np.testing.assert_array_equal(state.curve, fitted)
+    np.testing.assert_array_equal(state.measured_curve, detected.curve)
     assert state.qc_metrics["aif_metrics"]["peak_conc"] == 5.5
+    assert state.qc_metrics["aif_metrics"]["ph"] == 31.0
+    assert state.qc_metrics["aif_metrics"]["brr"] == 17.0
 
 
 @pytest.mark.parametrize("aif_method", ["auto", "synthetic"])

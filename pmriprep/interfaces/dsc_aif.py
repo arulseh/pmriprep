@@ -1102,7 +1102,7 @@ class AIFDetection(BaseInterface):
         tr: float,
         baseline_frames: int,
     ) -> Optional[dict[str, float]]:
-        """Compute comprehensive AIF quality metrics for one candidate.
+        """Compute concentration and signal quality metrics for an AIF curve.
 
         Returns None if the curve is too short or degenerate.
         """
@@ -1755,14 +1755,14 @@ class AIFDetection(BaseInterface):
         tr: float,
         roi_size: int = 3,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
-        """Compute inverse-cost weighted AIF with 3x3x3 ROI averaging.
+        """Average candidate ROIs with inverse-cost weights and temporal smoothing.
 
         Parameters
         ----------
         top_candidates : list
             List of (cost, (x,y,z), metrics) tuples.
         conc_data : ndarray
-            4D concentration data.
+            4D concentration or signal data for the selected candidates.
         brain_mask : ndarray
             3D brain mask.
         tr : float
@@ -1774,7 +1774,7 @@ class AIFDetection(BaseInterface):
         Returns
         -------
         aif_curve : ndarray
-            1D AIF time course.
+            Averaged time course in the input data's units.
         aif_mask : ndarray
             3D boolean mask of voxels used.
         """
@@ -1833,10 +1833,6 @@ class AIFDetection(BaseInterface):
             aif_curve = savgol_filter(
                 aif_curve, window_length=window_length, polyorder=2
             )
-
-        # Negative ΔR2* is physically valid (symmetric noise, T1 recirculation).
-        # Do NOT clip to zero — it biases the AIF integral, corrupts the SVD
-        # Toeplitz matrix, and disables the gamma-fit defect detector.
 
         return aif_curve, aif_mask
 
@@ -2142,24 +2138,26 @@ class AIFDetection(BaseInterface):
     def _finalize_aif_metrics(
         aif_curve: npt.NDArray[Any],
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        conc_data: npt.NDArray[Any],
+        signal_data: Optional[npt.NDArray[Any]],
         brain_mask: npt.NDArray[Any],
         affine: npt.NDArray[Any],
         tr: float,
         n_candidates_requested: int,
         n_available: int,
         baseline_frames: int = 12,
+        roi_size: int = 1,
     ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
         """Finalize AIF: detect bolus arrival and compute comprehensive QC.
 
         Parameters
         ----------
         aif_curve : ndarray
-            1D smoothed AIF concentration curve.
+            Accepted smoothed measured AIF concentration curve before gamma fitting.
         top_candidates : list
             ``(cost, (x,y,z), metrics)`` tuples used.
-        conc_data : ndarray
-            4D concentration data.
+        signal_data : ndarray or None
+            Original 4D signal used to measure the accepted pool's fractional
+            signal drop. An unavailable signal leaves PH unavailable.
         brain_mask : ndarray
             3D brain mask.
         affine : ndarray
@@ -2171,13 +2169,26 @@ class AIFDetection(BaseInterface):
         n_available : int
             How many candidates passed scoring.
         baseline_frames : int
-            Configured number of pre-bolus baseline frames.
+            Finalized number of pre-bolus baseline frames.
+        roi_size : int
+            Side length of each candidate ROI used for the measured AIF.
 
         Returns
         -------
         tuple of (aif_curve, qc_dict)
         """
         from pmriprep.utils.dsc_signal import detect_bolus_arrival
+
+        pooled_signal = None
+        if signal_data is not None:
+            pooled_signal, _ = AIFDetection._compute_roi_averaged_aif(
+                top_candidates, signal_data, brain_mask, tr, roi_size=roi_size,
+            )
+            if not np.all(np.isfinite(pooled_signal)):
+                pooled_signal = None
+        pooled_metrics = AIFDetection._calculate_candidate_metrics(
+            aif_curve, pooled_signal, tr, baseline_frames,
+        ) or {}
 
         # Bolus arrival on the final AIF curve
         baseline_window = min(
@@ -2214,7 +2225,7 @@ class AIFDetection(BaseInterface):
         aif_hemisphere = "left" if aif_centroid_mm[0] < 0 else "right"
 
         # Edge slice warning
-        n_slices = conc_data.shape[2]
+        n_slices = brain_mask.shape[2]
         aif_z = best_coord_int[2]
         is_edge = aif_z == 0 or aif_z == n_slices - 1
 
@@ -2263,20 +2274,22 @@ class AIFDetection(BaseInterface):
             "mean_cost": float(
                 np.mean([c for c, _, _ in top_candidates])
             ),
-            # Detection-time AIF metrics under a single canonical
-            # nested key. ``peak_conc`` is ΔR2* peak in 1/s (DSC) /
-            # plasma-Gd peak in mM (DCE callers); other fields come
-            # from the best candidate's metric record.
+            # Peak amplitude is measured on the combined curve. TTP, FWHM
+            # and PSR describe the best candidate; prior PH/BRR describe
+            # the combined measured pool and are added when available.
             "aif_metrics": {
                 "peak_conc": float(np.max(aif_curve)),
                 "ttp": float(best_m.get("ttp", 0.0)),
                 "fwhm": float(best_m.get("fwhm", 0.0)),
-                "ph": float(best_m.get("ph", 0.0)),
                 "psr": float(best_m.get("psr", 0.0)),
-                "brr": float(best_m.get("baseline_return_ratio", 0.0)),
                 "arrival": float(arrival_time_s),
             },
         }
+
+        for source, target in (("ph", "ph"), ("baseline_return_ratio", "brr")):
+            value = pooled_metrics.get(source)
+            if value is not None and np.isfinite(value):
+                qc["aif_metrics"][target] = float(value)
 
         return aif_curve, qc
 
@@ -2991,13 +3004,14 @@ class AIFDetection(BaseInterface):
         curve, qc_metrics = self._finalize_aif_metrics(
             curve,
             cascade.candidates,
-            context.concentration,
+            context.signal,
             context.brain_mask,
             context.affine,
             context.tr,
             context.n_candidates,
             cascade.n_available,
             baseline_frames=baseline_frames,
+            roi_size=accepted_roi_size,
         )
         qc_metrics.update(baseline_diagnostics)
         qc_metrics.update(cascade.filter_metadata)

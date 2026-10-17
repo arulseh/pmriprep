@@ -121,8 +121,8 @@ class CBVQualityAssessment:
         confidence: Quality tier - 'high', 'moderate', or 'low'.
         use_constraint: Whether the assessment permits a DSC-derived vp prior.
         cnr_coverage: Fraction of brain voxels with CNR > 4.
-        aif_peak_height: Best candidate's signal-drop fraction (PH / 100), or None.
-        aif_baseline_return: Tail-to-peak concentration ratio, or None if unavailable.
+        aif_peak_height: Combined measured pool's signal-drop fraction (PH / 100), or None.
+        aif_baseline_return: Measured pool's tail-to-peak concentration ratio, or None.
         cbv_median: Median dimensionless nCBV in brain, or None if not assessed.
         cbv_negative_fraction: Fraction of negative nCBV values, or None.
         gamma_peak_ratio: Gamma-variate peak ratio (fitted/measured), or None.
@@ -322,8 +322,8 @@ def assess_dsc_cbv_quality(
 
     Implements a three-tier quality framework (high/moderate/low) based on:
     - CNR coverage: fraction of brain voxels with CNR > 4
-    - AIF signal drop: best candidate's signal PH / 100
-    - AIF baseline return: how well AIF returns to baseline
+    - AIF signal drop: combined measured pool's signal PH / 100
+    - AIF baseline return: combined measured concentration tail / peak
     - nCBV value ranges: whether whole-brain median nCBV is plausible
 
     CNR coverage thresholds scale with the administered Gd dose

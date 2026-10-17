@@ -6,12 +6,13 @@ key set and its use in prior qualification.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 
-from pmriprep.interfaces.dsc_aif import AIFDetection
+from pmriprep.interfaces.dsc_aif import AIFDetection, _CascadeDetectionResult
 
 
 def _candidate_metrics() -> dict[str, Any]:
@@ -24,85 +25,126 @@ def _candidate_metrics() -> dict[str, Any]:
     }
 
 
+def _measured_pool(
+    ph: float, other_tail_fraction: float = 0.3,
+) -> tuple[np.ndarray, np.ndarray, list[tuple[float, tuple[int, int, int], dict]]]:
+    """Three arterial signals with unequal costs and known weighted signal drop."""
+    pulse = np.maximum(0.0, 1.0 - ((np.arange(80) - 25) / 7.0) ** 2)
+    drops = np.array([ph + 2, ph - 2, ph - 2]) / 100.0
+    signal = 1000.0 * (1.0 - drops[:, None] * pulse)
+    peaks = -np.log1p(-drops) / 0.03
+    tails = peaks * [0.1, other_tail_fraction, other_tail_fraction]
+    signal[:, 45:65] = 1000.0 * np.exp(-0.03 * tails[:, None])
+    concentration = -np.log(signal / 1000.0) / 0.03
+    candidates = [
+        (cost, (i, 0, 0), {
+            **_candidate_metrics(), "ph": float(100 * drops[i]),
+            "baseline_return_ratio": 10.0 if i == 0 else 100 * other_tail_fraction,
+        })
+        for i, cost in enumerate((0.1, 0.2, 0.2))
+    ]
+    return concentration[:, None, None, :], signal[:, None, None, :], candidates
+
+
 class TestAutoDetectionFullShape:
-    """``_finalize_aif_metrics`` (auto/atlas path) emits the full key set."""
+    """Measured-pool PH and BRR reach the prior gate with matching support."""
 
-    def test_canonical_aif_metrics_keys_present(self):
-        aif_curve = np.zeros(60, dtype=np.float64)
-        # Synthetic bolus: small baseline, sharp peak, return-to-baseline.
-        aif_curve[10:14] = np.array([5.0, 25.0, 18.0, 9.0])
-        aif_curve[14:] = 4.0
-
-        top_candidates = [
-            (0.5, (10, 10, 5), _candidate_metrics()),
-        ]
-        conc_data = np.zeros((20, 20, 10, 60), dtype=np.float64)
-        conc_data[:, :, :, :] = aif_curve[None, None, None, :]
-        brain_mask = np.ones((20, 20, 10), dtype=np.uint8)
-        affine = np.eye(4)
-
-        out_curve, qc = AIFDetection._finalize_aif_metrics(
-            aif_curve=aif_curve,
-            top_candidates=top_candidates,
-            conc_data=conc_data,
-            brain_mask=brain_mask,
-            affine=affine,
-            tr=1.5,
-            n_candidates_requested=6,
-            n_available=1,
-            baseline_frames=10,
+    def test_canonical_aif_metrics_use_accepted_roi(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Single-candidate ROI QC uses its masked neighbors and finalized baseline."""
+        pulse = np.maximum(0.0, 1.0 - ((np.arange(80) - 30) / 7.0) ** 2)
+        signal = np.broadcast_to(1000.0 * (1.0 - 0.8 * pulse), (3, 3, 3, 80)).copy()
+        mask = np.zeros((3, 3, 3), dtype=bool)
+        for coord, drop in (((1, 1, 1), 0.6), ((1, 1, 0), 0.3), ((1, 0, 1), 0.0)):
+            signal[coord] = 1000.0 * (1.0 - drop * pulse)
+            signal[coord][:10] = 800.0
+            mask[coord] = True
+        concentration = -np.log(signal / 1000.0) / 0.03
+        candidates = [(0.5, (1, 1, 1), _candidate_metrics())]
+        curve, accepted_mask = AIFDetection._compute_roi_averaged_aif(
+            candidates, concentration, mask, 1.5, roi_size=3,
         )
+        cascade = _CascadeDetectionResult(
+            (curve, accepted_mask, 3), candidates, 1, "atlas_strict", {},
+            "atlas_strict", ["atlas_strict"], {"atlas_strict": 1}, {}, {},
+        )
+        context = SimpleNamespace(
+            concentration=concentration, signal=signal, brain_mask=mask,
+            affine=np.eye(4), tr=1.5, n_candidates=6, baseline_frames=5,
+            lesion_mask=None, enhancing_mask=None,
+        )
+        detector = AIFDetection()
+        monkeypatch.setattr(
+            detector, "_refine_selected_aif_baseline", lambda *args, **kwargs: (20, {}),
+        )
+        result = detector._finalize_detected_aif(cascade, context, 5)
+        am = result.qc_metrics["aif_metrics"]
+        np.testing.assert_array_equal(result.curve, curve)
+        assert result.baseline_frames == 20
+        assert am["peak_conc"] == pytest.approx(float(np.max(curve)))
+        assert am["ttp"] == 22.5
+        assert am["fwhm"] == 6.0
+        assert am["psr"] == 78.0
+        # S0 is 900 over the finalized 20-frame baseline; pooled minimum is 700.
+        assert am["ph"] == pytest.approx(100 * (900 - 700) / 900)
+        assert am["brr"] == pytest.approx(0.0)
 
-        assert "aif_metrics" in qc
-        am = qc["aif_metrics"]
-        for key in ("peak_conc", "ttp", "fwhm", "ph", "psr", "brr", "arrival"):
-            assert key in am, f"aif_metrics missing canonical key: {key}"
-
-        assert am["peak_conc"] == pytest.approx(float(np.max(aif_curve)))
-        assert am["ttp"] == pytest.approx(22.5)
-        assert am["fwhm"] == pytest.approx(6.0)
-        assert am["ph"] == pytest.approx(41.2)
-        assert am["psr"] == pytest.approx(78.0)
-        assert am["brr"] == pytest.approx(92.0)
-
-    @pytest.mark.parametrize("ph, expected_confidence", [
-        (13.0, "low"), (15.0, "moderate"), (25.0, "high"),
+    @pytest.mark.parametrize("ph, other_tail_fraction, expected_confidence", [
+        (14.0, 0.3, "low"), (20.0, 0.3, "moderate"), (30.0, 0.3, "high"),
+        (30.0, 0.9, "low"),
     ])
-    def test_candidate_ph_qualifies_prior(self, ph, expected_confidence):
-        """Candidate PH controls prior eligibility independently of recovery."""
+    def test_pooled_ph_and_brr_qualify_prior(
+        self, ph: float, other_tail_fraction: float, expected_confidence: str,
+    ) -> None:
+        """The measured pool controls eligibility even when its best candidate passes."""
         from pmriprep.utils.dsc_cbv_constraint import (
             ConstraintMode, assess_dsc_cbv_quality, determine_constraint_mode,
         )
 
-        aif_curve = np.zeros(60, dtype=np.float64)
-        aif_curve[10:14] = np.array([5.0, 25.0, 18.0, 9.0])
-        aif_curve[14:] = 4.0
-        metrics = {**_candidate_metrics(), "ph": ph, "baseline_return_ratio": 20.0}
-        top_candidates = [(0.5, (10 + i, 10, 5), metrics) for i in range(3)]
-        conc_data = np.zeros((20, 20, 10, 60), dtype=np.float64)
-        conc_data[:, :, :, :] = aif_curve[None, None, None, :]
-        brain_mask = np.ones((20, 20, 10), dtype=np.uint8)
+        concentration, signal, candidates = _measured_pool(ph, other_tail_fraction)
+        mask = np.ones(concentration.shape[:3], dtype=bool)
+        curve, _ = AIFDetection._compute_roi_averaged_aif(
+            candidates, concentration, mask, 1.5, roi_size=1,
+        )
         _, qc = AIFDetection._finalize_aif_metrics(
-            aif_curve=aif_curve,
-            top_candidates=top_candidates,
-            conc_data=conc_data,
-            brain_mask=brain_mask,
-            affine=np.eye(4),
-            tr=1.5,
-            n_candidates_requested=6,
-            n_available=3,
-            baseline_frames=10,
+            curve, candidates, signal, mask, np.eye(4), 1.5, 6, 3, baseline_frames=10,
         )
         qc["cnr_whole_brain"] = {"fraction_cnr_gt_4": 0.99}
         quality = assess_dsc_cbv_quality(qc)
         config = determine_constraint_mode(
             quality, k2_metrics={"k2_reference_available": True},
         )
+        # Costs give weights 1/2, 1/4, 1/4. Quadratic smoothing preserves the signal dip.
         assert quality.aif_peak_height == pytest.approx(ph / 100)
+        assert quality.aif_baseline_return == pytest.approx(
+            np.mean(curve[54:64]) / np.max(curve[12:36])
+        )
+        assert quality.aif_baseline_return != pytest.approx(0.1)
         assert quality.confidence == expected_confidence
         assert config.mode == (
-            ConstraintMode.SKIP if ph < 15 else ConstraintMode.SOFT
+            ConstraintMode.SKIP if expected_confidence == "low" else ConstraintMode.SOFT
         )
+
+    @pytest.mark.parametrize("signal_state", ["missing", "nonfinite"])
+    def test_unavailable_pooled_signal_withholds_prior(self, signal_state: str) -> None:
+        """Unavailable pool signal leaves PH unavailable despite candidate metadata."""
+        from pmriprep.utils.dsc_cbv_constraint import assess_dsc_cbv_quality
+
+        concentration, signal, candidates = _measured_pool(30.0)
+        mask = np.ones(concentration.shape[:3], dtype=bool)
+        curve, _ = AIFDetection._compute_roi_averaged_aif(
+            candidates, concentration, mask, 1.5, roi_size=1,
+        )
+        signal[1, 0, 0, 25] = np.nan
+        _, qc = AIFDetection._finalize_aif_metrics(
+            curve, candidates, None if signal_state == "missing" else signal,
+            mask, np.eye(4), 1.5, 6, 3, baseline_frames=10,
+        )
+        quality = assess_dsc_cbv_quality(qc)
+        assert "ph" not in qc["aif_metrics"]
+        assert quality.aif_peak_height is None
+        assert quality.aif_baseline_return is not None
+        assert quality.use_constraint is False
+        assert "AIF signal-drop fraction (PH) unavailable" in quality.reasons
 
 
 class TestExternalAifSubsetShape:
