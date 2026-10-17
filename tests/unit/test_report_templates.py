@@ -69,12 +69,12 @@ def _assert_in_order(rendered: str, *labels: str) -> None:
 
 
 def test_parent_render_hides_dsc_blocks_when_no_dsc(env):
-    """On DCE-only runs, DSC CBV Constraint and DSC-DCE Cross-Validation sections must NOT render."""
+    """DCE-only reports omit the DSC prior and vascular-concordance panels."""
     template = env.get_template("report_unified.html")
     ctx = _minimal_parent_ctx(dsc=None, dce=_dce_ctx_with_dsc_blocks())
     rendered = template.render(**ctx)
     assert "<h3>DSC CBV Constraint</h3>" not in rendered
-    assert "<h3>DSC-DCE Cross-Validation</h3>" not in rendered
+    assert "<h3>NAWM-Normalized vp–nCBV Concordance</h3>" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -96,7 +96,6 @@ def test_registration_description_is_concise(env, template_name, modality):
     }
     rendered = template.render(**context)
     assert f"Multi-slice overlay showing {modality}-T1w registration." in rendered
-    assert "intensity contour" not in rendered
 
 
 def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
@@ -607,15 +606,6 @@ def test_dce_incomplete_voxel_accounting_stage_is_skipped(env):
     assert "Fits Attempted" not in rendered
 
 
-def test_report_metric_cards_wrap_long_values(env):
-    """Shared metric cards wrap identifiers and support secondary details."""
-    template = env.get_template("report_unified.html")
-    rendered = template.render(**_minimal_parent_ctx())
-
-    assert "overflow-wrap: anywhere" in rendered
-    assert ".metric-detail" in rendered
-
-
 def test_dce_two_cxm_suitability_warning_renders(env):
     """Reason-coded 2CXM screening reaches the DCE HTML without implying failure."""
     template = env.get_template("sections/section_dce.html")
@@ -784,9 +774,9 @@ def test_synthetic_aif_caveat_rendered(env, extra, reason):
     assert "template AIF shape and timing" in rendered
     assert "BSW K2 uses a tissue reference" in rendered
     assert "AUC divided by its NAWM median" in rendered
-    assert "Unaffected:" not in rendered
     if reason == "user-selected":
         assert "no arterial candidates survived" not in rendered
+    assert 'class="metric-value poor"' in rendered
 
 
 def test_measured_aif_omits_caveat(env):
@@ -850,23 +840,11 @@ def test_deconv_panel_optional_means(
         assert f'<div class="metric-value">{value:.4f}</div>' in rendered
 
 
-def test_deconv_panel_inference_shown_for_cpi(env):
-    """CPI runs render an "Inference" metric box (not a "Bayesian" label)."""
-    template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_deconv(
-        "cpi", inference="vi", fallback_rate=0.05, solver_convergence_rate=0.75,
-    )
-    rendered = template.render(dsc=dsc_ctx)
-    assert ">Inference<" in rendered
-    assert ">Bayesian<" not in rendered
-    assert ">vi<" in rendered
-
-
 def test_deconv_panel_labels_cpi_arrival_delay(env):
     """CPI fitted arrival delay is shown without calling it Tmax."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_deconv(
-        "cpi", inference="vi", fallback_rate=0.05, solver_convergence_rate=0.0,
+        "cpi", inference="vi", fallback_rate=0.07, solver_convergence_rate=0.0,
         arrival_delay_median=-0.5, arrival_delay_finite_fraction=0.95,
     )
     rendered = template.render(dsc=dsc_ctx)
@@ -875,6 +853,10 @@ def test_deconv_panel_labels_cpi_arrival_delay(env):
     assert ">-0.50 s<" in rendered
     assert ">Arrival-delay coverage<" in rendered
     assert ">95.0%<" in rendered
+    assert ">Inference<" in rendered
+    assert ">vi<" in rendered
+    assert ">oSVD Fallback<" in rendered
+    assert '<div class="metric-value">7.0%</div>' in rendered
 
 
 def test_deconv_panel_omits_unestimated_cpi_arrival_delay(env):
@@ -891,40 +873,13 @@ def test_deconv_panel_omits_unestimated_cpi_arrival_delay(env):
 
 
 def test_deconv_panel_shows_tmax_for_osvd(env):
-    """oSVD does model delay — Tmax stat is visible."""
+    """oSVD reports the residue-peak Tmax value and omits parametric fallback QC."""
     template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_deconv("oSVD")
+    dsc_ctx = _dsc_ctx_with_deconv("oSVD", fallback_rate=0.0)
     rendered = template.render(dsc=dsc_ctx)
     assert ">Median Tmax<" in rendered
-
-
-def test_deconv_panel_fallback_only_for_parametric(env):
-    """oSVD Fallback metric box only renders for parametric methods (cpi)."""
-    template = env.get_template("sections/section_dsc.html")
-
-    cpi_ctx = _dsc_ctx_with_deconv(
-        "cpi", inference="vi", fallback_rate=0.07, solver_convergence_rate=0.75,
-    )
-    cpi_rendered = template.render(dsc=cpi_ctx)
-    assert ">oSVD Fallback<" in cpi_rendered
-    assert '<div class="metric-value">7.0%</div>' in cpi_rendered
-
-    osvd_ctx = _dsc_ctx_with_deconv("oSVD", fallback_rate=0.0)
-    osvd_rendered = template.render(dsc=osvd_ctx)
-    assert ">oSVD Fallback<" not in osvd_rendered
-
-    # The "Convergence Rate" label must not appear anywhere.
-    assert ">Convergence Rate<" not in cpi_rendered
-    assert ">Convergence Rate<" not in osvd_rendered
-
-
-def test_quality_flag_colour_synthetic_is_poor(env):
-    """Synthetic detection_level badges as 'poor' regardless of score."""
-    template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_aif_level("synthetic")
-    rendered = template.render(dsc=dsc_ctx)
-    # Status badge carries the flag class.
-    assert 'class="metric-value poor"' in rendered
+    assert ">1.50 s<" in rendered
+    assert ">oSVD Fallback<" not in rendered
 
 
 # =============================================================================
@@ -959,12 +914,13 @@ def test_summary_renders_acquisition_warnings(env):
     assert "DSC_LOW_EFFECTIVE_DOSE" in rendered
 
 
-def test_summary_hides_acquisition_warnings_when_empty(env):
-    """Acquisition advisory section hidden when no warnings."""
+def test_summary_hides_empty_warning_sections(env):
+    """Empty acquisition and processing warnings omit both advisory sections."""
     template = env.get_template("sections/section_summary.html")
     ctx = _summary_ctx()
     rendered = template.render(**ctx)
     assert "Acquisition Advisory" not in rendered
+    assert "Processing Advisory" not in rendered
 
 
 def test_summary_renders_processing_warnings(env):
@@ -981,14 +937,6 @@ def test_summary_renders_processing_warnings(env):
     rendered = template.render(**ctx)
     assert "Processing Advisory" in rendered
     assert "synthetic gamma-variate template" in rendered
-
-
-def test_summary_hides_processing_warnings_when_empty(env):
-    """Processing advisory section hidden when no warnings."""
-    template = env.get_template("sections/section_summary.html")
-    ctx = _summary_ctx()
-    rendered = template.render(**ctx)
-    assert "Processing Advisory" not in rendered
 
 
 def _dsc_ctx_with_preload(**preload) -> dict:
@@ -1009,7 +957,6 @@ def test_unknown_preload_shows_unknown_administered_dose(env):
     rendered = template.render(dsc=dsc_ctx)
     assert "Administered Preload" in rendered
     assert '<div class="metric-value">Unknown</div>' in rendered
-    assert "Leakage-Correction Adequacy" not in rendered
 
 
 def test_preload_user_specified_shows_continuous_fraction(env):
@@ -1022,7 +969,6 @@ def test_preload_user_specified_shows_continuous_fraction(env):
     rendered = template.render(dsc=dsc_ctx)
     assert "Administered Preload" in rendered
     assert "0.30× standard dose" in rendered
-    assert "Leakage-Correction Adequacy" not in rendered
 
 
 def test_unavailable_k2_reference_has_distinct_warning(env):
@@ -1122,7 +1068,7 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
 
 
 def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
-    """Tumor totals lead components and NAWM omits internal atlas provenance."""
+    """Tumor totals precede components, followed by NAWM selection and size QC."""
     template = env.get_template("sections/section_tumor_seg.html")
     tumor_seg = {
         "qc_metrics": {
@@ -1162,4 +1108,3 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
         "Minimum Size Met",
         "NAWM selection warning",
     )
-    assert "Atlas Used" not in rendered

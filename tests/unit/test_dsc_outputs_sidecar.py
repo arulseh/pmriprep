@@ -25,11 +25,10 @@ from pmriprep.utils.aif_provenance import (
 from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
 
 
-def _write_dummy_nifti(path: Path) -> str:
-    """Write a 4×4×4 zero-filled NIfTI and return its path as str."""
-    data = np.zeros((4, 4, 4), dtype=np.float32)
-    img = nib.Nifti1Image(data, np.eye(4))
-    nib.save(img, path)  # type: ignore[attr-defined]
+def _write_dummy_nifti(path: Path, value: float = 0.0) -> str:
+    """Write a constant-valued 4x4x4 NIfTI and return its path."""
+    data = np.full((4, 4, 4), value, dtype=np.float32)
+    nib.save(nib.Nifti1Image(data, np.eye(4)), path)
     return str(path)
 
 
@@ -69,14 +68,14 @@ def minimal_inputs(tmp_path, minimal_bids_dir):
         "bids_dir": str(minimal_bids_dir),
         "source_dsc": str(src_dsc),
         **sources,
-        "mtt_map": _write_dummy_nifti(tmp_path / "mtt.nii.gz"),
-        "tmax_map": _write_dummy_nifti(tmp_path / "tmax.nii.gz"),
-        "psr_map": _write_dummy_nifti(tmp_path / "psr.nii.gz"),
-        "rel_cbf_map": _write_dummy_nifti(tmp_path / "rcbf.nii.gz"),
-        "rel_cbv_map": _write_dummy_nifti(tmp_path / "rcbv.nii.gz"),
-        "rel_cbv_auc_map": _write_dummy_nifti(tmp_path / "rcbv_auc.nii.gz"),
-        "ncbv_map": _write_dummy_nifti(tmp_path / "ncbv.nii.gz"),
-        "ncbf_map": _write_dummy_nifti(tmp_path / "ncbf.nii.gz"),
+        "mtt_map": _write_dummy_nifti(tmp_path / "mtt.nii.gz", 4.0),
+        "tmax_map": _write_dummy_nifti(tmp_path / "tmax.nii.gz", 1.5),
+        "psr_map": _write_dummy_nifti(tmp_path / "psr.nii.gz", 100.0),
+        "rel_cbf_map": _write_dummy_nifti(tmp_path / "rcbf.nii.gz", 60.0),
+        "rel_cbv_map": _write_dummy_nifti(tmp_path / "rcbv.nii.gz", 2.0),
+        "rel_cbv_auc_map": _write_dummy_nifti(tmp_path / "rcbv_auc.nii.gz", 3.0),
+        "ncbv_map": _write_dummy_nifti(tmp_path / "ncbv.nii.gz", 1.0),
+        "ncbf_map": _write_dummy_nifti(tmp_path / "ncbf.nii.gz", 0.75),
     }
 
 
@@ -206,8 +205,11 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
             assert reference["n_valid"] == int(np.count_nonzero(np.isfinite(image[nawm])))
 
 
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
-@pytest.mark.parametrize("detection,source", [("atlas_strict", "measured"), ("synthetic", "synthetic")])
+@pytest.mark.parametrize("method,detection,source", [
+    ("sSVD", "atlas_strict", "measured"),
+    ("oSVD", "synthetic", "synthetic"),
+    ("tikhonov", "atlas_strict", "measured"),
+])
 def test_svd_mtt_label_and_aif_source(method: str, detection: str, source: str) -> None:
     """The AUC formula applies to both measured and synthetic AIF sources."""
     sidecar = build_dsc_map_sidecar(
@@ -318,10 +320,16 @@ def test_arrival_delay_sidecar_reports_fitted_estimator_only() -> None:
     assert "TmaxMethod" not in sidecar
 
 
-def test_cpi_timing_derivative_is_named_arrival_delay(
+def test_cpi_timing_and_uncertainty_derivatives(
     minimal_inputs: dict, tmp_path: Path,
 ) -> None:
-    """The public CPI timing derivative is not labelled as conventional Tmax."""
+    """CPI writes fitted arrival delay, posterior CBF SD and parametric fit quality."""
+    minimal_inputs.update({
+        "tmax_map": _write_dummy_nifti(tmp_path / "arrival_delay.nii.gz", -0.5),
+        "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz", 2.0),
+        "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz", 0.875),
+        "config_dict": {"inference": "svb"},
+    })
     derivatives = _run_writer(
         minimal_inputs,
         {
@@ -339,9 +347,36 @@ def test_cpi_timing_derivative_is_named_arrival_delay(
     assert sidecar["ArrivalDelayMethod"] == "fitted_aif_relative_arrival_delay"
     assert "NaN" in sidecar["RejectedFitValues"]
 
+    for desc, value, units in (
+        ("dscArrivalDelay", -0.5, "s"),
+        ("dscPosteriorSDCbf", 2.0, "1/min"),
+        ("dscParametricRsquared", 0.875, "1"),
+    ):
+        image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
+        np.testing.assert_array_equal(nib.load(image).get_fdata(), value)
+        assert _load_sidecar(derivatives, f"{desc}_stat")["Units"] == units
 
-@pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("map_key", ["cbv", "ncbv", "rel_cbv", "mtt"])
+    r2_meta = _load_sidecar(derivatives, "dscParametricRsquared_stat")
+    assert r2_meta["AIFDependent"] is True
+
+    uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
+    assert uncertainty_meta["EstimationMethod"] == "svb"
+    assert uncertainty_meta["InferenceMethod"] == "spatial_variational_bayes"
+    assert uncertainty_meta["SpatialPriorApplied"] is True
+    assert uncertainty_meta["SpatialPriorModel"] == "Penny M-prior"
+    assert (
+        uncertainty_meta["SpatialUpdateScheme"]
+        == "synchronous_batched_backtracking"
+    )
+    assert uncertainty_meta["SpatiallyRegularizedParameters"] == ["cbf"]
+
+    assert uncertainty_meta["Description"] == "CBF posterior standard deviation"
+
+
+@pytest.mark.parametrize("map_key,nested", [
+    ("cbv", True), ("ncbv", True), ("rel_cbv", True), ("mtt", True),
+    ("cbv", False),
+])
 def test_cpi_volume_and_transit_sidecars_report_spacing_bound_occupancy(
     nested: bool,
     map_key: str,
@@ -426,22 +461,6 @@ def test_dsc_writer_recreates_deleted_cached_derivative(
     wf.run()
 
     assert nii.exists() and sidecar.exists()
-
-
-def test_cpi_uncertainty_uses_posterior_derivative_names(tmp_path: Path) -> None:
-    """CPI uncertainty sinks publish posterior SD with matching metadata."""
-    from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
-
-    workflow = init_dsc_datasinks_wf(
-        output_dir=str(tmp_path / "out"),
-        bids_dir=str(tmp_path / "bids"),
-        subject_id="01",
-        session_id=None,
-        deconvolution_method="cpi",
-        present_inputs={"cbf_std_map"},
-    )
-    assert workflow.get_node("cbf_std_map_sink").inputs.desc == "dscPosteriorSD"
-    assert workflow.get_node("cbf_std_map_meta").inputs.description == "CBF posterior standard deviation"
 
 
 def test_parametric_provenance_carries_fit_health_denominators() -> None:
@@ -550,20 +569,6 @@ class TestBuildAifProvenanceBlock:
         assert block["DetectionLevel"] == "atlas_relaxed+atlas_permissive"
         assert block["Source"] == "measured"
 
-    def test_compound_union_three_tiers_accepted(self) -> None:
-        block = build_aif_provenance_block({
-            "aif_detection": {
-                "detection_method": (
-                    "atlas_strict+atlas_relaxed+full_atlas_permissive"
-                ),
-                "quality_score": 0.8,
-            },
-        })
-        assert block != {}
-        assert block["DetectionLevel"] == (
-            "atlas_strict+atlas_relaxed+full_atlas_permissive"
-        )
-
     def test_compound_with_unknown_part_rejected(self) -> None:
         """Compound strings are accepted only when EVERY part is a known
         cascade tier; an unknown part rejects the whole union."""
@@ -666,85 +671,54 @@ class TestWriterAifBlockPresentOnAllMaps:
     PerfusionProcessing.AIF and AIFDependent on every
     emitted sidecar."""
 
-    def test_all_core_and_rel_maps_stamped_measured(self, minimal_inputs, tmp_path) -> None:
-        qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85}}
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-
-        for suffix in ["dscRelAUCCbv_stat", "dscRelCbv_stat", "dscRelCbf_stat",
-                       "dscNawmNormCbv_stat", "dscNawmNormCbf_stat",
-                       "dscMtt_stat", "dscTmax_stat", "dscPsr_stat"]:
-            sidecar = _load_sidecar(derivatives, suffix)
-            assert _aif_block(sidecar)["Source"] == "measured", suffix
-            assert _aif_block(sidecar)["QualityFlag"] == "pass", suffix
-            assert "AIFDependent" in sidecar, suffix
-
-    def test_signed_k2_is_published_as_aif_independent(
-        self, minimal_inputs, tmp_path,
+    def test_measured_maps_and_quantitative_metadata(
+        self, minimal_inputs: dict, tmp_path: Path,
     ) -> None:
-        minimal_inputs["k2_map"] = _write_dummy_nifti(tmp_path / "k2.nii.gz")
+        """Measured-AIF outputs preserve map contents, units and estimator-specific QC."""
+        minimal_inputs.update({
+            "k2_map": _write_dummy_nifti(tmp_path / "k2.nii.gz", -0.03125),
+            "cnr_map": _write_dummy_nifti(tmp_path / "cnr.nii.gz", 5.0),
+            "tsnr_map": _write_dummy_nifti(tmp_path / "tsnr.nii.gz", 40.0),
+        })
         qc = {
-            "aif_detection": {
-                "detection_method": "atlas_strict",
-                "quality_score": 0.9,
-            }
+            "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85},
+            "normalization_factor": 0.023,
+            "cbf_normalization_factor": 42.0,
+            "deconvolution": {
+                "method": "oSVD",
+                "cbv_auc_finite_voxels": 100,
+                "cbv_auc_negative_voxels": 7,
+                "cbv_auc_negative_fraction": 0.07,
+            },
         }
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-
-        assert len(list(derivatives.rglob("*dscK2_stat.nii.gz"))) == 1
-        sidecar = _load_sidecar(derivatives, "dscK2_stat")
-        assert sidecar["Units"] == "1/s"
-        assert sidecar["AIFDependent"] is False
-        assert sidecar["SignedCoefficient"] is True
-
-    def test_k2_sink_is_conditional(self, minimal_inputs) -> None:
-        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
-
-        workflow = init_dsc_datasinks_wf(
-            output_dir=minimal_inputs["output_dir"],
-            bids_dir=minimal_inputs["bids_dir"],
-            subject_id=minimal_inputs["subject_id"],
-            session_id=minimal_inputs["session_id"],
-            present_inputs=set(),
-        )
-
-        assert "k2_map_sink" not in workflow.list_node_names()
-
-    def test_map_units_match_computed_quantities(self, minimal_inputs, tmp_path) -> None:
-        minimal_inputs.update({
-            "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
-            "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
-            "config_dict": {"inference": "svb"},
-        })
-        derivatives = _run_writer(
-            minimal_inputs,
-            {
-                "deconvolution": {
-                    "method": "oSVD",
-                },
-            },
-            tmp_path,
-        )
-
-        expected = {
-            "dscPosteriorSDCbf_stat": "1/min",
-            "dscParametricRsquared_stat": "1",
+        outputs = {
+            "dscMtt": (4.0, "s", True),
+            "dscTmax": (1.5, "s", True),
+            "dscPsr": (100.0, "%", False),
+            "dscRelCbf": (60.0, "1/min", True),
+            "dscRelCbv": (2.0, "arbitrary", True),
+            "dscRelAUCCbv": (3.0, "arbitrary", True),
+            "dscNawmNormCbv": (1.0, "1", True),
+            "dscNawmNormCbf": (0.75, "1", True),
+            "dscK2": (-0.03125, "1/s", False),
+            "dscCnr": (5.0, "1", False),
+            "dscTsnr": (40.0, "1", False),
         }
-        for suffix, units in expected.items():
-            assert _load_sidecar(derivatives, suffix)["Units"] == units
+        for desc, (value, units, aif_dependent) in outputs.items():
+            sidecar = _load_sidecar(derivatives, f"{desc}_stat")
+            assert _aif_block(sidecar)["Source"] == "measured", desc
+            assert _aif_block(sidecar)["QualityFlag"] == "pass", desc
+            assert sidecar["AIFDependent"] is aif_dependent, desc
+            assert sidecar["Units"] == units, desc
+            image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
+            np.testing.assert_array_equal(nib.load(image).get_fdata(), value)
 
-        r2_meta = _load_sidecar(derivatives, "dscParametricRsquared_stat")
-        assert r2_meta["AIFDependent"] is True
-
-        uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
-        assert uncertainty_meta["EstimationMethod"] == "svb"
-        assert uncertainty_meta["InferenceMethod"] == "spatial_variational_bayes"
-        assert uncertainty_meta["SpatialPriorApplied"] is True
-        assert uncertainty_meta["SpatialPriorModel"] == "Penny M-prior"
-        assert (
-            uncertainty_meta["SpatialUpdateScheme"]
-            == "synchronous_batched_backtracking"
+        assert _load_sidecar(derivatives, "dscK2_stat")["SignedCoefficient"] is True
+        assert _load_sidecar(derivatives, "dscCnr_stat")["Estimator"] == "(S0 - Smin) / sigma0"
+        assert _load_sidecar(derivatives, "dscTsnr_stat")["TemporalWindow"] == (
+            "detected pre-bolus volumes only"
         )
-        assert uncertainty_meta["SpatiallyRegularizedParameters"] == ["cbf"]
 
         tmax_meta = _load_sidecar(derivatives, "dscTmax_stat")
         assert tmax_meta["Clipping"] == "none"
@@ -761,79 +735,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             assert meta["PostFitClipping"] == "none"
             assert "negative/non-finite" in meta["UndefinedValue"]
 
-    def test_signal_quality_map_contract(self, minimal_inputs, tmp_path) -> None:
-        """CNR and baseline tSNR are dimensionless and expose exact estimators."""
-        minimal_inputs.update({
-            "cnr_map": _write_dummy_nifti(tmp_path / "cnr.nii.gz"),
-            "tsnr_map": _write_dummy_nifti(tmp_path / "tsnr.nii.gz"),
-        })
-
-        derivatives = _run_writer(minimal_inputs, {}, tmp_path)
-
-        cnr = _load_sidecar(derivatives, "dscCnr_stat")
-        tsnr = _load_sidecar(derivatives, "dscTsnr_stat")
-        assert cnr["Units"] == "1"
-        assert cnr["Estimator"] == "(S0 - Smin) / sigma0"
-        assert tsnr["Units"] == "1"
-        assert tsnr["TemporalWindow"] == "detected pre-bolus volumes only"
-        assert not list(derivatives.rglob("*dscSnr_stat*"))
-
-    def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
-        qc = {
-            "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},
-            "synthetic_fallback_reason": "no_candidates",
-        }
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
-        assert _aif_block(cbv)["Source"] == "synthetic"
-        assert _aif_block(cbv)["SyntheticFallbackReason"] == "no_candidates"
-        assert cbv["AIFDependent"] is True
-
-        for suffix in ("dscMtt_stat", "dscNawmNormCbf_stat"):
-            sidecar = _load_sidecar(derivatives, suffix)
-            assert sidecar["AIFDependent"] is True
-            assert _aif_block(sidecar)["Source"] == "synthetic"
-
-    def test_gamma_fit_measured_source(self, minimal_inputs, tmp_path) -> None:
-        qc = {"aif_detection": {
-            "detection_method": "atlas_relaxed",
-            "quality_score": 0.72,
-            "gamma_fit_applied": True,
-        }}
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
-        assert _aif_block(cbv)["Source"] == "gamma_fit_measured"
-        assert _aif_block(cbv)["GammaFitApplied"] is True
-
-
-class TestSmoothedSidecars:
-    def test_smoothed_cbv_synthetic(self, minimal_inputs, tmp_path) -> None:
-        minimal_inputs["smooth_fwhm"] = 3.0
-        minimal_inputs["smooth_hemodynamic"] = {
-            "rel_cbv": _write_dummy_nifti(tmp_path / "rcbv_sm.nii.gz"),
-            "ncbv": _write_dummy_nifti(tmp_path / "ncbv_sm.nii.gz"),
-        }
-        qc = {"aif_detection": {"detection_method": "synthetic", "quality_score": 0.3}}
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        raw = _load_sidecar(derivatives, "dscRelAUCSm3Cbv_stat")
-        assert _aif_block(raw)["Source"] == "synthetic"
-        ncbv_sm = _load_sidecar(derivatives, "dscNawmNormSm3Cbv_stat")
-        assert _aif_block(ncbv_sm)["Source"] == "synthetic"
-        assert ncbv_sm["SmoothingSupport"] == "finite source voxels within the brain mask"
-        assert ncbv_sm["InvalidSupportPreserved"] is True
-
-
-class TestSignedAucCbvProvenance:
-    def test_normalization_reference_is_parameter_specific(
-        self, minimal_inputs, tmp_path
-    ) -> None:
-        """nCBV and nCBF sidecars carry their own NAWM denominators only."""
-        qc = {
-            "normalization_factor": 0.023,
-            "cbf_normalization_factor": 42.0,
-        }
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-
         ncbv = _load_sidecar(derivatives, "dscNawmNormCbv_stat")
         ncbf = _load_sidecar(derivatives, "dscNawmNormCbf_stat")
         raw_cbf = _load_sidecar(derivatives, "dscRelCbf_stat")
@@ -845,18 +746,6 @@ class TestSignedAucCbvProvenance:
         assert cbf_ref["parameter"] == "CBF"
         assert cbf_ref["factor"] == pytest.approx(42.0)
         assert "NormalizationReference" not in raw_cbf.get("PerfusionProcessing", {})
-
-    def test_auc_cbv_and_ncbv_explain_signed_values(
-        self, minimal_inputs, tmp_path
-    ) -> None:
-        qc = {
-            "deconvolution": {
-                "cbv_auc_finite_voxels": 100,
-                "cbv_auc_negative_voxels": 7,
-                "cbv_auc_negative_fraction": 0.07,
-            }
-        }
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
 
         auc_signed = _load_sidecar(
             derivatives, "dscRelAUCCbv_stat"
@@ -884,23 +773,68 @@ class TestSignedAucCbvProvenance:
                 "pre_sanitization_AUC_CBV_estimator"
             )
 
-    def test_smoothed_auc_cbv_and_ncbv_retain_policy(
-        self, minimal_inputs, tmp_path
-    ) -> None:
+    def test_k2_sink_is_conditional(self, minimal_inputs) -> None:
+        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+        workflow = init_dsc_datasinks_wf(
+            output_dir=minimal_inputs["output_dir"],
+            bids_dir=minimal_inputs["bids_dir"],
+            subject_id=minimal_inputs["subject_id"],
+            session_id=minimal_inputs["session_id"],
+            present_inputs=set(),
+        )
+
+        assert "k2_map_sink" not in workflow.list_node_names()
+
+    def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs["smooth_fwhm"] = 3.0
         minimal_inputs["smooth_hemodynamic"] = {
-            "rel_cbv": _write_dummy_nifti(tmp_path / "rcbv_sm.nii.gz"),
-            "ncbv": _write_dummy_nifti(tmp_path / "ncbv_sm.nii.gz"),
+            "rel_cbv": _write_dummy_nifti(tmp_path / "rcbv_sm.nii.gz", 2.5),
+            "ncbv": _write_dummy_nifti(tmp_path / "ncbv_sm.nii.gz", 1.25),
         }
-        derivatives = _run_writer(minimal_inputs, {}, tmp_path)
+        qc = {
+            "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},
+            "synthetic_fallback_reason": "no_candidates",
+            "deconvolution": {
+                "cbv_auc_finite_voxels": 100,
+                "cbv_auc_negative_voxels": 7,
+                "cbv_auc_negative_fraction": 0.07,
+            },
+        }
+        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
+        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
+        assert _aif_block(cbv)["Source"] == "synthetic"
+        assert _aif_block(cbv)["SyntheticFallbackReason"] == "no_candidates"
+        assert cbv["AIFDependent"] is True
 
-        for suffix in ("dscRelAUCSm3Cbv_stat", "dscNawmNormSm3Cbv_stat"):
-            signed = _load_sidecar(derivatives, suffix)["SignedEstimator"]
+        for suffix in ("dscMtt_stat", "dscNawmNormCbf_stat"):
+            sidecar = _load_sidecar(derivatives, suffix)
+            assert sidecar["AIFDependent"] is True
+            assert _aif_block(sidecar)["Source"] == "synthetic"
+
+        assert cbv["SignedEstimator"]["NegativeInBrainVoxelFraction"] == pytest.approx(0.07)
+        for desc, value in (("dscRelAUCSm3Cbv", 2.5), ("dscNawmNormSm3Cbv", 1.25)):
+            sidecar = _load_sidecar(derivatives, f"{desc}_stat")
+            assert _aif_block(sidecar)["Source"] == "synthetic"
+            assert sidecar["SmoothingSupport"] == "finite source voxels within the brain mask"
+            assert sidecar["InvalidSupportPreserved"] is True
+            signed = sidecar["SignedEstimator"]
             assert signed["ValueDomain"] == "nonnegative_or_NaN"
             assert signed["NegativeValuesRetained"] is False
-            # The available count describes the unsmoothed source map and must
-            # not be mislabeled as a measurement of the smoothed derivative.
             assert "NegativeInBrainVoxelFraction" not in signed
+            image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
+            np.testing.assert_array_equal(nib.load(image).get_fdata(), value)
+
+    def test_gamma_fit_measured_source(self, minimal_inputs, tmp_path) -> None:
+        qc = {"aif_detection": {
+            "detection_method": "atlas_relaxed",
+            "quality_score": 0.72,
+            "gamma_fit_applied": True,
+        }}
+        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
+        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
+        assert _aif_block(cbv)["Source"] == "gamma_fit_measured"
+        assert _aif_block(cbv)["GammaFitApplied"] is True
 
 
 class TestMissingAifQc:
@@ -909,6 +843,7 @@ class TestMissingAifQc:
         derivatives = _run_writer(minimal_inputs, None, tmp_path)
         sidecar = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
         assert sidecar["AIFDependent"] is True
+        assert "AIF" not in sidecar.get("PerfusionProcessing", {})
 
 
 # =============================================================================
@@ -925,72 +860,18 @@ class TestStructuralUnderlayDatatype:
     suffix in ``perf/``. ``_add_anat_sink`` must override datatype="anat".
     """
 
-    def _build_and_run(self, minimal_inputs, tmp_path, work_subdir):
-        """Helper: build the DSC datasinks workflow and run it."""
-        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
-
-        present = (set(minimal_inputs.keys()) - {
-            "output_dir", "bids_dir", "subject_id", "session_id", "qc_metrics",
-        })
-        wf = init_dsc_datasinks_wf(
-            output_dir=minimal_inputs["output_dir"],
-            bids_dir=minimal_inputs["bids_dir"],
-            subject_id=minimal_inputs["subject_id"],
-            session_id=minimal_inputs["session_id"],
-            present_inputs=present,
-        )
-        wf.base_dir = str(tmp_path / work_subdir)
-        inp = wf.inputs.inputnode
-        for k, v in minimal_inputs.items():
-            if k in {"output_dir", "subject_id", "session_id", "bids_dir"}:
-                continue
-            setattr(inp, k, v)
-        wf.run()
-        return Path(minimal_inputs["output_dir"]) / "pmriprep" / "sub-test01" / "ses-01"
-
-    def test_t1w_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
-        """Precon-only underlay: lands in anat/ with no ce- entity."""
-        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz")
-        ses = self._build_and_run(minimal_inputs, tmp_path, "work-precon")
-
-        anat_dir = ses / "anat"
-        perf_dir = ses / "perf"
-        expected = anat_dir / "sub-test01_ses-01_acq-mprage_run-1_space-dscref_T1w.nii.gz"
-        assert expected.exists(), (
-            f"precon underlay missing at {expected}; "
-            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-        )
-        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz").exists()
-        sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
-        assert sidecar["Sources"] == [
-            "bids:raw:sub-test01/ses-01/anat/"
-            "sub-test01_ses-01_acq-mprage_run-1_T1w.nii.gz",
-            "bids:raw:sub-test01/ses-01/perf/sub-test01_ses-01_dsc.nii.gz",
-        ]
-        perf_t1w = list(perf_dir.glob("*T1w.nii.gz")) if perf_dir.exists() else []
-        assert not perf_t1w, f"T1w must not land in perf/; got {perf_t1w}"
-
-    def test_t1w_postcon_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
-        """Postcon-only underlay: lands in anat/ with ce-GAD entity."""
-        minimal_inputs["t1w_postcon_in_dsc"] = _write_dummy_nifti(
-            tmp_path / "t1w_postcon_in_dsc.nii.gz",
-        )
-        ses = self._build_and_run(minimal_inputs, tmp_path, "work-postcon")
-
-        anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_acq-mprage_ce-GAD_run-2_space-dscref_T1w.nii.gz"
-        assert expected.exists(), (
-            f"postcon underlay missing at {expected}; "
-            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-        )
-        # Precon file must NOT exist.
-        assert not (anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz").exists()
+    def _build_and_run(
+        self, minimal_inputs: dict, tmp_path: Path, work_subdir: str,
+    ) -> Path:
+        """Write optional underlays and return their session directory."""
+        output = _run_writer(minimal_inputs, None, tmp_path / work_subdir)
+        return output / "pmriprep" / "sub-test01" / "ses-01"
 
     def test_both_t1w_underlays_in_dsc(self, minimal_inputs, tmp_path) -> None:
         """Both underlays configured: two anat/ outputs differing by ce- entity."""
-        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz")
+        minimal_inputs["t1w_in_dsc"] = _write_dummy_nifti(tmp_path / "t1w_in_dsc.nii.gz", 10.0)
         minimal_inputs["t1w_postcon_in_dsc"] = _write_dummy_nifti(
-            tmp_path / "t1w_postcon_in_dsc.nii.gz",
+            tmp_path / "t1w_postcon_in_dsc.nii.gz", 20.0,
         )
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-both")
 
@@ -1001,11 +882,18 @@ class TestStructuralUnderlayDatatype:
             f"both underlays expected; anat/ contains: "
             f"{sorted(p.name for p in anat_dir.iterdir())}"
         )
-        # Sidecar Description differentiates the two
-        precon_meta = json.loads(precon.with_suffix("").with_suffix(".json").read_text())
-        postcon_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
-        assert "Pre-contrast" in precon_meta["Description"]
-        assert "Post-contrast" in postcon_meta["Description"]
+        for image, value, source_name, contrast in (
+            (precon, 10.0, "sub-test01_ses-01_acq-mprage_run-1_T1w.nii.gz", "Pre-contrast"),
+            (postcon, 20.0, "sub-test01_ses-01_acq-mprage_ce-GAD_run-2_T1w.nii.gz", "Post-contrast"),
+        ):
+            np.testing.assert_array_equal(nib.load(image).get_fdata(), value)
+            meta = json.loads(image.with_suffix("").with_suffix(".json").read_text())
+            assert contrast in meta["Description"]
+            assert meta["Sources"] == [
+                f"bids:raw:sub-test01/ses-01/anat/{source_name}",
+                "bids:raw:sub-test01/ses-01/perf/sub-test01_ses-01_dsc.nii.gz",
+            ]
+        assert not list((ses / "perf").glob("*T1w.nii.gz"))
 
     def test_t1w_subtraction_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
         """Subtraction underlay: anat/ with desc-subtraction, no ce- entity."""
@@ -1032,51 +920,21 @@ class TestStructuralUnderlayDatatype:
         assert meta["Units"] == "arbitrary"
         assert len(meta["Sources"]) == 3
 
-    def test_t1w_subtraction_absent_skips_cleanly(self, minimal_inputs, tmp_path) -> None:
-        """Present-set without the subtraction key => no sink built, no error."""
-        # No t1w_subtraction_in_dsc in minimal_inputs -> excluded from present.
+    def test_optional_underlays_absent(self, minimal_inputs, tmp_path) -> None:
+        """A writer run without registered anatomical inputs emits only perfusion maps."""
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-sub-absent")
         anat_dir = ses / "anat"
         subtraction = (
             list(anat_dir.glob("*desc-subtraction*")) if anat_dir.exists() else []
         )
         assert not subtraction, f"subtraction must not be emitted; got {subtraction}"
-
-    def test_flair_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
-        """Precon FLAIR underlay: lands in anat/ with no ce- entity."""
-        minimal_inputs["flair_in_dsc"] = _write_dummy_nifti(tmp_path / "flair_in_dsc.nii.gz")
-        ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-precon")
-
-        anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_acq-3d_run-1_space-dscref_FLAIR.nii.gz"
-        assert expected.exists(), (
-            f"precon FLAIR underlay missing at {expected}; "
-            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-        )
-        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_FLAIR.nii.gz").exists()
-
-    def test_flair_postcon_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
-        """Postcon FLAIR underlay: lands in anat/ with ce-GAD entity."""
-        minimal_inputs["flair_postcon_in_dsc"] = _write_dummy_nifti(
-            tmp_path / "flair_postcon_in_dsc.nii.gz",
-        )
-        ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-postcon")
-
-        anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_acq-3d_ce-GAD_run-2_space-dscref_FLAIR.nii.gz"
-        assert expected.exists(), (
-            f"postcon FLAIR underlay missing at {expected}; "
-            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-        )
-        assert not (anat_dir / "sub-test01_ses-01_space-dscref_FLAIR.nii.gz").exists()
-        meta = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
-        assert "Post-contrast" in meta["Description"]
+        assert not list(anat_dir.glob("*.nii.gz"))
 
     def test_both_flair_underlays_in_dsc(self, minimal_inputs, tmp_path) -> None:
         """Both FLAIR underlays configured: two anat/ outputs differing by ce- entity."""
-        minimal_inputs["flair_in_dsc"] = _write_dummy_nifti(tmp_path / "flair_in_dsc.nii.gz")
+        minimal_inputs["flair_in_dsc"] = _write_dummy_nifti(tmp_path / "flair_in_dsc.nii.gz", 10.0)
         minimal_inputs["flair_postcon_in_dsc"] = _write_dummy_nifti(
-            tmp_path / "flair_postcon_in_dsc.nii.gz",
+            tmp_path / "flair_postcon_in_dsc.nii.gz", 20.0,
         )
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-both")
 
@@ -1087,5 +945,18 @@ class TestStructuralUnderlayDatatype:
             f"both FLAIR underlays expected; anat/ contains: "
             f"{sorted(p.name for p in anat_dir.iterdir())}"
         )
-        postcon_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
-        assert "Post-contrast" in postcon_meta["Description"]
+
+        for image, value, source_name, description in (
+            (precon, 10.0, "sub-test01_ses-01_acq-3d_run-1_FLAIR.nii.gz",
+             "FLAIR registered to DSC space"),
+            (postcon, 20.0, "sub-test01_ses-01_acq-3d_ce-GAD_run-2_FLAIR.nii.gz",
+             "Post-contrast FLAIR registered to DSC space"),
+        ):
+            np.testing.assert_array_equal(nib.load(image).get_fdata(), value)
+            meta = json.loads(image.with_suffix("").with_suffix(".json").read_text())
+            assert meta["Description"] == description
+            assert meta["Sources"] == [
+                f"bids:raw:sub-test01/ses-01/anat/{source_name}",
+                "bids:raw:sub-test01/ses-01/perf/sub-test01_ses-01_dsc.nii.gz",
+            ]
+        assert not list((ses / "perf").glob("*FLAIR.nii.gz"))

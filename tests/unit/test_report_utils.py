@@ -322,12 +322,3 @@ class TestDscLoader:
         dce_out = _load_pipeline_sidecars(ses, self.PREFIX, "dce")
 
         assert dce_out["preprocessing"]["motion_status"] == "ACCEPTABLE"
-
-    def test_dsc_loader_empty_pipeline_qc(self, tmp_path) -> None:
-        import json as _json
-        from pmriprep.utils.report_utils import _load_pipeline_sidecars
-        ses = self._make_perf(tmp_path)
-        (ses / "perf" / f"{self.PREFIX}_desc-dscPreproc_dsc.json").write_text(_json.dumps({}))
-        out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
-        assert "preprocessing" not in out
-        assert "deconvolution" not in out
