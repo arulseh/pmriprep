@@ -136,7 +136,6 @@ class T1CorrectionResult:
     has_lesion: bool = False
     correction_mode_requested: str = "auto"
     population_reference_applicable: bool = True
-    offset_ms: Optional[float] = None
     fallback_value_ms: Optional[float] = None
     deviation_type: Optional[str] = None
     nan_fraction: Optional[float] = None
@@ -156,8 +155,6 @@ class T1CorrectionResult:
             "correction_mode_requested": self.correction_mode_requested,
             "population_reference_applicable": self.population_reference_applicable,
         }
-        if self.offset_ms is not None:
-            d["offset_ms"] = self.offset_ms
         if self.fallback_value_ms is not None:
             d["fallback_value_ms"] = self.fallback_value_ms
         if self.deviation_type is not None:

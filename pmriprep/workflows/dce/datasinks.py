@@ -419,7 +419,6 @@ def _build_t1_map_meta(
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
-    umap_key: str = "ktrans_uncertainty",
 ) -> dict:
     """Build inference-specific provenance for parameter-uncertainty maps."""
     from pmriprep.utils.uncertainty_provenance import (
@@ -430,7 +429,7 @@ def _build_uncertainty_extra(
     if isinstance(config_dict, dict):
         estimation = config_dict.get("inference") or "unknown"
     extra = build_uncertainty_provenance(
-        inference=str(estimation), map_key=umap_key, modality="DCE"
+        inference=str(estimation), modality="DCE"
     )
     if isinstance(qc_metrics, dict):
         uncertainty_qc = qc_metrics.get("parameter_uncertainty")
@@ -650,7 +649,7 @@ def _build_dce_smoothed_meta(
     if map_key.endswith("_uncertainty"):
         from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
 
-        out.update(build_uncertainty_provenance(inference, map_key, "DCE"))
+        out.update(build_uncertainty_provenance(inference, "DCE"))
     return out
 
 
@@ -1648,12 +1647,11 @@ def init_dce_datasinks_wf(
             continue
         uncertainty_extra = pe.Node(
             niu.Function(
-                input_names=["config_dict", "qc_metrics", "umap_key"],
+                input_names=["config_dict", "qc_metrics"],
                 output_names=["extra"], function=_build_uncertainty_extra,
             ),
             name=f"{spec.in_attr}_extra",
         )
-        uncertainty_extra.inputs.umap_key = spec.map_key
         workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
         workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
         sink = _add_perf_map_sink(

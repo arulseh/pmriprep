@@ -608,12 +608,6 @@
     ],
     [
       "tissue_segment",
-      "gm_probseg",
-      "tissue_seg_filmstrip",
-      "gm_probseg_file"
-    ],
-    [
-      "tissue_segment",
       "wm_probseg",
       "outputnode",
       "wm_probseg"
@@ -798,7 +792,6 @@
     "tissue_seg_filmstrip": {
       "input_names": [
         "csf_probseg_file",
-        "gm_probseg_file",
         "session_id",
         "subject_id",
         "t1w_file",
@@ -831,7 +824,7 @@
     "hybrid_fast_chain": "b579ea83660f78f35c1227d80c86afbe923bda16f30f373441ce90266c9753b5",
     "merge_fast": "6545fa79fc0caa474c1b763d564c08d7c7143205fa8b8261c98487737fd28c10",
     "merge_qc": "0d4bd99820e33b36b2d99ef3c8285d685fdda16271f3efcfc4a20ce7c3ce8fac",
-    "tissue_seg_filmstrip": "5d37a345df9f52844b7492f04eb5fbc24fd0ca7a59c55d9bf070066dc978495e",
+    "tissue_seg_filmstrip": "8509a195095bd78871b4ae30d5da410fe5859931fb6611c511d92e4242078083",
     "tissue_segment": "583afcddbac5088b0e81c191fb050215b82464d0a041c3e27c9f849ce88b248e"
   },
   "nipype_version": "1.10.0",

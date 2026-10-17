@@ -917,7 +917,6 @@ def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
 
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
-    umap_key: str = "cbf_std",
 ) -> dict:
     """Build inference-specific provenance for CBF uncertainty maps."""
     from pmriprep.utils.uncertainty_provenance import (
@@ -928,7 +927,7 @@ def _build_uncertainty_extra(
     if isinstance(config_dict, dict):
         estimation = config_dict.get("inference") or "unknown"
     return build_uncertainty_provenance(
-        inference=str(estimation), map_key=umap_key, modality="DSC"
+        inference=str(estimation), modality="DSC"
     )
 
 
@@ -1481,13 +1480,12 @@ def init_dsc_datasinks_wf(
             continue
         bayes_extra = pe.Node(
             niu.Function(
-                input_names=["config_dict", "umap_key"],
+                input_names=["config_dict"],
                 output_names=["extra"],
                 function=_build_uncertainty_extra,
             ),
             name=f"{spec.in_attr}_extra",
         )
-        bayes_extra.inputs.umap_key = spec.map_key
         workflow.connect(inputnode, "config_dict", bayes_extra, "config_dict")
         bayes_meta = pe.Node(
             niu.Function(

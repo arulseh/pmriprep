@@ -285,7 +285,6 @@ def _create_coreg_qc_filmstrip(
 def _create_tissue_seg_filmstrip(
     t1w_file: str,
     wm_probseg_file: str | None,
-    gm_probseg_file: str | None,
     csf_probseg_file: str,
     subject_id: str = "",
     session_id: str = "",
@@ -301,8 +300,6 @@ def _create_tissue_seg_filmstrip(
         Path to brain-extracted T1w image (background).
     wm_probseg_file : str or None
         Path to white matter probability map; None skips figure generation.
-    gm_probseg_file : str or None
-        Accepted from the workflow connection; the figure uses WM and CSF contours.
     csf_probseg_file : str
         Path to CSF probability map, required when a WM map is supplied.
     subject_id, session_id : str, optional
@@ -754,7 +751,7 @@ def init_anat_qc_filmstrips_wf(
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(fields=[
-            "t1w_file", "brain_file", "brain_mask", "wm_probseg", "gm_probseg",
+            "t1w_file", "brain_file", "brain_mask", "wm_probseg",
             "csf_probseg", "t1w_acpc", "t1w_postcon_masked", "t2w_masked",
             "flair_masked", "flair_postcon_masked",
         ]),
@@ -782,7 +779,7 @@ def init_anat_qc_filmstrips_wf(
     brain_mask_filmstrip.inputs.session_id = session_id or ""
     tissue_seg_filmstrip = pe.Node(
         niu.Function(
-            input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
+            input_names=["t1w_file", "wm_probseg_file",
                          "csf_probseg_file", "subject_id", "session_id"],
             output_names=["filmstrip_file"],
             function=_create_tissue_seg_filmstrip,
@@ -809,7 +806,6 @@ def init_anat_qc_filmstrips_wf(
         (inputnode, tissue_seg_filmstrip, [
             ("brain_file", "t1w_file"),
             ("wm_probseg", "wm_probseg_file"),
-            ("gm_probseg", "gm_probseg_file"),
             ("csf_probseg", "csf_probseg_file"),
         ]),
         (inputnode, acpc_filmstrip, [("t1w_acpc", "t1w_acpc_file")]),
@@ -1373,7 +1369,6 @@ def init_anat_preproc_wf(
         ]),
         (tissue_segmentation_wf, qc_filmstrips_wf, [
             ("outputnode.wm_probseg", "inputnode.wm_probseg"),
-            ("outputnode.gm_probseg", "inputnode.gm_probseg"),
             ("outputnode.csf_probseg", "inputnode.csf_probseg"),
         ]),
         (acpc_align, qc_filmstrips_wf, [

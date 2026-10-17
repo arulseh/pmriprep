@@ -46,7 +46,6 @@ _INFERENCE_METADATA: dict[str, dict[str, object]] = {
 
 def build_uncertainty_provenance(
     inference: str,
-    map_key: str,
     modality: str,
 ) -> dict[str, object]:
     """Describe how one parameter-uncertainty derivative was constructed.
@@ -55,9 +54,6 @@ def build_uncertainty_provenance(
     ----------
     inference : str
         Inference-engine identifier from the processing configuration.
-    map_key : str
-        Derivative key supplied by sidecar writers. The metadata is shared
-        across parameter standard-deviation maps.
     modality : str
         Perfusion modality (``"DCE"`` or ``"DSC"``). DCE adds the conditioning
         assumptions for concentration conversion and the supplied AIF.

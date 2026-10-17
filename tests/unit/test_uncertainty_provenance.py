@@ -33,7 +33,7 @@ def test_inference_metadata(
 ) -> None:
     """Each inference engine has an explicit uncertainty interpretation."""
     result = build_uncertainty_provenance(
-        inference, "cbf_std", modality="DSC"
+        inference, modality="DSC"
     )
 
     assert result["EstimationMethod"] == inference
@@ -47,13 +47,13 @@ def test_inference_metadata(
 def test_nlls_statistics_are_frequentist() -> None:
     """NLLS absolute uncertainty is identified as a standard error."""
     standard_error = build_uncertainty_provenance(
-        "nlls", "ktrans_uncertainty", modality="DCE"
+        "nlls", modality="DCE"
     )
     assert standard_error["UncertaintyStatistic"] == "parameter_standard_error"
 
 def test_svb_spatial_prior_is_described() -> None:
     """SVB sidecars identify the spatial prior and neighborhood."""
-    result = build_uncertainty_provenance("svb", "cbf_std", modality="DSC")
+    result = build_uncertainty_provenance("svb", modality="DSC")
 
     assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
     assert result["SpatialPriorModel"] == "Penny M-prior"
@@ -65,7 +65,7 @@ def test_svb_spatial_prior_is_described() -> None:
 def test_map_hessian_failure_is_disclosed() -> None:
     """MAP provenance discloses undefined uncertainty after Hessian failure."""
     result = build_uncertainty_provenance(
-        "map", "ktrans_uncertainty", modality="DCE"
+        "map", modality="DCE"
     )
 
     assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
