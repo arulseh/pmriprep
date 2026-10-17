@@ -21,7 +21,6 @@ from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_standard_batch,
     tikhonov_deconvolve,
 )
-from pmriprep.utils.dsc_preload import apply_k2_correction
 from pmriprep.utils.dsc_signal import (
     normalize_cbv,
 )
@@ -31,7 +30,6 @@ from .conftest import (
     fine_grid_forward,
     generate_dsc_3d_phantom,
     generate_dsc_aif_dro,
-    generate_leaky_dsc_tissue,
     make_exponential_residue,
 )
 
@@ -50,7 +48,6 @@ _S0 = 1000.0
 
 def _build_full_chain_phantom(
     shape: Tuple[int, int, int] = (16, 16, 3),
-    k2_tumor: float = 0.0,
 ) -> Tuple[
     npt.NDArray[np.floating],  # 4D concentration volume
     Dict[str, npt.NDArray[np.bool_]],  # tissue masks
@@ -61,7 +58,7 @@ def _build_full_chain_phantom(
     Layout:
     - WM center (6x6)
     - GM ring around WM
-    - Tumor patch (2x2) in one corner, with optional K2 leakage
+    - Tumor patch (2x2) in one corner
     - AIF voxels at edges
     - CSF (zero concentration)
     """
@@ -79,8 +76,6 @@ def _build_full_chain_phantom(
     for name, params in DSC_TISSUE_PARAMS.items():
         residue = make_exponential_residue(params.cbf, params.mtt, n_tp, _DT)
         c = fine_grid_forward(aif_tissue, residue, _DT)
-        if name == "tumor" and k2_tumor > 0:
-            c = generate_leaky_dsc_tissue(c, aif_tissue, k2_tumor, _DT)
         tissue_curves[name] = c
 
     # Build tissue map
@@ -278,37 +273,6 @@ class TestNAWMNormalization:
         )
 
         assert abs(factor - 3.0) < 0.01
-
-
-class TestK2CorrectionInChain:
-    """Test K2 correction integrated with the phantom chain."""
-
-    def test_k2_correction_on_leaky_tumor(self) -> None:
-        """K2 correction should work within the full phantom chain."""
-        volume, masks, aif_full = _build_full_chain_phantom(k2_tumor=0.1)
-        aif_post = aif_full[_BASELINE:]
-        conc_post = volume[..., _BASELINE:]
-
-        # Apply K2 correction
-        # Need full-length AIF (matching concentration time axis)
-        n_tp_post = conc_post.shape[3]
-        assert len(aif_post) == n_tp_post
-
-        result = apply_k2_correction(
-            concentration=conc_post,
-            signal=1000.0 * np.exp(-0.03 * conc_post),
-            brain_mask=masks["brain"],
-            tr=_DT,
-        )
-
-        assert result.concentration_corrected.shape == conc_post.shape
-        assert result.k2_map.shape == volume.shape[:3]
-        assert result.correction_applied is True
-
-        # Corrected concentration should be finite
-        assert np.all(np.isfinite(
-            result.concentration_corrected[masks["brain"]]
-        ))
 
 
 class TestCrossMethodAgreement3D:

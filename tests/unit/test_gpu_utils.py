@@ -13,10 +13,7 @@ class TestDetectGpuCount:
         """detect_gpu_count returns an integer."""
         result = detect_gpu_count()
         assert isinstance(result, int)
-
-    def test_returns_non_negative(self) -> None:
-        """detect_gpu_count returns >= 0."""
-        assert detect_gpu_count() >= 0
+        assert result >= 0
 
 
 class TestGetDeviceName:

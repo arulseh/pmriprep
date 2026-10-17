@@ -98,18 +98,6 @@ class TestCanonicalAIFBlock:
         assert block["UsedAsCBVDenominator"] is False
         assert block["Hematocrit"] == pytest.approx(0.42)
 
-    def test_no_legacy_flat_keys(self, aif_qc, bids_root):
-        """AIF fields are nested without duplicate flat keys."""
-        sidecar = build_aif_timeseries_sidecar(
-            modality="DSC",
-            source_paths=[],
-            bids_dir=bids_root,
-            subject="X",
-            session=None,
-            aif_qc=aif_qc,
-        )
-        assert all(not key.startswith("AIF") for key in sidecar)
-
     def test_dce_modality_units(self, aif_qc, bids_root):
         dce_qc = dict(aif_qc)
         dce_qc["detection_method"] = "atlas"

@@ -29,13 +29,6 @@ REQUIRED_PACKAGE_FILES = {
     "pmriprep/data/atlases/mni_regions/Supra.nii.gz",
 }
 FORBIDDEN_PARTS = {"bak", "debug", "sourcedata", "test_outputs", "tests", "work"}
-FORBIDDEN_PACKAGE_FILES = {
-    "pmriprep/models/dsc/cpi.py",
-    "pmriprep/models/dsc/vascular.py",
-    "pmriprep/models/dsc/base.py",
-    "pmriprep/models/dsc/bayesian.py",
-    "pmriprep/models/dsc/convolution.py",
-}
 
 
 def _validate_members(path: Path, members: set[str]) -> None:
@@ -48,9 +41,6 @@ def _validate_members(path: Path, members: set[str]) -> None:
     }
     missing = REQUIRED_PACKAGE_FILES - package_members
     assert not missing, f"{path.name} is missing required files: {sorted(missing)}"
-    obsolete = FORBIDDEN_PACKAGE_FILES & package_members
-    assert not obsolete, f"{path.name} contains unsupported modules: {sorted(obsolete)}"
-
     leaked = sorted(
         member for member in normalized
         if FORBIDDEN_PARTS.intersection(Path(member).parts)

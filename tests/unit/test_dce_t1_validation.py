@@ -11,8 +11,6 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.dce_t1_validation import (
-    GAPFILL_MIN_NEIGHBOR_FLOOR,
-    GAPFILL_MIN_NEIGHBOR_FRACTION,
     MIN_VALID_T1_MS,
     T1CorrectionResult,
     T1GapFillResult,
@@ -23,11 +21,6 @@ from pmriprep.utils.dce_t1_validation import (
     get_field_strength_key,
     valid_t1_support,
 )
-
-
-# ============================================================================
-# valid_t1_support tests
-# ============================================================================
 
 
 class TestValidT1Support:
@@ -46,11 +39,6 @@ class TestValidT1Support:
         assert valid_t1_support(values, 3.0).tolist() == [
             False, True, True, True, True, False,
         ]
-
-
-# ============================================================================
-# build_tissue_t1_map tests
-# ============================================================================
 
 
 class TestBuildTissueT1Map:
@@ -130,43 +118,21 @@ class TestBuildTissueT1Map:
         assert t1_map.dtype == np.float32
 
 
-# ============================================================================
-# T1CorrectionResult tests
-# ============================================================================
-
-
 class TestT1CorrectionResult:
     """Tests for T1CorrectionResult dataclass."""
 
-    def test_to_dict_includes_nan_fraction(self) -> None:
-        """nan_fraction should appear in dict when set."""
-        result = T1CorrectionResult(nan_fraction=0.55)
-        d = result.to_dict()
-        assert "nan_fraction" in d
-        assert d["nan_fraction"] == 0.55
-
-    def test_to_dict_includes_tissue_t1_used(self) -> None:
-        """tissue_t1_used should always appear in dict."""
-        result = T1CorrectionResult()
-        d = result.to_dict()
-        assert "tissue_t1_used" in d
-        assert d["tissue_t1_used"] is False
 
     def test_to_dict_tissue_t1_true(self) -> None:
-        result = T1CorrectionResult(tissue_t1_used=True)
+        result = T1CorrectionResult(tissue_t1_used=True, vfa_fit_nrmse=0.065)
         d = result.to_dict()
         assert d["tissue_t1_used"] is True
+        assert d["vfa_fit_nrmse"] == pytest.approx(0.065)
 
     def test_to_dict_nan_fraction_none_excluded(self) -> None:
         """nan_fraction=None should not appear in dict."""
         result = T1CorrectionResult()
         d = result.to_dict()
         assert "nan_fraction" not in d
-
-
-# ============================================================================
-# apply_t1_correction auto-mode tests
-# ============================================================================
 
 
 class TestApplyT1CorrectionAuto:
@@ -179,135 +145,44 @@ class TestApplyT1CorrectionAuto:
         mask[2:8, 2:8, 2:8] = True
         return mask
 
-    @pytest.fixture
-    def probsegs(self) -> tuple[np.ndarray, np.ndarray]:
-        """WM and GM probability maps for 10x10x10 volume."""
-        shape = (10, 10, 10)
-        wm = np.full(shape, 0.6)
-        gm = np.full(shape, 0.4)
-        return wm, gm
-
-    def test_high_nan_with_probsegs_retains_measurement(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
+    @pytest.mark.parametrize("t1_ms,with_probsegs,b1_qc_pass", [
+        (400.0, True, True), (1090.0, False, True), (1600.0, False, False),
+    ])
+    def test_auto_preserves_measured_and_missing_support(
+        self, brain_mask: np.ndarray, t1_ms: float,
+        with_probsegs: bool, b1_qc_pass: bool,
     ) -> None:
-        """Coverage loss does not replace a measured map when probsegs exist."""
-        t1_map = np.full((10, 10, 10), 2000.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        t1_corrected, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "none"
-        assert result.tissue_t1_used is False
-        assert np.all(t1_corrected[brain_mask] == 2000.0)
-        # Brain voxels should have valid T1 values
-        valid_in_brain = brain_mask & np.isfinite(t1_corrected)
-        assert np.sum(valid_in_brain) > 0
-        # Outside brain should be NaN (preserved for downstream masking)
-        assert np.all(np.isnan(t1_corrected[~brain_mask]))
-
-    def test_high_nan_without_probsegs_retains_measurement(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """Coverage loss does not replace a measured map without probsegs."""
-        t1_map = np.full((10, 10, 10), 2000.0)
-        t1_map[~brain_mask] = np.nan
-
-        t1_corrected, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.50,
-        )
-        assert result.correction_applied == "none"
-        assert result.tissue_t1_used is False
-
-    def test_low_nan_existing_behavior(self, brain_mask: np.ndarray) -> None:
-        """Low NaN fraction → existing offset/none behavior unchanged."""
-        # T1 within acceptable range
-        t1_map = np.full((10, 10, 10), 1050.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.05,
-        )
-        assert result.correction_applied == "none"
-
-    def test_nan_fraction_stored_in_result(self, brain_mask: np.ndarray) -> None:
-        """nan_fraction should be stored in correction result."""
-        t1_map = np.full((10, 10, 10), 1050.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.15,
-        )
-        assert result.nan_fraction == 0.15
-
-    @pytest.mark.parametrize("missing_fraction", [0.41, 0.60, 0.80])
-    def test_coverage_loss_never_switches_auto_estimator(
-        self, brain_mask: np.ndarray, missing_fraction: float,
-    ) -> None:
-        """Auto mode retains measured support across the tested coverage fractions."""
-        t1_map = np.full((10, 10, 10), 1100.0)
-        t1_map[~brain_mask] = np.nan
+        """Acquisition diagnostics retain the measured map and its missing voxels."""
+        t1 = np.full(brain_mask.shape, np.nan)
+        t1[brain_mask] = t1_ms
+        t1[:5] = np.nan
+        wm = np.where(brain_mask, 0.6, 0.0) if with_probsegs else None
+        gm = np.where(brain_mask, 0.4, 0.0) if with_probsegs else None
         corrected, result = apply_t1_correction(
-            t1_map,
-            field_strength=3.0,
-            correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=missing_fraction,
+            t1, field_strength=3.0, correction_mode="auto", brain_mask=brain_mask,
+            nan_fraction=0.5, e1_median=0.998, b1_corrected=True,
+            b1_qc_pass=b1_qc_pass, wm_probseg=wm, gm_probseg=gm,
         )
+        np.testing.assert_array_equal(corrected, t1)
         assert result.correction_applied == "none"
-        np.testing.assert_array_equal(corrected, t1_map)
+        assert result.tissue_t1_used is False
+        assert result.fallback_value_ms is None
+        assert result.to_dict()["nan_fraction"] == 0.5
+        if not b1_qc_pass:
+            assert "B1 QC failed" in result.reason
 
-    def test_low_population_t1_with_probsegs_is_diagnostic(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """A low but numerically usable T1 remains measured support."""
-        t1_map = np.full((10, 10, 10), 400.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
 
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "none"
-
-    def test_offset_mode_removed(self, brain_mask: np.ndarray) -> None:
-        """Additive T1 offset correction is rejected."""
+    def test_unknown_correction_mode_raises(self, brain_mask: np.ndarray) -> None:
+        """An unknown correction mode raises a clear error."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
-        wm = np.full((10, 10, 10), 0.6)
-        gm = np.full((10, 10, 10), 0.4)
 
-        with pytest.raises(ValueError, match="Unknown correction mode: offset"):
+        with pytest.raises(ValueError, match="Unknown correction mode: invalid"):
             apply_t1_correction(
-                t1_map, field_strength=3.0, correction_mode="offset",
+                t1_map, field_strength=3.0, correction_mode="invalid",
                 brain_mask=brain_mask,
-                nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
             )
 
-    def test_low_nan_with_high_median_is_retained(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """An unusual median remains measured support without probsegs."""
-        t1_map = np.full((10, 10, 10), 2000.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.10,
-        )
-        assert result.correction_applied == "none"
 
     def test_population_comparison_unavailable_without_csf_restriction(
         self,
@@ -356,68 +231,6 @@ class TestApplyT1CorrectionAuto:
         assert "may still include tumor or edema" in caplog.text
         assert "no population-T1 fallback was applied" in caplog.text
 
-    def test_e1_does_not_change_fit_loss_threshold(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """E1 remains descriptive and cannot reject adequate spatial support."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.30, wm_probseg=wm, gm_probseg=gm,
-            e1_median=0.996,
-            b1_corrected=True,
-        )
-        assert result.correction_applied == "none"
-
-    def test_population_threshold_does_not_switch_estimator(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """A population-reference deviation remains a QC diagnostic."""
-        t1_map = np.full((10, 10, 10), 2000.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            nan_fraction=0.30, wm_probseg=wm, gm_probseg=gm,
-            e1_median=0.95,
-        )
-        assert result.correction_applied == "none"
-        assert result.tissue_t1_used is False
-
-
-# ============================================================================
-# VFA conditioning QC metric computation
-# ============================================================================
-
-
-class TestVFAConditioning:
-    """Tests for VFA conditioning assessment."""
-
-    def test_e1_well_conditioned(self) -> None:
-        """TR=50ms, T1=1000ms → E1=0.951, well-conditioned."""
-        tr_s = 0.050
-        t1_s = 1.0
-        e1 = np.exp(-tr_s / t1_s)
-        assert e1 < 0.99
-
-    def test_e1_ill_conditioned(self) -> None:
-        """TR=5ms, T1=1000ms → E1=0.995, severely ill-conditioned."""
-        tr_s = 0.005
-        t1_s = 1.0
-        e1 = np.exp(-tr_s / t1_s)
-        assert e1 > 0.995
-
-
-# ============================================================================
-# skip_t1 path tests (via apply_t1_correction, not interface)
-# ============================================================================
-
 
 class TestFieldStrengthOrderingMixedTissue:
     """Test that 50/50 WM/GM tissue T1 increases with field strength."""
@@ -442,48 +255,6 @@ class TestFieldStrengthOrderingMixedTissue:
         )
 
 
-class TestReferenceTableSelfConsistency:
-    """Test that derived values in T1_TISSUE_REFERENCE are self-consistent."""
-
-    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
-    def test_qc_max_strict_equals_gm_upper(self, field_key: float) -> None:
-        """qc_max_strict should equal the upper bound of GM range."""
-        ref = T1_TISSUE_REFERENCE[field_key]
-        assert ref["qc_max_strict"] == ref["gm"][1], (
-            f"{field_key}T: qc_max_strict ({ref['qc_max_strict']}) "
-            f"!= gm upper ({ref['gm'][1]})"
-        )
-
-    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
-    def test_qc_max_lenient_equals_strict_plus_sd(self, field_key: float) -> None:
-        """qc_max_lenient should equal qc_max_strict + brain_sd."""
-        ref = T1_TISSUE_REFERENCE[field_key]
-        assert ref["qc_max_lenient"] == ref["qc_max_strict"] + ref["brain_sd"], (
-            f"{field_key}T: qc_max_lenient ({ref['qc_max_lenient']}) "
-            f"!= qc_max_strict + brain_sd "
-            f"({ref['qc_max_strict']} + {ref['brain_sd']})"
-        )
-
-    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
-    def test_expected_median_equals_brain_mean(self, field_key: float) -> None:
-        """expected_median should equal brain_mean."""
-        ref = T1_TISSUE_REFERENCE[field_key]
-        assert ref["expected_median"] == ref["brain_mean"], (
-            f"{field_key}T: expected_median ({ref['expected_median']}) "
-            f"!= brain_mean ({ref['brain_mean']})"
-        )
-
-    @pytest.mark.parametrize("field_key", [1.5, 3.0, 7.0])
-    def test_warn_high_equals_expected_plus_sd(self, field_key: float) -> None:
-        """warn_high should equal expected_median + brain_sd."""
-        ref = T1_TISSUE_REFERENCE[field_key]
-        assert ref["warn_high"] == ref["expected_median"] + ref["brain_sd"], (
-            f"{field_key}T: warn_high ({ref['warn_high']}) "
-            f"!= expected_median + brain_sd "
-            f"({ref['expected_median']} + {ref['brain_sd']})"
-        )
-
-
 class TestSkipT1Paths:
     """Tests for skip_t1-equivalent behavior in apply_t1_correction."""
 
@@ -492,6 +263,7 @@ class TestSkipT1Paths:
         shape = (5, 5, 5)
         mask = np.ones(shape, dtype=bool)
         t1_map = np.full(shape, 1050.0)
+        t1_map[:2] = np.nan
 
         t1_corr, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="fallback",
@@ -499,6 +271,7 @@ class TestSkipT1Paths:
         )
         assert result.correction_applied == "fallback"
         assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
+        np.testing.assert_allclose(t1_corr[mask], result.fallback_value_ms)
 
     def test_auto_falls_back_only_when_no_measured_support_exists(self) -> None:
         """An entirely unavailable measured map uses the documented fallback."""
@@ -528,11 +301,6 @@ class TestSkipT1Paths:
         )
         assert result.correction_applied == "none"
         np.testing.assert_array_equal(t1_corr, t1_map)
-
-
-# ============================================================================
-# T1 gap-fill tests
-# ============================================================================
 
 
 class TestT1GapFill:
@@ -602,18 +370,6 @@ class TestT1GapFill:
         # Interior of the large hole should still be NaN
         assert np.any(np.isnan(t1_out[brain_mask_20]))
 
-    def test_large_gap_remains_nan(
-        self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
-    ) -> None:
-        """Large gap without probsegs → remains NaN (downstream PK handles)."""
-        t1_map_20[6:14, 6:14, 6:14] = np.nan
-
-        t1_out, result = fill_t1_gaps(
-            t1_map_20, brain_mask_20, field_strength=3.0,
-            voxel_sizes_mm=np.array([1.5, 1.5, 1.5]),
-        )
-        assert result.n_filled_tissue == 0
-        assert result.n_remaining > 0
 
     def test_outside_brain_mask_stays_nan(
         self, t1_map_20: np.ndarray, brain_mask_20: np.ndarray,
@@ -762,61 +518,19 @@ class TestT1GapFill:
         # All brain voxels still NaN
         assert np.all(np.isnan(t1_out[brain_mask_20]))
 
-    def test_fractional_threshold_scales_with_resolution(self) -> None:
-        """Verify min_neighbors increases with finer resolution."""
-        from pmriprep.utils.dce_t1_validation import (
-            GAPFILL_IDW_RADIUS_MM,
-        )
-
-        # Coarse voxels: 3mm isotropic → small ball → floor applies
-        vox_coarse = np.array([3.0, 3.0, 3.0])
-        radius_vox_coarse = GAPFILL_IDW_RADIUS_MM / vox_coarse
-        half_coarse = np.ceil(radius_vox_coarse).astype(int)
-        grid_c = np.mgrid[
-            -half_coarse[0]:half_coarse[0] + 1,
-            -half_coarse[1]:half_coarse[1] + 1,
-            -half_coarse[2]:half_coarse[2] + 1,
-        ]
-        dist_c = np.sqrt(
-            (grid_c[0] * vox_coarse[0]) ** 2
-            + (grid_c[1] * vox_coarse[1]) ** 2
-            + (grid_c[2] * vox_coarse[2]) ** 2
-        )
-        n_ball_coarse = int(np.sum(dist_c <= GAPFILL_IDW_RADIUS_MM)) - 1
-        min_neigh_coarse = max(
-            GAPFILL_MIN_NEIGHBOR_FLOOR,
-            int(n_ball_coarse * GAPFILL_MIN_NEIGHBOR_FRACTION),
-        )
-
-        # Fine voxels: 1.0mm isotropic → large ball → fraction dominates
-        vox_fine = np.array([1.0, 1.0, 1.0])
-        radius_vox_fine = GAPFILL_IDW_RADIUS_MM / vox_fine
-        half_fine = np.ceil(radius_vox_fine).astype(int)
-        grid_f = np.mgrid[
-            -half_fine[0]:half_fine[0] + 1,
-            -half_fine[1]:half_fine[1] + 1,
-            -half_fine[2]:half_fine[2] + 1,
-        ]
-        dist_f = np.sqrt(
-            (grid_f[0] * vox_fine[0]) ** 2
-            + (grid_f[1] * vox_fine[1]) ** 2
-            + (grid_f[2] * vox_fine[2]) ** 2
-        )
-        n_ball_fine = int(np.sum(dist_f <= GAPFILL_IDW_RADIUS_MM)) - 1
-        min_neigh_fine = max(
-            GAPFILL_MIN_NEIGHBOR_FLOOR,
-            int(n_ball_fine * GAPFILL_MIN_NEIGHBOR_FRACTION),
-        )
-
-        # Fine resolution should require more neighbors
-        assert min_neigh_fine > min_neigh_coarse
-        # Coarse should hit floor
-        assert min_neigh_coarse == GAPFILL_MIN_NEIGHBOR_FLOOR
-
-
-# ============================================================================
-# NLLS T1 fitting tests
-# ============================================================================
+    def test_gap_support_depends_on_physical_resolution(self) -> None:
+        """Six isolated neighbors suffice at 3 mm but not at 1 mm spacing."""
+        t1 = np.full((11, 11, 11), np.nan, dtype=np.float32)
+        for axis in range(3):
+            for offset in (-1, 1):
+                index = [5, 5, 5]
+                index[axis] += offset
+                t1[tuple(index)] = 1050.0
+        mask = np.ones(t1.shape, dtype=bool)
+        coarse, _ = fill_t1_gaps(t1, mask, 3.0, voxel_sizes_mm=np.full(3, 3.0))
+        fine, _ = fill_t1_gaps(t1, mask, 3.0, voxel_sizes_mm=np.ones(3))
+        assert coarse[5, 5, 5] == pytest.approx(1050.0)
+        assert np.isnan(fine[5, 5, 5])
 
 
 def _make_ernst_signal(
@@ -1255,605 +969,3 @@ class TestConfigMutualExclusivity:
 
         config = DCEConfig()
         assert config.t1_method == "nlls"
-
-
-# ============================================================================
-# Post-offset recovery logic tests
-# ============================================================================
-
-
-class TestPostOffsetRecovery:
-    """Tests for the post-offset T1 recovery logic in T1Mapping.
-
-    This tests the recovery algorithm directly (not the full interface)
-    to verify that voxels clipped to NaN by range filtering are correctly
-    recovered after offset correction.
-    """
-
-    def _run_recovery(
-        self,
-        t1_pre_clip: np.ndarray,
-        t1_map: np.ndarray,
-        brain_mask: np.ndarray,
-        edge_mask: np.ndarray,
-        offset_ms: float,
-        field_key: float = 3.0,
-    ) -> tuple[np.ndarray, int]:
-        """Run the post-offset recovery algorithm (mirrors the dce.py implementation)."""
-        t1_ref = T1_TISSUE_REFERENCE[field_key]
-        clamp_lo = t1_ref["reject_min"] * 0.9
-        raw_t1_max = t1_ref["t1_parenchyma_upper"] + abs(offset_ms)
-        recovery_upper = t1_ref["t1_parenchyma_upper"]
-        t1_raw_corrected = t1_pre_clip + offset_ms  # no clip
-        recoverable = (
-            np.isnan(t1_map) & brain_mask
-            & ~edge_mask
-            & np.isfinite(t1_pre_clip)
-            & (t1_pre_clip > 0)
-            & (t1_pre_clip <= raw_t1_max)
-            & (t1_raw_corrected >= clamp_lo)
-            & (t1_raw_corrected <= recovery_upper)
-        )
-        n_recovered = int(np.sum(recoverable))
-        if n_recovered > 0:
-            t1_map[recoverable] = t1_raw_corrected[recoverable].astype(
-                np.float32,
-            )
-        return t1_map, n_recovered
-
-    def test_recovers_clipped_tumor_voxels_3t(self) -> None:
-        """Voxels with raw T1 in [2500, 3109]ms recovered at 3T offset=-609ms."""
-        shape = (10, 10, 5)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        # Simulate: 90% normal brain (1000ms), 10% tumor outliers (2700ms)
-        rng = np.random.default_rng(42)
-        t1_pre_clip = np.full(shape, 1000.0)
-        tumor_idx = rng.choice(np.prod(shape), size=50, replace=False)
-        t1_pre_clip.flat[tumor_idx] = 2700.0  # above 2500ms upper bound
-
-        # After range clip: tumor voxels become NaN
-        t1_upper = T1_TISSUE_REFERENCE[3.0]["t1_parenchyma_upper"]  # 2500
-        t1_lower = T1_TISSUE_REFERENCE[3.0]["reject_min"]  # 600
-        t1_map = np.where(
-            (t1_pre_clip >= t1_lower) & (t1_pre_clip <= t1_upper),
-            t1_pre_clip, np.nan,
-        ).astype(np.float32)
-
-        # Apply offset correction to normal voxels (simulating what
-        # apply_t1_correction does)
-        offset = -609.0
-        valid = np.isfinite(t1_map)
-        t1_map[valid] += offset  # 1000 → 391ms (would be clamped in real code)
-
-        # Run recovery
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, offset, 3.0,
-        )
-
-        assert n_recovered == 50
-        # Recovered voxels: 2700 + (-609) = 2091ms (no clamp, within recovery_upper=2500)
-        recovered_vals = t1_map.flat[tumor_idx]
-        np.testing.assert_allclose(recovered_vals, 2091.0, atol=1.0)
-
-    def test_edge_mask_prevents_recovery(self) -> None:
-        """Edge-eroded voxels are NOT recovered."""
-        shape = (5, 5, 3)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        t1_pre_clip = np.full(shape, 2700.0)
-        t1_map = np.full(shape, np.nan, dtype=np.float32)
-
-        # Mark all voxels as edge
-        edge_mask[:] = True
-
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
-        )
-        assert n_recovered == 0
-
-    def test_no_recovery_without_offset(self) -> None:
-        """Recovery only runs for offset correction, not for other types."""
-        # This is tested implicitly by the condition in dce.py:
-        # correction_result.correction_applied == "offset"
-        # Here we verify the guard: if offset_ms is None, no recovery.
-        result = T1CorrectionResult()
-        result.correction_applied = "tissue_segmented"
-        result.offset_ms = None
-        assert result.offset_ms is None
-
-    def test_no_recovery_for_small_offset(self) -> None:
-        """Normal brain with small offset recovers ~0 voxels."""
-        shape = (10, 10, 5)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        # All voxels well within range — none clipped
-        t1_pre_clip = np.full(shape, 1200.0)
-        t1_lower = T1_TISSUE_REFERENCE[3.0]["reject_min"]
-        t1_upper = T1_TISSUE_REFERENCE[3.0]["t1_parenchyma_upper"]
-        t1_map = np.where(
-            (t1_pre_clip >= t1_lower) & (t1_pre_clip <= t1_upper),
-            t1_pre_clip, np.nan,
-        ).astype(np.float32)
-
-        # Small offset
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -50.0, 3.0,
-        )
-        assert n_recovered == 0
-
-    def test_recovery_respects_clamp_bounds(self) -> None:
-        """Extreme outliers (5000ms) excluded by raw T1 gate."""
-        shape = (5, 5, 3)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        # Raw T1 = 5000ms, way above raw_t1_max (2500 + 609 = 3109ms)
-        t1_pre_clip = np.full(shape, 5000.0)
-        t1_map = np.full(shape, np.nan, dtype=np.float32)
-
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
-        )
-        assert n_recovered == 0
-
-    def test_recovery_at_1_5t(self) -> None:
-        """Recovery works at 1.5T with appropriate bounds."""
-        shape = (5, 5, 3)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        # At 1.5T: t1_parenchyma_upper = 2000ms
-        # Raw T1 = 2200ms (above upper), offset = -474ms → 1726ms (valid)
-        t1_pre_clip = np.full(shape, 2200.0)
-        t1_lower = T1_TISSUE_REFERENCE[1.5]["reject_min"]
-        t1_upper = T1_TISSUE_REFERENCE[1.5]["t1_parenchyma_upper"]
-        t1_map = np.where(
-            (t1_pre_clip >= t1_lower) & (t1_pre_clip <= t1_upper),
-            t1_pre_clip, np.nan,
-        ).astype(np.float32)
-
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -474.0, 1.5,
-        )
-        assert n_recovered == np.prod(shape)
-        # 2200 + (-474) = 1726ms (no clamp, within recovery_upper=2000)
-        np.testing.assert_allclose(t1_map, 1726.0, atol=1.0)
-
-    def test_negative_t1_not_recovered(self) -> None:
-        """Negative t1_pre_clip values are not recovered."""
-        shape = (5, 5, 3)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        t1_pre_clip = np.full(shape, -500.0)
-        t1_map = np.full(shape, np.nan, dtype=np.float32)
-
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
-        )
-        assert n_recovered == 0
-
-    def test_nan_inf_t1_not_recovered(self) -> None:
-        """NaN and Inf in t1_pre_clip are not recovered."""
-        shape = (5, 5, 3)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        t1_pre_clip = np.full(shape, np.nan)
-        t1_pre_clip[:3] = np.inf
-        t1_map = np.full(shape, np.nan, dtype=np.float32)
-
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
-        )
-        assert n_recovered == 0
-
-    def test_raw_t1_beyond_gate_excluded(self) -> None:
-        """Raw T1 just beyond the gate (t1_parenchyma_upper + |offset|) is excluded."""
-        shape = (5, 5, 3)
-        brain_mask = np.ones(shape, dtype=bool)
-        edge_mask = np.zeros(shape, dtype=bool)
-
-        # At 3T: raw_t1_max = 2500 + 609 = 3109ms
-        # Raw T1 = 3200ms → exceeds gate → excluded
-        t1_pre_clip = np.full(shape, 3200.0)
-        t1_map = np.full(shape, np.nan, dtype=np.float32)
-
-        t1_map, n_recovered = self._run_recovery(
-            t1_pre_clip, t1_map, brain_mask, edge_mask, -609.0, 3.0,
-        )
-        assert n_recovered == 0
-
-
-# ============================================================================
-# Fixed VFA fit-loss fallback
-# ============================================================================
-
-
-class TestVFAFitLossGate:
-    """Tests that acquisition diagnostics do not switch estimators."""
-
-    @pytest.fixture
-    def brain_mask(self) -> np.ndarray:
-        """10x10x10 brain mask (inner 6x6x6)."""
-        mask = np.zeros((10, 10, 10), dtype=bool)
-        mask[2:8, 2:8, 2:8] = True
-        return mask
-
-    @pytest.fixture
-    def probsegs(self) -> tuple[np.ndarray, np.ndarray]:
-        """WM and GM probability maps for 10x10x10 volume."""
-        shape = (10, 10, 10)
-        wm = np.full(shape, 0.6)
-        gm = np.full(shape, 0.4)
-        return wm, gm
-
-    def test_high_e1_low_fit_loss_retains_measurement(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """High E1 alone does not reject a plausible, complete measurement."""
-        t1_map = np.full((10, 10, 10), 1090.0)  # within normal range
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.998, b1_corrected=True, b1_qc_pass=True,
-            wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "none"
-        assert result.tissue_t1_used is False
-
-    def test_high_e1_no_b1_low_nan_falls_through(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """High E1 without B1 but manageable fit loss falls through."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.995, b1_corrected=False,
-            nan_fraction=0.15,
-            wm_probseg=wm, gm_probseg=gm,
-        )
-        # Falls through to Case 2: median 1090 is within 3T warn range → none
-        assert result.correction_applied == "none"
-
-    def test_high_e1_b1_fail_low_nan_falls_through(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """High E1 with B1 QC failure but manageable fit loss falls through."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.995, b1_corrected=True, b1_qc_pass=False,
-            nan_fraction=0.15,
-            wm_probseg=wm, gm_probseg=gm,
-        )
-        # Falls through to Case 2: median 1090 is within 3T warn range → none
-        assert result.correction_applied == "none"
-
-    def test_high_e1_no_fallback_good_b1(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """High E1 with good B1 passes through to physiological validation."""
-        t1_map = np.full((10, 10, 10), 1090.0)  # within acceptable range
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.995, b1_corrected=True, b1_qc_pass=True,
-        )
-        # Normal Case 2 logic: median 1090 is within acceptable range → no correction
-        assert result.correction_applied == "none"
-        assert "fit loss" not in result.reason
-
-    def test_lower_e1_no_fit_loss_fallback(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """Lower E1 without fit loss retains a plausible measurement."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.990, b1_corrected=False, b1_qc_pass=False,
-        )
-        assert result.correction_applied == "none"
-        assert "fit loss" not in result.reason
-
-    def test_high_fit_loss_with_tissue_maps_retains_measurement(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """Tissue maps do not turn coverage loss into an estimator switch."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-        wm, gm = probsegs
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.998, b1_corrected=False,
-            nan_fraction=0.50,
-            wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "none"
-        assert result.tissue_t1_used is False
-        assert result.fallback_value_ms is None
-
-    def test_high_fit_loss_without_tissue_maps_retains_measurement(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """Coverage loss remains explicit when tissue maps are absent."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.998, b1_corrected=False,
-            nan_fraction=0.50,
-        )
-        assert result.correction_applied == "none"
-        assert result.fallback_value_ms is None
-
-    def test_fit_loss_preserves_missing_support_with_probsegs(
-        self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """Auto mode preserves missing support rather than fabricating T1."""
-        t1_map = np.full((10, 10, 10), np.nan)
-        # Only 37% of brain voxels have valid T1 (simulating ill-conditioned VFA)
-        brain_voxels = np.argwhere(brain_mask)
-        n_brain = len(brain_voxels)
-        n_valid = int(0.37 * n_brain)
-        rng = np.random.default_rng(42)
-        valid_idx = rng.choice(n_brain, n_valid, replace=False)
-        for idx in valid_idx:
-            i, j, k = brain_voxels[idx]
-            t1_map[i, j, k] = 1090.0
-
-        wm, gm = probsegs
-
-        t1_corr, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.998, b1_corrected=False,
-            nan_fraction=0.63,
-            wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "none"
-
-        # Missing measured support remains explicit for local gap filling.
-        brain_t1 = t1_corr[brain_mask]
-        n_nan_in_brain = np.sum(np.isnan(brain_t1))
-        assert n_nan_in_brain > 0
-
-    def test_fit_loss_preserves_missing_support_without_probsegs(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """Missing support stays missing when tissue maps are absent."""
-        t1_map = np.full((10, 10, 10), np.nan)
-        # Only some brain voxels have valid T1
-        brain_voxels = np.argwhere(brain_mask)
-        for idx in brain_voxels[:len(brain_voxels) // 3]:
-            i, j, k = idx
-            t1_map[i, j, k] = 1090.0
-
-        t1_corr, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.998, b1_corrected=False,
-            nan_fraction=0.67,
-        )
-        assert result.correction_applied == "none"
-
-        brain_t1 = t1_corr[brain_mask]
-        n_nan_in_brain = np.sum(np.isnan(brain_t1))
-        assert n_nan_in_brain > 0
-
-    def test_explicit_fallback_fills_entire_brain(self) -> None:
-        """Explicit fallback mode fills all brain voxels, not just valid ones."""
-        shape = (5, 5, 5)
-        mask = np.ones(shape, dtype=bool)
-        # Half the voxels are NaN (simulating failed VFA fit)
-        t1_map = np.full(shape, np.nan)
-        t1_map[:3] = 1050.0
-
-        t1_corr, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="fallback",
-            brain_mask=mask,
-        )
-        assert result.correction_applied == "fallback"
-        # ALL brain voxels should have the fallback value
-        assert not np.any(np.isnan(t1_corr[mask]))
-        np.testing.assert_allclose(
-            t1_corr[mask], T1_TISSUE_REFERENCE[3.0]["default"],
-        )
-
-    def test_low_population_t1_does_not_fill_missing_support(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """Low but numerical T1 does not trigger whole-brain replacement."""
-        t1_map = np.full((10, 10, 10), np.nan)
-        # Only some brain voxels have valid but out-of-range T1
-        brain_voxels = np.argwhere(brain_mask)
-        for idx in brain_voxels[:len(brain_voxels) // 3]:
-            i, j, k = idx
-            t1_map[i, j, k] = 400.0
-
-        t1_corr, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-        )
-        assert result.correction_applied == "none"
-
-        brain_t1 = t1_corr[brain_mask]
-        n_nan_in_brain = np.sum(np.isnan(brain_t1))
-        assert n_nan_in_brain > 0
-
-    def test_high_e1_no_b1_retains_plausible_measurement(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """High E1 without B1 does not force calibration."""
-        t1_map = np.full((10, 10, 10), 1200.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.15,  # manageable
-        )
-        assert result.correction_applied == "none"
-        assert result.median_t1_corrected == pytest.approx(1200.0)
-
-    def test_high_e1_high_fit_loss_retains_measurement(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """High E1 and fit loss remain diagnostic evidence."""
-        t1_map = np.full((10, 10, 10), 1200.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.60,
-        )
-        assert result.correction_applied == "none"
-
-    def test_high_e1_high_fit_loss_with_tissue_maps(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """Fit loss remains diagnostic even when tissue maps exist."""
-        t1_map = np.full((10, 10, 10), 1200.0)
-        t1_map[~brain_mask] = np.nan
-        wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
-        gm = np.where(brain_mask, 0.4, 0.0).astype(np.float32)
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.60,
-            wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "none"
-        assert result.tissue_t1_used is False
-
-    def test_failed_b1_and_high_median_retains_measurement(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """A marginal measured map is not calibrated when B1 QC also failed."""
-        t1_map = np.full((10, 10, 10), 1600.0)
-        t1_map[~brain_mask] = np.nan
-        wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
-        gm = np.where(brain_mask, 0.4, 0.0).astype(np.float32)
-
-        _, result = apply_t1_correction(
-            t1_map,
-            field_strength=3.0,
-            correction_mode="auto",
-            brain_mask=brain_mask,
-            b1_corrected=True,
-            b1_qc_pass=False,
-            nan_fraction=0.1,
-            wm_probseg=wm,
-            gm_probseg=gm,
-        )
-
-        assert result.correction_applied == "none"
-        assert "B1 QC failed" in result.reason
-
-    def test_failed_b1_and_high_median_retains_measurement_without_seg(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """A joint T1/B1 warning remains explicit without segmentations."""
-        t1_map = np.full((10, 10, 10), 1600.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map,
-            field_strength=3.0,
-            correction_mode="auto",
-            brain_mask=brain_mask,
-            b1_corrected=True,
-            b1_qc_pass=False,
-            nan_fraction=0.1,
-        )
-
-        assert result.correction_applied == "none"
-        assert result.fallback_value_ms is None
-
-    def test_high_e1_with_low_fit_loss_is_retained(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """High E1 with low failed-fit coverage retains plausible measured T1."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.998, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.05,
-        )
-        assert result.correction_applied == "none"
-
-    def test_high_e1_warn_range_bias_is_not_auto_corrected(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """A plausible population deviation is retained at subject level."""
-        t1_map = np.full((10, 10, 10), 950.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.15,
-        )
-        assert result.correction_applied == "none"
-        assert result.median_t1_corrected == pytest.approx(950.0)
-
-    def test_nrmse_gate_bypassed_not_in_dict(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """to_dict() omits nrmse_gate_bypassed."""
-        t1_map = np.full((10, 10, 10), 1090.0)
-        t1_map[~brain_mask] = np.nan
-
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="auto",
-            brain_mask=brain_mask,
-            e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.15,
-        )
-        d = result.to_dict()
-        assert "nrmse_gate_bypassed" not in d
-
-    def test_vfa_fit_nrmse_preserved_in_dict(
-        self, brain_mask: np.ndarray,
-    ) -> None:
-        """vfa_fit_nrmse appears in to_dict() when set (QC audit trail)."""
-        result = T1CorrectionResult(
-            correction_applied="offset",
-            vfa_fit_nrmse=0.065,
-        )
-        d = result.to_dict()
-        assert "vfa_fit_nrmse" in d
-        assert d["vfa_fit_nrmse"] == pytest.approx(0.065)

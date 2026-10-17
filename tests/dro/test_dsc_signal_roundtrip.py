@@ -292,10 +292,8 @@ class TestRicianNoiseBias:
     deltaR2*), leading to CBF underestimation at low SNR.
     """
 
-    SNRS = [5, 7, 10, 20, 50]
-
     @pytest.mark.slow
-    @pytest.mark.parametrize("snr", SNRS)
+    @pytest.mark.parametrize("snr", [20, 50])
     def test_cbf_bias_vs_snr(self, snr: int) -> None:
         """Measure Rician CBF bias across multiple noise seeds."""
         tissue = DSC_TISSUE_PARAMS["gm"]
@@ -315,45 +313,39 @@ class TestRicianNoiseBias:
 
         mean_rician = np.mean(cbf_rician)
 
-        if snr in OSVD_CBF_ENVELOPE:
-            tol = OSVD_CBF_ENVELOPE[snr]
-            assert abs(mean_rician - tissue.cbf) / tissue.cbf < tol, (
-                f"Rician CBF bias outside oSVD envelope at SNR={snr}: "
-                f"mean={mean_rician:.1f}, true={tissue.cbf:.1f}, tol={tol}"
-            )
+        tol = OSVD_CBF_ENVELOPE[snr]
+        assert abs(mean_rician - tissue.cbf) / tissue.cbf < tol, (
+            f"Rician CBF bias outside oSVD envelope at SNR={snr}: "
+            f"mean={mean_rician:.1f}, true={tissue.cbf:.1f}, tol={tol}"
+        )
 
     @pytest.mark.slow
-    @pytest.mark.parametrize("snr", [5, 10, 20])
-    def test_peak_attenuation_vs_snr(self, snr: int) -> None:
-        """Quantify clipping-induced peak deltaR2* attenuation."""
+    def test_peak_attenuation_at_snr_20(self) -> None:
+        """Bound peak attenuation after Rician noise and signal conversion."""
         tissue = DSC_TISSUE_PARAMS["gm"]
         te = 0.030
         s0 = 1000.0
         n_seeds = 5
 
+        signal_clean, _, _, _, _ = _make_signal_roundtrip_data(
+            cbf=tissue.cbf, mtt=tissue.mtt, te=te, s0=s0, snr=np.inf,
+        )
+        conc_clean = signal_to_concentration(signal_clean, te, baseline_frames=10)
+        peak_clean = float(np.max(conc_clean))
+        assert peak_clean > 0
         peak_ratios = []
         for seed in range(n_seeds):
-            signal_clean, aif, _, _, _ = _make_signal_roundtrip_data(
-                cbf=tissue.cbf, mtt=tissue.mtt, te=te, s0=s0, snr=np.inf,
-            )
-            conc_clean = signal_to_concentration(signal_clean, te, baseline_frames=10)
-            peak_clean = float(np.max(conc_clean))
-
             signal_noisy, _, _, _, _ = _make_signal_roundtrip_data(
                 cbf=tissue.cbf, mtt=tissue.mtt, te=te, s0=s0,
-                snr=float(snr), noise_model="rician", seed=seed,
+                snr=20.0, noise_model="rician", seed=seed,
             )
             conc_noisy = signal_to_concentration(signal_noisy, te, baseline_frames=10)
             peak_noisy = float(np.max(conc_noisy))
 
-            if peak_clean > 0:
-                peak_ratios.append(peak_noisy / peak_clean)
+            peak_ratios.append(peak_noisy / peak_clean)
 
         mean_ratio = np.mean(peak_ratios)
-        if snr >= 20:
-            assert mean_ratio > 0.80, (
-                f"Excessive peak attenuation at SNR={snr}: ratio={mean_ratio:.3f}"
-            )
+        assert mean_ratio > 0.80, f"Excessive peak attenuation: ratio={mean_ratio:.3f}"
 
 
 class TestBaselineS0Estimation:

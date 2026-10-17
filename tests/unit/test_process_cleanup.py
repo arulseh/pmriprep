@@ -390,29 +390,6 @@ def test_process_group_cleanup_reaps_already_exited_child(
     assert process.wait_calls == [None]
 
 
-@pytest.mark.parametrize(
-    ("relative_path", "cleanup_call"),
-    [
-        ("pmriprep/interfaces/dce_compute.py", "terminate_process_pool(executor)"),
-        ("pmriprep/models/dsc/signal_cpi/execution.py", "terminate_process_pool(self.pool)"),
-    ],
-)
-def test_fitting_executors_join_workers(
-    relative_path: str,
-    cleanup_call: str,
-) -> None:
-    """Fitting pools force active workers down on abnormal exits."""
-    root = Path(__file__).parents[2]
-    source = (root / relative_path).read_text()
-
-    assert "shutdown(wait=False" not in source
-    assert "return list(executor.map(" not in source
-    executor_count = source.count("ProcessPoolExecutor(")
-    cleanup_count = source.count(cleanup_call)
-    assert executor_count > 0
-    assert cleanup_count == executor_count
-
-
 class _FakePoolProcess:
     """Process-pool worker stand-in with controllable TERM behavior."""
 

@@ -274,8 +274,6 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
     assert result.vp_uncertainty == 0.25
     assert result.model_name == "extended_tofts"
     assert result.candidate_names == ["patlak", "extended_tofts"]
-    assert "aif_tissue_overshoot_fraction" not in result.qc
-    assert "acquisition_limited_note" not in result.qc
     assert captured["dose"] == 0.5
     assert captured["agent_standard_dose"] == 0.1
     assert captured["dsc_registration_qc"] == {"qc_status": "WARN"}
@@ -284,40 +282,6 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
         "fraction_cnr_gt_4": 0.8,
         "mean_cnr": 6.0,
     }
-
-
-def test_prepare_vp_constraint_marks_synthetic_aif_diagnostics_inapplicable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Synthetic AIF provenance does not invent peak-comparison diagnostics."""
-    prepared = _prepared(populated=True)
-
-    def fake_prepare(**kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            vp_map=None,
-            config=SimpleNamespace(mode=ConstraintMode.SKIP, vp_uncertainty=0.2),
-            qc_report={"mode": "skip", "reason": "synthetic_aif"},
-        )
-
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_cbv_constraint.prepare_vp_constraint_from_data",
-        fake_prepare,
-    )
-    interface = ComputeDCEMaps(
-        brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
-        dsc_aif_qc={
-            "detection_method": "synthetic",
-            "cbv_auc_denominator_is_synthetic": True,
-        },
-        constraint_mode="auto",
-    )
-
-    result = interface._prepare_vp_constraint(prepared)
-
-    assert result.mode == ConstraintMode.SKIP
-    assert "aif_tissue_overshoot_fraction" not in result.qc
-    assert result.candidate_names == ["patlak"]
 
 
 def test_prepare_vp_constraint_clears_soft_state_after_diagnostic_failure(

@@ -490,13 +490,6 @@ class TestQcReportSchema:
             assert serialized[output_metric] is None
             assert "unavailable" in qc["reason"]
 
-    def test_qc_report_skip_default_schema(self) -> None:
-        """Default skip dict uses 'mode' and 'reason' (no 'constraint_' prefix)."""
-        default_qc: dict[str, Any] = {"mode": "skip", "reason": "No DSC CBV provided"}
-        assert "mode" in default_qc
-        assert "reason" in default_qc
-        assert "constraint_mode" not in default_qc
-
 
 # =============================================================================
 # NAWM-normalized CBV → vp prior

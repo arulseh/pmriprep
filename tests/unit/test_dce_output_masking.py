@@ -464,12 +464,9 @@ def test_write_dce_parameter_maps_preserves_applicability(
     optional_keys: set[str],
 ) -> None:
     """PK output assembly retains parameter and model applicability."""
-    array = np.ones((1, 1, 2))
-    maps = SimpleNamespace(
-        ktrans=array, r_squared=array,
-        ve=array, kep=array, vp=array, fp=array, ps=array,
-        extraction_fraction=array, save_2cxm=save_2cxm,
-    )
+    names = ("ktrans", "r_squared", "ve", "kep", "vp", "fp", "ps", "extraction_fraction")
+    values = {name: np.full((1, 1, 2), i + 1.0) for i, name in enumerate(names)}
+    maps = SimpleNamespace(**values, save_2cxm=save_2cxm)
     writes: list[tuple[str, object, np.ndarray]] = []
 
     def write_map(data: np.ndarray, path: str, dtype: object = np.float32) -> None:
@@ -484,6 +481,13 @@ def test_write_dce_parameter_maps_preserves_applicability(
     )
     always = {"out_ktrans", "out_r2"}
     assert set(outputs) == always | optional_keys
+    written = {path: data for path, _, data in writes}
+    assert len(writes) == len(outputs)
+    for output_key, path in outputs.items():
+        name = {"out_r2": "r_squared", "out_e": "extraction_fraction"}.get(
+            output_key, output_key.removeprefix("out_"),
+        )
+        np.testing.assert_array_equal(written[path], values[name])
 
 
 @pytest.mark.parametrize(

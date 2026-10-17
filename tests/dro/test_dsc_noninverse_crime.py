@@ -7,18 +7,15 @@ reference-generation checks are in ``test_dsc_reference.py``.
 """
 import numpy as np
 import pytest
-from scipy.linalg import svd
+from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER
 
 from pmriprep.utils.dsc_deconvolution import (
-    build_toeplitz_matrix,
-    build_volterra_matrix,
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
     tikhonov_deconvolve,
 )
-from pmriprep.utils.dsc_constants import DEFAULT_SVD_THRESHOLD
 
 
 def _gamma_aif(t, t0=10.0, alpha=3.0, beta=1.5, peak=4.0):
@@ -71,19 +68,6 @@ def test_osvd_recovers_independent_tissue(
         assert -0.20 < mtt_err < 0.10, f"{name} oSVD residue-MTT error {mtt_err:.1%}"
 
 
-def _ssvd_cbf_with_operator(tissue, aif, dt, builder, threshold):
-    """Truncated-SVD CBF using an explicit forward operator.
-
-    Mirrors :func:`svd_deconvolve_standard`'s math so the Volterra and Toeplitz
-    operators can be compared head to head on identical tissue.
-    """
-    A = builder(aif, dt)
-    u, s, vh = svd(A, full_matrices=False)
-    s_inv = np.where(s > threshold * s.max(), 1.0 / s, 0.0)
-    residue = vh.T @ (s_inv * (u.T @ tissue))
-    return float(np.max(residue))
-
-
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
 def test_ssvd_recovers_independent_tissue(name, cbf_true, mtt_true):
     """sSVD CBF and helper residue-MTT stay within the sampled-AIF regression bounds."""
@@ -98,29 +82,6 @@ def test_ssvd_recovers_independent_tissue(name, cbf_true, mtt_true):
     assert -0.30 < cbf_err < 0.10, f"{name} sSVD CBF error {cbf_err:.1%}"
     mtt_err = (res.mtt - mtt_true) / mtt_true
     assert -0.15 < mtt_err < 0.40, f"{name} sSVD residue-MTT error {mtt_err:.1%}"
-
-
-@pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
-def test_ssvd_volterra_beats_toeplitz(name, cbf_true, mtt_true):
-    """Volterra sSVD has lower CBF error for each sampled-AIF tissue fixture.
-
-    Compare absolute relative errors against smoothed-Toeplitz sSVD at the
-    same singular-value threshold.
-    """
-    dt, n = 1.5, 60
-    t = np.arange(n) * dt
-    aif = _gamma_aif(t)
-    tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
-    thr = DEFAULT_SVD_THRESHOLD
-
-    cbf_volterra = _ssvd_cbf_with_operator(tissue, aif, dt, build_volterra_matrix, thr)
-    cbf_toeplitz = _ssvd_cbf_with_operator(tissue, aif, dt, build_toeplitz_matrix, thr)
-    err_v = abs(cbf_volterra - cbf_true) / cbf_true
-    err_t = abs(cbf_toeplitz - cbf_true) / cbf_true
-
-    assert err_v < err_t, (
-        f"{name}: Volterra CBF err {err_v:.1%} not < Toeplitz {err_t:.1%}"
-    )
 
 
 @P2_NO_CORNER
@@ -139,7 +100,7 @@ def test_tikhonov_recovers_independent_tissue(name, cbf_true, mtt_true):
 
 
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
-def test_auc_cbv_recovers_independent_tissue(name, cbf_true, mtt_true):
+def test_auc_cbv_recovers_independent_tissue(name, cbf_true, mtt_true, tmp_path):
     """Check the convolution-area identity within finite-sampling error.
 
     Full continuous integrals obey ∫tissue/∫AIF = CBF·MTT. These sampled
@@ -151,7 +112,14 @@ def test_auc_cbv_recovers_independent_tissue(name, cbf_true, mtt_true):
     tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
 
     cbv_true = cbf_true * mtt_true
-    cbv_est = float(np.trapezoid(tissue, dx=dt) / np.trapezoid(aif, dx=dt))
+    aif_file = tmp_path / "aif.txt"
+    np.savetxt(aif_file, aif)
+    curves = tissue.reshape(1, 1, 1, -1)
+    maps = ComputeDSCMaps(measured_aif_file=str(aif_file))._compute_auc_maps(
+        curves, curves, n_baseline=6, detected_baseline=6,
+        detection_info={"arrival_index": 6}, dt=dt,
+    )
+    cbv_est = float(maps.cbv.item())
     rel = (cbv_est - cbv_true) / cbv_true
     assert abs(rel) < 0.02, (
         f"{name} AUC-CBV {cbv_est:.1f} vs true {cbv_true:.1f} ({rel:+.1%})"

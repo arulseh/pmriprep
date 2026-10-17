@@ -183,7 +183,6 @@ class TestComputeDSCDerivedMetrics:
         ncbv_fv = derived["fractional_volumes"]["ncbv"]
         for t in (1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0):
             assert f"above_{t}" in ncbv_fv
-        assert "hotspot_summary" not in derived
 
     def test_all_none_maps_returns_empty(self) -> None:
         """All None maps returns empty dict."""
@@ -220,7 +219,6 @@ class TestComputeDCEDerivedMetrics:
         ktrans_fv = derived["fractional_volumes"]["ktrans"]
         for t in (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5):
             assert f"above_{t}" in ktrans_fv
-        assert "hotspot_summary" not in derived
 
     def test_vp_fractional_volumes(self) -> None:
         """vp data produces per-map fractional volumes."""
@@ -260,7 +258,6 @@ class TestComputeNAWMReference:
         assert ref["value_qc_status"] == "UNKNOWN"
         assert "value_qc_status" not in ref["cbv"]
         # No mask-size editorial — voxel_count is informational only.
-        assert "mask_qc_status" not in ref
 
     def test_quantitative_iauc60_reference_is_reported(self) -> None:
         """Raw IAUC60 retains NAWM context without constructing a ratio map."""
@@ -315,8 +312,6 @@ class TestComputeNAWMReference:
             nawm_mask, {"cbv": cbv_data}, 1.0,
         )
         assert ref["voxel_count"] == 1
-        assert "mask_qc_status" not in ref
-        assert "mask_qc_notes" not in ref
 
     def test_no_maps_in_range_table_reports_unknown_not_pass(self) -> None:
         """Maps without registered ranges produce UNKNOWN rather than PASS.
@@ -805,7 +800,6 @@ class TestExtractPerMapLesionStatsEnrichment:
         out = extract_per_map_lesion_stats(aggregate, "ncbv")
         assert out["LesionMaskType"] == "multi_label_tumor_seg"
         assert "Regions" in out
-        assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" in out
         assert "above_3.0" in out["FractionalVolumes"]
         # NAWM in normalized units, slice for ncbv only
@@ -816,7 +810,6 @@ class TestExtractPerMapLesionStatsEnrichment:
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
 
         out = extract_per_map_lesion_stats(aggregate, "cbv")
-        assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" not in out
         # NAWM in deconv units
         assert out["NAWMReference"]["median"] == 0.34
@@ -826,7 +819,6 @@ class TestExtractPerMapLesionStatsEnrichment:
 
         out = extract_per_map_lesion_stats(aggregate, "ktrans")
         assert "Regions" in out
-        assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" in out
         assert "above_0.05" in out["FractionalVolumes"]
         assert out["QCFilteredRegions"]["contrast_enhancing_tumor"]["stats"][
@@ -850,7 +842,6 @@ class TestExtractPerMapLesionStatsEnrichment:
 
         out = extract_per_map_lesion_stats(aggregate, "ttp")
         assert "Regions" in out
-        assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" not in out
         assert "NAWMReference" not in out
 
@@ -870,20 +861,8 @@ class TestExtractPerMapLesionStatsEnrichment:
         assert extract_per_map_lesion_stats({}, "ncbv") is None
 
 
-class TestDSCStatsKeyTtp:
-    """DSC lesion statistics use the canonical TTP map key."""
-
-    def test_dsc_load_maps_uses_camelcase_ttp(self):
-        from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
-
-        # Inspect the source for the map_attrs list (no need to instantiate)
-        import inspect
-        src = inspect.getsource(DSCLesionStats._load_maps)
-        assert '"ttp"' in src
-
-
 def test_dsc_load_maps_uses_configured_timing_name(tmp_path) -> None:
-    """Parametric timing is exposed as arrival delay, not Tmax."""
+    """TTP and parametric arrival delay retain distinct names and values."""
     import nibabel as nib
 
     from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
@@ -893,14 +872,22 @@ def test_dsc_load_maps_uses_configured_timing_name(tmp_path) -> None:
         nib.Nifti1Image(np.full((2, 2, 2), -0.25, dtype=np.float32), np.eye(4)),
         timing_file,
     )
+    ttp_file = tmp_path / "ttp.nii.gz"
+    nib.save(
+        nib.Nifti1Image(np.full((2, 2, 2), 8.0, dtype=np.float32), np.eye(4)),
+        ttp_file,
+    )
     iface = DSCLesionStats()
     iface.inputs.tmax_map = str(timing_file)
+    iface.inputs.ttp_map = str(ttp_file)
     iface.inputs.timing_map_name = "arrival_delay"
 
     maps = iface._load_maps()
 
     assert "arrival_delay" in maps
     assert "tmax" not in maps
+    np.testing.assert_array_equal(maps["arrival_delay"], -0.25)
+    np.testing.assert_array_equal(maps["ttp"], 8.0)
 
 
 def test_dsc_regional_statistics_disclose_actual_osvd_fallback(tmp_path) -> None:
@@ -1017,19 +1004,19 @@ class TestDCEStatisticsMapSupport:
             tmp_path, "ktrans.nii.gz", values
         )
         iface.inputs.iauc60_map = self._save(
-            tmp_path, "iauc60.nii.gz", values
+            tmp_path, "iauc60.nii.gz", values + 10
         )
-        iface.inputs.fp_map = self._save(tmp_path, "fp.nii.gz", values)
-        iface.inputs.ps_map = self._save(tmp_path, "ps.nii.gz", values)
-        iface.inputs.e_map = self._save(tmp_path, "e.nii.gz", values)
+        iface.inputs.fp_map = self._save(tmp_path, "fp.nii.gz", values + 20)
+        iface.inputs.ps_map = self._save(tmp_path, "ps.nii.gz", values + 30)
+        iface.inputs.e_map = self._save(tmp_path, "e.nii.gz", values / 10)
 
         maps = iface._load_maps()
 
         np.testing.assert_array_equal(maps["ktrans"], values)
-        np.testing.assert_array_equal(maps["iauc60"], values)
-        np.testing.assert_array_equal(maps["fp"], values)
-        np.testing.assert_array_equal(maps["ps"], values)
-        np.testing.assert_array_equal(maps["e"], values)
+        np.testing.assert_array_equal(maps["iauc60"], values + 10)
+        np.testing.assert_array_equal(maps["fp"], values + 20)
+        np.testing.assert_array_equal(maps["ps"], values + 30)
+        np.testing.assert_allclose(maps["e"], values / 10)
         pk_stats = compute_map_statistics(
             maps["ktrans"], np.ones_like(values, dtype=bool)
         )
@@ -1041,6 +1028,7 @@ class TestDCEStatisticsMapSupport:
         assert pk_stats.median == pytest.approx(2.5)
         assert model_free_stats is not None
         assert model_free_stats.n_valid == model_free_stats.n_total == 4
+        assert model_free_stats.median == pytest.approx(12.5)
 
     def test_qc_mask_filters_lesion_and_nawm_values(self, tmp_path) -> None:
         """Lesion and NAWM summaries use the same QC-passing population."""

@@ -77,7 +77,6 @@ class TestPreloadClassEnum:
         assert PreloadClass.SEVERE.value == "severe"
 
 
-
 # =============================================================================
 # Agent-aware thresholds + float preload support
 # =============================================================================
@@ -330,3 +329,87 @@ class TestPreloadClassHasUnknown:
 
     def test_unknown_exists(self) -> None:
         assert PreloadClass.UNKNOWN.value == "unknown"
+
+
+class TestPreloadConfig:
+    """Verify DSCConfig.preload `'unknown' | float` semantics."""
+
+    def test_default_is_unknown(self) -> None:
+        from pmriprep.config.dsc import DSCConfig
+        config = DSCConfig()
+        assert config.preload == "unknown"
+
+    def test_valid_float_dose(self) -> None:
+        from pmriprep.config.dsc import DSCConfig
+        for frac in [0.0, 0.25, 0.5, 1.0, 1.5]:
+            config = DSCConfig(preload=frac)
+            assert config.preload == frac
+
+    def test_invalid_string_raises(self) -> None:
+        """Named dose-class strings are rejected; preload requires a numeric value."""
+        from pmriprep.config.dsc import DSCConfig
+        for enum_val in [
+            "auto", "half_dose", "significant", "severe", "minimal", "none", "yes",
+        ]:
+            with pytest.raises(ValueError, match="Invalid preload"):
+                DSCConfig(preload=enum_val)  # type: ignore[arg-type]
+
+    def test_auto_value_points_to_unknown(self) -> None:
+        from pmriprep.config.dsc import DSCConfig
+        with pytest.raises(ValueError, match=r"'auto'.*Use 'unknown'"):
+            DSCConfig(preload="auto")  # type: ignore[arg-type]
+
+    def test_out_of_range_raises(self) -> None:
+        from pmriprep.config.dsc import DSCConfig
+        with pytest.raises(ValueError, match="outside valid range"):
+            DSCConfig(preload=2.5)
+        with pytest.raises(ValueError, match="outside valid range"):
+            DSCConfig(preload=-0.1)
+
+
+class TestCLIPreloadType:
+    """Parsing of --dsc-preload as 'unknown' | float via _preload_type()."""
+
+    def test_unknown_passes_through(self) -> None:
+        from pmriprep.cli.run import _preload_type
+        assert _preload_type("unknown") == "unknown"
+
+    def test_zero_is_user_specified(self) -> None:
+        """0.0 must be preserved (not falsy-coerced to None/unknown)."""
+        from pmriprep.cli.run import _preload_type
+        val = _preload_type("0.0")
+        assert val == 0.0
+        assert val is not None
+        # Downstream config-merge path uses `is not None`, so this is a
+        # regression guard against accidental truthiness checks.
+
+    def test_valid_floats(self) -> None:
+        from pmriprep.cli.run import _preload_type
+        for s, expected in [("0.25", 0.25), ("0.5", 0.5), ("1.0", 1.0), ("2.0", 2.0)]:
+            assert _preload_type(s) == expected
+
+    def test_invalid_string_raises(self) -> None:
+        import argparse
+        from pmriprep.cli.run import _preload_type
+        with pytest.raises(argparse.ArgumentTypeError, match="must be 'unknown'"):
+            _preload_type("half_dose")
+        with pytest.raises(argparse.ArgumentTypeError, match="must be 'unknown'"):
+            _preload_type("yes")
+        with pytest.raises(argparse.ArgumentTypeError, match="must be 'unknown'"):
+            _preload_type("auto")
+
+    def test_out_of_range_raises(self) -> None:
+        import argparse
+        from pmriprep.cli.run import _preload_type
+        with pytest.raises(argparse.ArgumentTypeError, match=r"\[0\.0, 2\.0\]"):
+            _preload_type("2.5")
+        with pytest.raises(argparse.ArgumentTypeError, match=r"\[0\.0, 2\.0\]"):
+            _preload_type("-0.1")
+
+    def test_non_finite_raises(self) -> None:
+        import argparse
+        from pmriprep.cli.run import _preload_type
+        with pytest.raises(argparse.ArgumentTypeError):
+            _preload_type("inf")
+        with pytest.raises(argparse.ArgumentTypeError):
+            _preload_type("nan")

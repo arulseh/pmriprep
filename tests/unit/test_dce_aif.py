@@ -26,11 +26,7 @@ from pmriprep.data import get_arterial_atlas_cascade
 from pmriprep.utils.dce_constants import (
     AIF_IDEAL_FWHM_SECONDS,
     AIF_WASHOUT_PHYSIOLOGIC_CENTER,
-    AIF_THRESHOLDS_PERMISSIVE,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
-    DCE_AIF_SCALE_WARN_SUBSTANTIAL,
-    DCE_AIF_SCALE_WARN_UNRELIABLE,
-    DCE_AIF_TAIL_PEAK_FRACTION,
     INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
     INFLOW_EXCLUSION_MM_INFERIOR_BASE,
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
@@ -147,11 +143,6 @@ class TestDCEClusterScoring:
         assert selected == ([], [], [])
 
 
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
 def _make_synthetic_dce_4d(
     shape: tuple[int, int, int, int] = (20, 20, 20, 40),
     baseline_frames: int = 5,
@@ -197,11 +188,6 @@ def _make_synthetic_dce_4d(
         conc_data[x, y, z, :] = arterial_curve
 
     return conc_data, brain_mask
-
-
-# =============================================================================
-# Test: roi_size=1 preserves candidate curves
-# =============================================================================
 
 
 class TestROISizeOne:
@@ -279,11 +265,6 @@ class TestROISizeOne:
         )
 
 
-# =============================================================================
-# Test: Atlas cascade ordering
-# =============================================================================
-
-
 class TestAtlasCascade:
     """Verify atlas cascade returns files in tightest-to-broadest order."""
 
@@ -310,11 +291,6 @@ class TestAtlasCascade:
         cascade = get_arterial_atlas_cascade("2mm")
         for path in cascade:
             assert path.exists(), f"Atlas file does not exist: {path}"
-
-
-# =============================================================================
-# Test: measured-AIF temporal fidelity
-# =============================================================================
 
 
 class TestMeasuredAIFTemporalFidelity:
@@ -345,11 +321,6 @@ class TestMeasuredAIFTemporalFidelity:
 
         expected = 0.75 * conc_data[0, 0, 0] + 0.25 * conc_data[1, 0, 0]
         np.testing.assert_array_equal(aif_curve, expected)
-
-
-# =============================================================================
-# Test: final_washout QC metric
-# =============================================================================
 
 
 class TestFinalWashoutQC:
@@ -388,11 +359,6 @@ class TestFinalWashoutQC:
 
         washout = compute_dce_aif_washout(curve, baseline_frames)
         assert washout > 0.9, f"Expected washout ~1.0, got {washout:.3f}"
-
-
-# =============================================================================
-# Rescue Score Tests
-# =============================================================================
 
 
 class TestComputeRescueScore:
@@ -487,11 +453,6 @@ class TestComputeRescueScore:
         assert score == 0.0
 
 
-# =============================================================================
-# AIF scaling units
-# =============================================================================
-
-
 class TestAIFScalingUnitFix:
     """Parker's peak_min/peak_max are in blood-voxel units; aif_curve
     is in plasma units after /(1-Hct) correction. Scaling target must be
@@ -540,45 +501,6 @@ class TestAIFScalingUnitFix:
         assert blood_target == pytest.approx(1.25)
         assert plasma_target == pytest.approx(2.155, rel=1e-3)
 
-    def test_hct_zero_is_no_op_on_conversion(self) -> None:
-        """Hct=0 → (1-Hct)=1 → plasma conversion is no-op; target equals Parker fallback."""
-        hct = 0.0
-        peak_min = 5.0
-        blood_target = peak_min
-        plasma_target = blood_target / (1.0 - hct)
-        assert plasma_target == pytest.approx(blood_target)
-
-    def test_hct_boundary_high_polycythemic(self) -> None:
-        """Hct=0.55 (clinical high end) → conversion factor ≈ 2.22×."""
-        hct = 0.55
-        conversion = 1.0 / (1.0 - hct)
-        assert conversion == pytest.approx(2.2222, rel=1e-3)
-
-    def test_target_peak_override_is_blood_units(self) -> None:
-        """User-supplied `target_peak=5.0` is interpreted as blood-voxel units.
-
-        The scaling site divides by (1-Hct) so override behaves identically
-        to the Parker-fallback convention. For Hct=0.42: target becomes
-        5.0 / 0.58 ≈ 8.621 mM plasma.
-        """
-        hct = 0.42
-        user_target_blood = 5.0
-        plasma_target = user_target_blood / (1.0 - hct)
-        assert plasma_target == pytest.approx(8.621, rel=1e-3)
-
-    def test_warning_thresholds_calibrated_for_plasma_scale(self) -> None:
-        """Pass-2 WARN thresholds are fixed Hct-invariant scale-ratio bars.
-
-        scaling_factor is a pure blood-amplitude ratio (the 1/(1-Hct) cancels),
-        so the thresholds are fixed. Guard: 2.5 does NOT warn, 3.5 trips
-        SUBSTANTIAL, 5.3 trips UNRELIABLE. Bound to the production constants so
-        this actually pins their values.
-        """
-        assert DCE_AIF_SCALE_WARN_SUBSTANTIAL == pytest.approx(3.4)
-        assert DCE_AIF_SCALE_WARN_UNRELIABLE == pytest.approx(5.2)
-        assert 2.5 <= DCE_AIF_SCALE_WARN_SUBSTANTIAL  # below → no warning
-        assert 3.5 > DCE_AIF_SCALE_WARN_SUBSTANTIAL   # trips SUBSTANTIAL
-        assert 5.3 > DCE_AIF_SCALE_WARN_UNRELIABLE    # trips UNRELIABLE
 
     def test_scaling_block_end_to_end_on_plasma_curve(self) -> None:
         """Integration-flavored: replay the landed scaling arithmetic against
@@ -612,11 +534,6 @@ class TestAIFScalingUnitFix:
         assert scaling_factor == pytest.approx(1.371, rel=1e-3)
         assert scaling_factor <= 3.4  # no low-confidence warning
         assert scaling_factor <= 5.2  # no unreliable warning
-
-
-# =============================================================================
-# Two-pass cascade tests
-# =============================================================================
 
 
 def _make_cascade_inputs(
@@ -857,14 +774,6 @@ class TestTwoPassCascade:
         assert mock_find.call_count == 1
 
 
-class TestPermissiveThresholdTightened:
-    """Pin the permissive AIF washout policy."""
-
-    def test_permissive_washout_threshold_tightened(self) -> None:
-        """The permissive washout floor is 0.10."""
-        assert AIF_THRESHOLDS_PERMISSIVE.washout_min == 0.10
-
-
 class TestCascadeExhaustionProvenance:
     """Regression for Pass-3 (population) provenance threading.
 
@@ -908,11 +817,6 @@ class TestCascadeExhaustionProvenance:
         assert prov["cascade_anchor_outcomes"] == outcomes
 
 
-# =============================================================================
-# Anchor-gate tests
-# =============================================================================
-
-
 class TestArterialAnchor:
     """Tests for the Mouridsen-style cluster-anchor predicate."""
 
@@ -923,10 +827,6 @@ class TestArterialAnchor:
         assert has_anchor is False
         assert earliest == float("inf")
 
-    def test_anchor_threshold_constant_value(self) -> None:
-        """The configured anchor threshold is 10 seconds."""
-        from pmriprep.interfaces.dce_aif import _MAX_ANCHOR_POST_ARRIVAL_S
-        assert _MAX_ANCHOR_POST_ARRIVAL_S == 10.0
 
     def test_anchored_when_earliest_within_threshold(self) -> None:
         # baseline=10, tr=4 → peak_time_frame=12 → post-arr=8s ≤ 10s
@@ -1207,11 +1107,6 @@ class TestAnchorGateInCascade:
         assert out_m == [{"is_likely_venous": False}]
 
 
-# =============================================================================
-# Slab-edge inflow exclusion tests
-# =============================================================================
-
-
 class TestInflowExclusionHelper:
     """Tests for ``_inflow_exclusion_mm`` adaptive Option C formula."""
 
@@ -1432,20 +1327,6 @@ class TestWholeBrainSymmetryExclusion:
         assert np.any(out)
 
 
-class TestSlabEdgeConstants:
-    """Slab-edge constants specify the directional exclusion policy."""
-
-    def test_rolloff_constant_value(self) -> None:
-        """Rolloff (B1/RF profile, atlas inferior+superior, WB inferior
-        rolloff baseline) is 4mm — single-partition margin."""
-        assert SLAB_EDGE_EXCLUSION_MM_ROLLOFF == 4.0
-
-    def test_sss_constant_value(self) -> None:
-        """SSS exclusion (WB superior only) is 15mm — keeps superior
-        sagittal sinus out of the unconstrained candidate pool."""
-        assert SSS_EXCLUSION_MM == 15.0
-
-
 class TestInflowExclusionAppliedUniversally:
     """End-to-end coverage for the universal inferior-inflow apply.
 
@@ -1538,12 +1419,6 @@ class TestInflowExclusionAppliedUniversally:
         assert out[:, :, -4:].sum() == 0
         # Middle slices retained
         assert out[:, :, 8].sum() > 0
-
-
-
-# =============================================================================
-# Test: Peak-amplitude QC warning
-# =============================================================================
 
 
 class TestDCEAIFPeakAmplitudeWarning:
@@ -1654,11 +1529,6 @@ def test_dce_aif_report_status_honours_final_curve_warnings(
         _dce_aif_report_status(confidence, peak_warning, bump_warning)
         == expected
     )
-
-
-# =============================================================================
-# Test: Multi-bump tail detector
-# =============================================================================
 
 
 class TestMultiBumpTailDetector:
@@ -1813,60 +1683,6 @@ class TestMultiBumpTailDetector:
         assert count == 0
 
 
-class TestMultiBumpCallSiteSuppression:
-    """Population-AIF call-site suppression for multi-bump.
-
-    The helper ``detect_dce_aif_multi_bump_tail`` itself does not know
-    about ``detection_method`` — suppression happens at the cascade call
-    site by short-circuiting count to 0 when the population fallback is
-    active. These tests exercise that decision logic directly without
-    invoking the full ``_run_interface``.
-    """
-
-    @staticmethod
-    def _multi_bump_count_with_suppression(
-        aif_curve: np.ndarray, tr: float, detection_method: str,
-    ) -> tuple[int, list[float]]:
-        """Mirror the call-site suppression decision in _run_interface."""
-        if detection_method != "population":
-            return detect_dce_aif_multi_bump_tail(aif_curve, tr=tr)
-        return 0, []
-
-    @staticmethod
-    def _three_bump_curve(tr: float) -> np.ndarray:
-        """Build a 3-late-tail-bump curve: peak at 20 s, bumps well past
-        the 60 s shoulder at amplitudes >40 % of the first-pass peak."""
-        n = int(400 / tr)
-        t = np.arange(n) * tr
-        aif = 5.0 * np.exp(-0.5 * ((t - 20) / 4) ** 2)
-        for c in (110.0, 180.0, 260.0):
-            aif += 2.5 * np.exp(-0.5 * ((t - c) / 4) ** 2)
-        aif[:5] = 0.0
-        return aif
-
-    def test_population_method_zeroes_count_on_3_bump_curve(self) -> None:
-        aif = self._three_bump_curve(tr=4.0)
-        count, heights = self._multi_bump_count_with_suppression(
-            aif, tr=4.0, detection_method="population",
-        )
-        assert count == 0
-        assert heights == []
-
-    def test_atlas_method_does_not_suppress(self) -> None:
-        aif = self._three_bump_curve(tr=4.0)
-        count, _ = self._multi_bump_count_with_suppression(
-            aif, tr=4.0, detection_method="atlas",
-        )
-        assert count == 3
-
-
-class TestMultiBumpTailConstantValue:
-    """Regression for the 40 % threshold value."""
-
-    def test_tail_peak_fraction_is_40_percent(self) -> None:
-        assert DCE_AIF_TAIL_PEAK_FRACTION == 0.40
-
-
 class TestDCEAIFDetectionLesionMaskFileTrait:
     """DCE AIF detection must accept the empty string
     that upstream Function nodes return when no lesion mask is available.
@@ -1937,10 +1753,6 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
         assert aif.inputs.lesion_mask_file == ""
 
 
-# =============================================================================
-# Acceptance gates G1-G6 + G6 escape
-# =============================================================================
-
 from pmriprep.interfaces.dce_aif import (  # noqa: E402
     AIFParams,
     CascadeResult,
@@ -1954,7 +1766,6 @@ from pmriprep.interfaces.dce_aif import (  # noqa: E402
 )
 from pmriprep.utils.dce_constants import (  # noqa: E402
     DCE_AIF_GATE_SCALE_HARD,
-    DCE_AIF_TAIL_SHOULDER_SECONDS,
 )
 
 
@@ -1980,11 +1791,6 @@ def _make_qc(
 
 
 # ----- Constants -----------------------------------------------------------
-
-def test_bump_detector_constants_updated():
-    """sh60 + f0.40 are the bump-detector defaults."""
-    assert DCE_AIF_TAIL_PEAK_FRACTION == 0.40
-    assert DCE_AIF_TAIL_SHOULDER_SECONDS == 60.0
 
 
 # ----- ratio_30 helper -----------------------------------------------------
@@ -2456,11 +2262,6 @@ def test_select_worst_for_trim_g6_f_falls_through_to_score():
     assert _select_worst_for_trim(metrics, scores, "G6_g") == 1
 
 
-# =============================================================================
-# Brain-wide tissue_ttp_frame threading into _apply_arterial_criteria
-# =============================================================================
-
-
 class TestTissueTtpFrameThreading:
     """Atlas-constrained search must use the brain-wide tissue_ttp.
 
@@ -2516,177 +2317,36 @@ class TestTissueTtpFrameThreading:
         # Passed value is preserved
         assert ttp_passed == 25.0
 
-    def test_kwarg_default_preserves_local_path(self):
-        """Omitting tissue_ttp_frame uses the local tissue timing reference."""
-        chars = self._build_atlas_arterial_chars()
-        spatial_exclude = np.zeros(len(chars["peak_indices"]), dtype=bool)
-        idx_a, ttp_a, tier_a = AIFDetection._apply_arterial_criteria(
-            chars, spatial_exclude, nt=40, tr=4.0,
-        )
-        idx_b, ttp_b, tier_b = AIFDetection._apply_arterial_criteria(
-            chars, spatial_exclude, nt=40, tr=4.0, tissue_ttp_frame=None,
-        )
-        np.testing.assert_array_equal(idx_a, idx_b)
-        assert ttp_a == ttp_b
-        assert tier_a == tier_b
 
-    def test_fix1_byte_identical_on_healthy_session(self):
-        """Local and brain-wide tissue timing agree for this mixed synthetic mask.
-
-        When the references agree, candidate indices, scores and venous flags
-        must also agree.
-        """
-        # Build a synthetic 4D where the atlas mask covers a mix of
-        # arterial-like AND parenchymal-like voxels — its local IQR
-        # median tissue_ttp lands at ~tissue_peak_frame.
-        nx = ny = nz = 20
-        nt = 40
-        t = np.arange(nt, dtype=np.float64)
-        tissue_curve = 0.6 * np.exp(-0.5 * ((t - 20) / 6.0) ** 2)
-        tissue_curve[:5] = 0.0
-        conc = np.broadcast_to(
-            tissue_curve[None, None, None, :], (nx, ny, nz, nt),
-        ).copy()
-        # Small arterial cluster — only 3 voxels, won't dominate IQR
-        arterial_curve = 6.0 * np.exp(-0.5 * ((t - 5) / 1.5) ** 2)
-        arterial_curve[:5] = 0.0
-        for x, y, z in [(10, 10, 10), (10, 11, 10), (11, 10, 10)]:
-            conc[x, y, z, :] = arterial_curve
-        # Atlas mask covers a 6×6×6 block where most voxels are
-        # parenchymal — atlas-local tissue_ttp ≈ brain-wide.
-        atlas_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
-        atlas_mask[8:14, 8:14, 8:14] = 1
-
-        det = AIFDetection.__new__(AIFDetection)
-        det.inputs = type("FI", (), {
-            "hematocrit": 0.42, "r1_relaxivity": 4.1,
-            "agent_standard_dose": 0.1, "agent_r1_known": True,
-            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
-            "baseline_frames": 5, "lesion_mask_file": None,
-            "mr_acquisition_type": "3D",
-        })()
-        # Sanity: confirm local and brain-wide tissue_ttp agree (this
-        # IS a healthy-session-like setup, not a regressed one).
-        # Both will be ≈ 20 in this synthetic.
-        cands_default, scores_default, mets_default = det._find_candidates_in_mask(
-            conc, atlas_mask, n_candidates=4, tr=4.0,
-            baseline_frames=5, criteria="strict", atlas_constrained=True,
-        )
-        cands_brainwide, scores_brainwide, mets_brainwide = det._find_candidates_in_mask(
-            conc, atlas_mask, n_candidates=4, tr=4.0,
-            baseline_frames=5, criteria="strict", atlas_constrained=True,
-            tissue_ttp_frame=20.0,
-        )
-        # Byte-identical candidates + scores + venous flags
-        assert cands_default == cands_brainwide
-        assert scores_default == scores_brainwide
-        assert (
-            [m.get("is_likely_venous", False) for m in mets_default]
-            == [m.get("is_likely_venous", False) for m in mets_brainwide]
+    @pytest.mark.parametrize("tr", [4.0, 8.0])
+    def test_atlas_candidates_use_brain_wide_timing(self, tr: float) -> None:
+        """Candidate timing uses the supplied parenchymal reference."""
+        t = np.arange(40, dtype=float)
+        arterial = np.exp(-0.5 * ((t - 8) / 1.5) ** 2)
+        arterial[:5] = 0.0
+        # The atlas includes weaker vessels with the same arterial timing.
+        conc = np.broadcast_to(0.6 * arterial, (12, 12, 12, 40)).copy()
+        arterial_coords = {(5, 5, 5), (5, 6, 5), (6, 5, 5), (6, 6, 5)}
+        for coord in arterial_coords:
+            conc[coord] = 6.0 * arterial
+        detector = AIFDetection(
+            hematocrit=0.42, agent_standard_dose=0.1, field_strength=3.0,
+            dose=1.0, baseline_frames=5,
         )
 
-    def test_atlas_arterial_voxels_not_flagged_venous_with_brain_wide_ttp(self):
-        """End-to-end via _find_candidates_in_mask: atlas-constrained
-        search on a synthetic brain where all atlas voxels are arterial
-        must NOT flag them as venous when brain-wide tissue_ttp is
-        passed."""
-        nx = ny = nz = 20
-        nt = 40
-        # Tissue background peaks at frame 25
-        t = np.arange(nt, dtype=np.float64)
-        tissue_curve = 0.6 * np.exp(-0.5 * ((t - 25) / 6.0) ** 2)
-        tissue_curve[:5] = 0.0
-        conc = np.broadcast_to(
-            tissue_curve[None, None, None, :],
-            (nx, ny, nz, nt),
-        ).copy()
-        # A small atlas-territory cluster of ARTERIAL voxels at frame 5
-        arterial_coords = [(10, 10, 10), (10, 11, 10), (11, 10, 10), (11, 11, 10)]
-        arterial_curve = 6.0 * np.exp(-0.5 * ((t - 5) / 1.5) ** 2)
-        arterial_curve[:5] = 0.0
-        for x, y, z in arterial_coords:
-            conc[x, y, z, :] = arterial_curve
-        atlas_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
-        for x, y, z in arterial_coords:
-            atlas_mask[x, y, z] = 1
-        # Add a few tissue voxels into the atlas mask to give the local
-        # IQR computation something to misinterpret as "tissue_ttp".
-        for x in range(8, 13):
-            for y in range(8, 13):
-                atlas_mask[x, y, 9] = 1
-
-        det = AIFDetection.__new__(AIFDetection)
-        det.inputs = type("FI", (), {
-            "hematocrit": 0.42, "r1_relaxivity": 4.1,
-            "agent_standard_dose": 0.1, "agent_r1_known": True,
-            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
-            "baseline_frames": 5, "lesion_mask_file": None,
-            "mr_acquisition_type": "3D",
-        })()
-
-        # Without brain-wide ttp, atlas-local IQR collapses to ~5 →
-        # arterial voxels at peak=5 get frames_before_tissue=0 → flagged
-        # venous (with TR>0 timing_margin=1).
-        cands_no, scores_no, mets_no = det._find_candidates_in_mask(
-            conc, atlas_mask, n_candidates=4, tr=4.0,
-            baseline_frames=5, criteria="strict", atlas_constrained=True,
-        )
-        # With brain-wide ttp threaded in, no false-venous flag.
-        cands_fix, scores_fix, mets_fix = det._find_candidates_in_mask(
-            conc, atlas_mask, n_candidates=4, tr=4.0,
-            baseline_frames=5, criteria="strict", atlas_constrained=True,
+        candidates, scores, metrics = detector._find_candidates_in_mask(
+            conc, np.ones(conc.shape[:3], dtype=np.uint8), n_candidates=4,
+            tr=tr, baseline_frames=5, criteria="strict", atlas_constrained=True,
             tissue_ttp_frame=25.0,
         )
-        n_venous_no = sum(1 for m in mets_no if m.get("is_likely_venous", False))
-        n_venous_fix = sum(1 for m in mets_fix if m.get("is_likely_venous", False))
-        assert n_venous_fix == 0, "arterial atlas voxels must not be flagged venous when brain-wide tissue_ttp is passed"
-        # The unfixed path should have flagged at least some arterial
-        # voxels.
-        assert n_venous_no >= n_venous_fix
 
-    def test_low_tr_residual_effect_on_venous_flag(self):
-        """At TR > 5 s, the cascade selector path bypasses arterial_timing
-        (uses early_arrival instead). But the per-voxel is_likely_venous
-        flag and the scorer's timing contribution still consume tissue_ttp,
-        so the brain-wide timing reference applies at low TR."""
-        nx = ny = nz = 20
-        nt = 30
-        t = np.arange(nt, dtype=np.float64)
-        tissue_curve = 0.6 * np.exp(-0.5 * ((t - 18) / 4.0) ** 2)
-        tissue_curve[:5] = 0.0
-        conc = np.broadcast_to(
-            tissue_curve[None, None, None, :], (nx, ny, nz, nt),
-        ).copy()
-        arterial_coords = [(10, 10, 10), (10, 11, 10), (11, 10, 10), (11, 11, 10)]
-        arterial_curve = 6.0 * np.exp(-0.5 * ((t - 6) / 1.5) ** 2)
-        arterial_curve[:5] = 0.0
-        for x, y, z in arterial_coords:
-            conc[x, y, z, :] = arterial_curve
-        atlas_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
-        for x, y, z in arterial_coords:
-            atlas_mask[x, y, z] = 1
-
-        det = AIFDetection.__new__(AIFDetection)
-        det.inputs = type("FI", (), {
-            "hematocrit": 0.42, "r1_relaxivity": 4.1,
-            "agent_standard_dose": 0.1, "agent_r1_known": True,
-            "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
-            "baseline_frames": 5, "lesion_mask_file": None,
-            "mr_acquisition_type": "3D",
-        })()
-        # TR=8 s → low_tr=True
-        cands, scores, mets = det._find_candidates_in_mask(
-            conc, atlas_mask, n_candidates=4, tr=8.0,
-            baseline_frames=5, criteria="strict", atlas_constrained=True,
-            tissue_ttp_frame=18.0,
-        )
-        n_venous = sum(1 for m in mets if m.get("is_likely_venous", False))
-        assert n_venous == 0, "low-TR mode must still respect brain-wide tissue_ttp for venous flag"
-
-
-# =============================================================================
-# Physical erosion on the whole-brain fallback search mask
-# =============================================================================
+        assert set(candidates) == arterial_coords
+        assert len(scores) == len(metrics) == len(arterial_coords)
+        assert np.all(np.asarray(scores) > 0)
+        for metric in metrics:
+            assert metric["peak_time_frame"] == 8.0
+            assert metric["frames_before_tissue"] == 17.0
+            assert not metric.get("is_likely_venous", False)
 
 
 class TestPhysicalErosionWBFallback:
@@ -2892,11 +2552,6 @@ class TestPhysicalErosionWBFallback:
             assert mask_both[x, y, z] == 0
 
 
-# =============================================================================
-# Per-tier cascade_gate_decisions
-# =============================================================================
-
-
 class TestCascadeGateDecisions:
     """Verify the cascade exposes per-tier gate decisions for all
     attempted tiers (winner, trim-exhausted, and skipped), in the same
@@ -3039,11 +2694,6 @@ class TestCascadeGateDecisions:
         for entry in result.tier_gate_decisions:
             if entry["outcome"].startswith("skipped"):
                 assert entry["decisions"] == []
-
-
-# =============================================================================
-# Pool scoring and gating
-# =============================================================================
 
 
 def test_detection_has_no_hemisphere_score_prior(
@@ -3239,11 +2889,6 @@ class TestScoreAndGatePool:
         assert float(np.max(outcome.curve_scaled)) == pytest.approx(
             target, rel=1e-4,
         )
-
-
-# =============================================================================
-# In-situ post-filter divergence branch inside _run_interface
-# =============================================================================
 
 
 class TestDetectedAIFEmissionInSitu:

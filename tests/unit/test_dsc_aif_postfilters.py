@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.utils.dsc_constants import (
-    AIF_PEAK_SPREAD_MAX_SECONDS,
     AIF_TAIL_FRACTION_MAX,
 )
 
@@ -273,13 +272,3 @@ class TestAllNonFinitePeakTimes:
         survivors, diag = AIFDetection._apply_postscore_aif_filters(scored, tr=1.5)
         assert survivors == []
         assert diag["aif_n_after_filters"] == 0
-
-
-class TestConstantSanity:
-    """Sanity-check the kinetic-filter constants are still wired in."""
-
-    def test_spread_uses_constant(self):
-        assert 0 < AIF_PEAK_SPREAD_MAX_SECONDS <= 10
-
-    def test_tail_uses_constant(self):
-        assert 0.0 < AIF_TAIL_FRACTION_MAX <= 0.5

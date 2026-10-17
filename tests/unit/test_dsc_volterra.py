@@ -27,32 +27,6 @@ def _sourbron_eq7_matrix(
     return A * dt
 
 
-def _fabber_voltera_matrix(
-    aif: npt.NDArray[np.floating], dt: float
-) -> npt.NDArray[np.float64]:
-    """Literal 1-indexed port of FABBER ``DoConvolution`` voltera (the off-by-one)."""
-    aif = np.asarray(aif, dtype=np.float64)
-    nt = len(aif)
-
-    def ae(k: int) -> float:  # 1-indexed aifextend = [0, aif, 0]
-        if k == 1 or k == nt + 2:
-            return 0.0
-        return float(aif[k - 2])
-
-    A = np.zeros((nt, nt), dtype=np.float64)
-    for i in range(1, nt + 1):
-        for j in range(1, i + 1):
-            x, z = i + 1, i - j + 1
-            if j == 1:
-                v = (2 * ae(x) + ae(x - 1)) / 6.0
-            elif j == i:
-                v = (2 * ae(2) + ae(3)) / 6.0
-            else:
-                v = (4 * ae(z) + ae(z - 1) + ae(z + 1)) / 6.0
-            A[i - 1, j - 1] = v
-    return A * dt
-
-
 def _rel_l2(got: npt.NDArray[np.floating], ref: npt.NDArray[np.floating]) -> float:
     return float(np.linalg.norm(got - ref) / np.linalg.norm(ref))
 
@@ -74,21 +48,6 @@ class TestVolterraMatrixSourbron:
         got = build_volterra_matrix(aif, dt)
         ref = _sourbron_eq7_matrix(aif, dt)
         assert np.max(np.abs(got - ref)) < 1e-12
-
-
-class TestFabberDeviation:
-    """The operator deliberately differs from FABBER's off-by-one voltera."""
-
-    def test_differs_from_fabber(self) -> None:
-        # Non-zero-baseline AIF so the corner + first-column rules carry weight.
-        aif = np.r_[0.15, (np.arange(1, 40) / 3.0) * np.exp(-np.arange(1, 40) / 5.0)]
-        dt = 1.0
-        eq7 = build_volterra_matrix(aif, dt)
-        fabber = _fabber_voltera_matrix(aif, dt)
-        assert not np.allclose(eq7, fabber)
-        # Corner: Sourbron row-0 is zero; FABBER puts (2*aif[0])/6 there.
-        assert eq7[0, 0] == 0.0
-        assert fabber[0, 0] == pytest.approx((2.0 * aif[0]) / 6.0 * dt)
 
 
 class TestVolterraForwardAccuracy:

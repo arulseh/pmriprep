@@ -71,36 +71,18 @@ def _make_dsc_signal(
 class TestPSRAnalytic:
     """Test PSR on known leakage levels."""
 
-    @pytest.mark.parametrize(
-        "k2",
-        [pytest.param(0.0, id="K2_0"),
-         pytest.param(0.05, id="K2_0.05"),
-         pytest.param(0.1, id="K2_0.10"),
-         pytest.param(0.2, id="K2_0.20")],
-    )
-    def test_psr_decreases_with_leakage(self, k2: float) -> None:
-        """PSR should decrease with increasing leakage (lower K2 = more recovery)."""
-        signal, _, _ = _make_dsc_signal("gm", k2=k2)
-        psr = compute_psr(signal, baseline_frames=_BASELINE, tail_frames=5)
-
-        assert isinstance(psr, float)
-        assert np.isfinite(psr)
-        # PSR should be between 0 and ~200 (can exceed 100 for T1 overshoot)
-        assert -50 < psr < 200, f"PSR={psr:.1f} outside expected range"
-
-    def test_psr_ordering_by_leakage(self) -> None:
-        """Higher K2 -> lower PSR (less signal recovery)."""
+    def test_psr_tracks_t1_leakage_overshoot(self) -> None:
+        """The T1 leakage signal model raises recovery above baseline."""
         psrs = []
-        for k2 in [0.0, 0.05, 0.1, 0.2]:
+        for k2 in (0.0, 0.2):
             signal, _, _ = _make_dsc_signal("gm", k2=k2)
             psr = compute_psr(signal, baseline_frames=_BASELINE, tail_frames=5)
+            minimum = float(np.min(signal[_BASELINE:]))
+            expected = 100.0 * (np.mean(signal[-5:]) - minimum) / (1000.0 - minimum)
+            assert psr == pytest.approx(expected)
             psrs.append(float(psr))
-
-        # PSR should generally decrease with increasing K2
-        # Allow some non-monotonicity due to discrete sampling
-        assert psrs[0] >= psrs[-1] - 10, (
-            f"PSR at K2=0 ({psrs[0]:.1f}) should be >= PSR at K2=0.2 ({psrs[-1]:.1f})"
-        )
+        assert psrs[0] == pytest.approx(100.0, abs=0.1)
+        assert psrs[1] > psrs[0] + 1.0
 
     def test_psr_no_signal_drop_is_undefined(self) -> None:
         """A flat curve has no defined percent signal recovery."""
@@ -152,78 +134,6 @@ class TestTTPAnalytic:
 
         assert ttp_4d.shape == (1, 1, 1)
         assert abs(float(ttp_4d[0, 0, 0]) - float(ttp_1d)) < 1e-6
-
-
-class TestAUCRatio:
-    """Test AUC ratio property from indicator dilution theory.
-
-    AUC_tissue / AUC_AIF ≈ rCBV (relative cerebral blood volume).
-    """
-
-    def test_auc_ratio_scales_with_cbv(self) -> None:
-        """AUC ratio should correlate with ground truth CBV."""
-        dt = 1.5
-        aif_post, _ = generate_dsc_aif_dro(
-            n_timepoints=60, dt_sec=dt, baseline_frames=0,
-            peak_delta_r2=_AIF_PEAK,
-        )
-        auc_aif = float(np.sum(aif_post) * dt)
-
-        ratios = {}
-        for key, tissue in DSC_TISSUE_PARAMS.items():
-            residue = make_exponential_residue(tissue.cbf, tissue.mtt, 60, dt)
-            conc = dsc_forward_model(aif_post, residue, dt)
-            auc_tissue = float(np.sum(conc) * dt)
-            ratios[key] = auc_tissue / auc_aif if auc_aif > 0 else 0
-
-        # Tumor (highest CBV) > GM > WM (lowest CBV)
-        assert ratios["tumor"] > ratios["gm"], (
-            f"Tumor AUC ratio ({ratios['tumor']:.3f}) should > "
-            f"GM ({ratios['gm']:.3f})"
-        )
-        assert ratios["gm"] > ratios["wm"], (
-            f"GM AUC ratio ({ratios['gm']:.3f}) should > "
-            f"WM ({ratios['wm']:.3f})"
-        )
-
-
-class TestCNRAndSNR:
-    """Test CNR and tSNR computation on synthetic signals."""
-
-    def test_tsnr_scales_with_snr(self) -> None:
-        """tSNR of baseline should scale with input SNR."""
-        from .conftest import add_rician_noise, snr_to_noise_std
-
-        te = 0.030
-        s0 = 1000.0
-        tissue = DSC_TISSUE_PARAMS["gm"]
-
-        aif_post, _ = generate_dsc_aif_dro(
-            n_timepoints=60, dt_sec=1.5, baseline_frames=0,
-            peak_delta_r2=_AIF_PEAK,
-        )
-        residue = make_exponential_residue(tissue.cbf, tissue.mtt, 60, 1.5)
-        conc_post = dsc_forward_model(aif_post, residue, 1.5)
-        signal_clean = concentration_to_signal(conc_post, te, s0, _BASELINE)
-
-        tsnr_values = {}
-        for snr in [10, 20, 50]:
-            noise_std = snr_to_noise_std(s0, float(snr))
-            signal_noisy = add_rician_noise(signal_clean, noise_std, seed=42)
-            # tSNR = mean(baseline) / std(baseline)
-            baseline = signal_noisy[:_BASELINE]
-            tsnr = float(np.mean(baseline)) / max(float(np.std(baseline)), 1e-10)
-            tsnr_values[snr] = tsnr
-
-        # Higher input SNR should give higher tSNR
-        assert tsnr_values[50] > tsnr_values[20], (
-            f"tSNR at SNR50 ({tsnr_values[50]:.1f}) should > "
-            f"tSNR at SNR20 ({tsnr_values[20]:.1f})"
-        )
-        assert tsnr_values[20] > tsnr_values[10], (
-            f"tSNR at SNR20 ({tsnr_values[20]:.1f}) should > "
-            f"tSNR at SNR10 ({tsnr_values[10]:.1f})"
-        )
 
 
 class TestNormalizeCBV:

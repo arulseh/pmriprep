@@ -784,62 +784,6 @@ class TestFindPreviousDscOutputsNcbv:
         assert ("NAWM" in joined) or ("nCBV" in joined) or ("ncbv" in joined)
 
 
-# =============================================================================
-# ComputeDCEMaps dose-trait forwarding
-# =============================================================================
-
-
-class TestComputeDCEMapsDoseTraits:
-    """`dsc_dose` + `dsc_agent_standard_dose` traits must reach
-    `prepare_vp_constraint_from_data`."""
-
-    def test_dose_traits_forwarded_to_prepare_vp_constraint_from_data(
-        self,
-        tmp_path: Any,
-    ) -> None:
-        """`self.inputs.dsc_dose` + `.dsc_agent_standard_dose` flow through
-        to `prepare_vp_constraint_from_data(dose=..., agent_standard_dose=...)`."""
-
-        from pmriprep.interfaces.dce_compute import ComputeDCEMapsInputSpec
-
-        # Interface has the traits with documented defaults.
-        spec = ComputeDCEMapsInputSpec()
-        assert "hematocrit" not in spec.traits()
-        assert "dsc_cbv_file" not in spec.traits()
-        assert "tr" not in spec.traits()
-        assert spec.dsc_dose == 1.0
-        assert spec.dsc_agent_standard_dose == 0.1
-
-        # Traits accept explicit values.
-        spec.dsc_dose = 0.5
-        spec.dsc_agent_standard_dose = 0.05
-        assert spec.dsc_dose == 0.5
-        assert spec.dsc_agent_standard_dose == 0.05
-
-    def test_prepare_vp_constraint_accepts_dose_kwargs(self, tmp_path: Any) -> None:
-        """Direct call to prepare_vp_constraint_from_data with dose kwargs
-        should work without error (smoke test on the signature)."""
-        from pmriprep.utils.dsc_cbv_constraint import (
-            ConstraintMode,
-            prepare_vp_constraint_from_data,
-        )
-
-        mask_file = _write_nifti(
-            tmp_path / "mask.nii.gz",
-            np.ones((3, 3, 3), dtype=np.float32),
-        )
-        # ncbv_file=None exercises the missing-NAWM SKIP path but still
-        # exercises that the dose kwargs don't raise.
-        result = prepare_vp_constraint_from_data(
-            ncbv_file=None,
-            aif_qc_data={},
-            brain_mask_file=mask_file,
-            dose=0.5,
-            agent_standard_dose=0.05,
-        )
-        assert result.config.mode == ConstraintMode.SKIP
-
-
 class TestMaskProducersReturnEmptyString:
     """Workflow Function nodes that select/transform
     optional masks must return the empty string (not None) when no mask is

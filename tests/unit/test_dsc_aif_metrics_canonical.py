@@ -2,7 +2,7 @@
 
 The DSC AIF detection node emits its detection-time metrics in the nested
 ``aif_metrics`` block on ``qc_metrics``. Tests check the per-detection-mode
-key set and the absence of flat ``best_*`` duplicates.
+key set and its use in prior qualification.
 """
 from __future__ import annotations
 
@@ -12,9 +12,6 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_aif import AIFDetection
-
-
-_FLAT_FORBIDDEN = ("best_psr", "best_brr", "best_ttp", "best_fwhm", "best_ph")
 
 
 def _candidate_metrics() -> dict[str, Any]:
@@ -67,34 +64,6 @@ class TestAutoDetectionFullShape:
         assert am["ph"] == pytest.approx(41.2)
         assert am["psr"] == pytest.approx(78.0)
         assert am["brr"] == pytest.approx(92.0)
-
-    def test_no_flat_best_keys_at_top_level(self):
-        aif_curve = np.zeros(60, dtype=np.float64)
-        aif_curve[10:14] = np.array([5.0, 25.0, 18.0, 9.0])
-        aif_curve[14:] = 4.0
-
-        top_candidates = [
-            (0.5, (10, 10, 5), _candidate_metrics()),
-        ]
-        conc_data = np.zeros((20, 20, 10, 60), dtype=np.float64)
-        conc_data[:, :, :, :] = aif_curve[None, None, None, :]
-        brain_mask = np.ones((20, 20, 10), dtype=np.uint8)
-        affine = np.eye(4)
-
-        _, qc = AIFDetection._finalize_aif_metrics(
-            aif_curve=aif_curve,
-            top_candidates=top_candidates,
-            conc_data=conc_data,
-            brain_mask=brain_mask,
-            affine=affine,
-            tr=1.5,
-            n_candidates_requested=6,
-            n_available=1,
-            baseline_frames=10,
-        )
-
-        for k in _FLAT_FORBIDDEN:
-            assert k not in qc, f"flat key {k!r} reintroduced into qc top level"
 
     @pytest.mark.parametrize("ph, expected_confidence", [
         (13.0, "low"), (15.0, "moderate"), (25.0, "high"),

@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 
-from pmriprep.config.dsc import DSCConfig
 from pmriprep.utils.dsc_aif import (
     GAMMA_NEG_TAIL_MIN_FRAMES,
     GAMMA_NOISE_RATIO_THRESHOLD,
@@ -645,64 +644,39 @@ class TestShouldApplyGammaFit:
         assert not decision.apply or decision.defect_detected != "recirculation"
 
     def test_reject_spr_just_below_threshold(self) -> None:
-        """Reject when SPR is just below threshold."""
-        aif = _make_clean_aif()
-        peak_idx = int(np.argmax(aif))
-        peak_val = float(np.max(aif))
-        fwhm = compute_aif_fwhm_frames(aif, 5)
-        recirc_center = peak_idx + max(fwhm, 5) + 5
-        if recirc_center + 3 < len(aif):
-            for i in range(recirc_center - 2, min(recirc_center + 3, len(aif))):
-                offset = i - recirc_center
-                aif[i] += peak_val * 0.20 * np.exp(-0.5 * offset**2)
+        """A secondary local maximum below the SPR threshold is retained."""
+        aif = np.zeros(60)
+        aif[5:16] = [0, 2, 4, 6, 8, 10, 8, 6, 4, 2, 0]
+        aif[29:32] = [2.0, 2.4, 2.0]
 
         fit = _make_fit_result(aif)
         decision, metrics = should_apply_gamma_fit(aif, fit)
-        if metrics.get("spr", 0) < GAMMA_SPR_THRESHOLD:
-            assert not decision.apply or decision.defect_detected != "recirculation"
+        assert metrics["peak_ratio"] == pytest.approx(1.0)
+        assert metrics["spr"] == pytest.approx(0.24)
+        assert metrics["spr"] < GAMMA_SPR_THRESHOLD
+        assert metrics["spr_is_local_max"]
+        assert not decision.apply
+        assert decision.defect_detected is None
 
-    def test_accept_noise_and_negative_tail(self) -> None:
-        """Accept when both noise and negative tail defects are present."""
-        aif = _make_clean_aif()
-        peak_idx = int(np.argmax(aif))
-        peak_val = float(np.max(aif))
-
-        # Add high-frequency noise
-        rng = np.random.default_rng(42)
-        noise = rng.normal(0, peak_val * 0.15, len(aif))
-        noisy_aif = aif + noise
-        noisy_aif[:5] = aif[:5]
-
-        # Add negative tail
-        tail_start = peak_idx + 10
-        for i in range(tail_start, min(tail_start + 8, len(noisy_aif))):
-            noisy_aif[i] = -peak_val * 0.08
-
-        # Smooth fitted curve
-        fit = _make_fit_result(noisy_aif, fitted_curve=aif.copy())
-        decision, metrics = should_apply_gamma_fit(noisy_aif, fit, baseline_frames=5)
-
-        if (
-            metrics.get("noise_ratio", 0) > GAMMA_NOISE_RATIO_THRESHOLD
-            and metrics.get("neg_tail_frames", 0) >= GAMMA_NEG_TAIL_MIN_FRAMES
-        ):
-            assert decision.apply
-            assert decision.defect_detected == "noise_and_negative_tail"
-
-    def test_reject_noise_alone(self) -> None:
-        """Reject when only noise defect is present (no negative tail)."""
+    @pytest.mark.parametrize("negative_tail", [False, True])
+    def test_noise_requires_negative_tail(self, negative_tail: bool) -> None:
+        """Roughness admits fitting only when accompanied by a negative tail."""
         aif = _make_clean_aif()
         peak_val = float(np.max(aif))
-
-        rng = np.random.default_rng(42)
-        noisy_aif = aif + rng.normal(0, peak_val * 0.15, len(aif))
-        noisy_aif[:5] = aif[:5]
-        noisy_aif = np.maximum(noisy_aif, 0)
-
-        fit = _make_fit_result(noisy_aif, fitted_curve=aif.copy())
+        noisy_aif = aif.copy()
+        noisy_aif[30:50:2] = 0.08 * peak_val
+        noisy_aif[31:50:2] = -0.08 * peak_val if negative_tail else 0.0
+        fit = _make_fit_result(noisy_aif, fitted_curve=aif)
         decision, metrics = should_apply_gamma_fit(noisy_aif, fit, baseline_frames=5)
-        if decision.defect_detected != "recirculation":
-            assert not decision.apply or decision.defect_detected == "noise_and_negative_tail"
+
+        assert metrics["peak_ratio"] == pytest.approx(1.0)
+        assert metrics["noise_ratio"] > GAMMA_NOISE_RATIO_THRESHOLD
+        assert not metrics["spr_is_local_max"]
+        assert metrics["neg_tail_frames"] == (10 if negative_tail else 0)
+        assert decision.apply is negative_tail
+        assert decision.defect_detected == (
+            "noise_and_negative_tail" if negative_tail else None
+        )
 
     def test_reject_negative_tail_alone(self) -> None:
         """Reject when only negative tail defect is present (no noise)."""
@@ -716,8 +690,10 @@ class TestShouldApplyGammaFit:
 
         fit = _make_fit_result(aif)
         decision, metrics = should_apply_gamma_fit(aif, fit, baseline_frames=5)
-        if metrics.get("noise_ratio", 0) <= GAMMA_NOISE_RATIO_THRESHOLD:
-            assert not decision.apply
+        assert metrics["noise_ratio"] <= GAMMA_NOISE_RATIO_THRESHOLD
+        assert metrics["neg_tail_frames"] >= GAMMA_NEG_TAIL_MIN_FRAMES
+        assert not decision.apply
+        assert decision.defect_detected is None
 
     def test_reject_clean_aif(self) -> None:
         """Reject when AIF is clean — no defects detected."""
@@ -737,16 +713,3 @@ class TestShouldApplyGammaFit:
         assert "noise_ratio" in metrics
         assert "neg_tail_frames" in metrics
         assert "neg_tail_min_fraction" in metrics
-
-
-# =============================================================================
-# TestDSCConfigGammaFitCoercion
-# =============================================================================
-
-
-class TestDSCConfigGammaFitRemoved:
-    """Verify gamma_fit is not a DSCConfig field (hardcoded to auto)."""
-
-    def test_no_gamma_fit_field(self) -> None:
-        config = DSCConfig()
-        assert not hasattr(config, "gamma_fit")

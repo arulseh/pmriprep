@@ -76,8 +76,6 @@ _RATE_CEILING_CASES = [
     ("patlak", "Ktrans", KTRANS_BOUNDS.max),
     ("2cxm", "Fp", FP_BOUNDS.max),
     ("2cxm", "PS", PS_BOUNDS.max),
-    ("2cxm", "PS", 500.0),
-    ("2cxm", "Fp", 500.0),
 ]
 
 

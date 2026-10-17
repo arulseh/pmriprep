@@ -633,10 +633,10 @@ class TestDCEEdgeCases:
         curve = model.evaluate([0.3, 0.6, 0.3], aif, time_min)
         result = model.fit(curve, aif, time_min)
 
-        if result.converged:
-            ve = result.parameters["ve"]
-            vp = result.parameters["vp"]
-            assert ve + vp <= 1.0 + 1e-6
+        assert result.converged
+        ve = result.parameters["ve"]
+        vp = result.parameters["vp"]
+        assert ve + vp <= 1.0 + 1e-6
 
     def test_active_volume_constraint_uncertainty_etofts(
         self,

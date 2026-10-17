@@ -131,12 +131,6 @@ def test_dsc_leakage_correction_can_be_disabled() -> None:
     assert DSCConfig(leakage_method="none").leakage_method == "none"
 
 
-def test_removed_t1_correction_mode_is_rejected() -> None:
-    """T1 estimator selection is expressed by no_t1 or t1_map_file."""
-    with pytest.raises(ValueError, match="Unknown dce configuration option.*t1_correction_mode"):
-        build_dce_config({"dce": {"t1_correction_mode": "fallback"}})
-
-
 @pytest.mark.parametrize(
     "factory",
     [
@@ -327,32 +321,6 @@ def test_invalid_resource_limits_fail_at_cli_parse(flag: str, value: str) -> Non
         )
 
 
-def test_skip_anat_is_not_a_public_cli_mode() -> None:
-    """Anatomy cannot be disabled while public DSC/DCE graphs require it."""
-    with pytest.raises(SystemExit):
-        _build_parser().parse_args(
-            ["/tmp/bids", "/tmp/out", "participant", "--skip-anat"]
-        )
-
-
-def test_dsc_bbr_registration_is_not_configurable() -> None:
-    """Unsupported BBR modes are rejected."""
-    with pytest.raises(SystemExit):
-        _build_parser().parse_args([
-            "/tmp/bids",
-            "/tmp/out",
-            "participant",
-            "--dsc-registration",
-            "flirt_bbr",
-        ])
-
-    with pytest.raises(ValueError, match="Unknown dsc configuration option.*registration"):
-        build_dsc_config({"dsc": {"registration": "flirt_bbr"}})
-
-    merged = merge_cli_config({"dsc_registration": "flirt_bbr"}, {})
-    assert "registration" not in merged.get("dsc", {})
-
-
 def test_skipping_optional_pipelines_remains_anatomical_only() -> None:
     """Disabling every optional pipeline still leaves useful anatomy processing."""
     parsed = _build_parser().parse_args([
@@ -367,7 +335,6 @@ def test_skipping_optional_pipelines_remains_anatomical_only() -> None:
     assert parsed.skip_tumor_seg is True
     assert parsed.skip_dsc is True
     assert parsed.skip_dce is True
-    assert not hasattr(parsed, "skip_anat")
 
 
 @pytest.mark.parametrize(
@@ -394,7 +361,6 @@ def test_invalid_numeric_domains_fail_before_workflow(factory, match: str) -> No
 
 
 @pytest.mark.parametrize("field,option,value", [
-    ("method", "--dsc-deconv-method", "vascular"),
     ("method", "--dsc-deconv-method", "unknown"),
     ("inference", "--dsc-inference", "nlls"),
     ("inference", "--dsc-inference", "map"),
@@ -426,22 +392,21 @@ def test_supported_dsc_override_reaches_effective_config(method: str) -> None:
     """Explicit supported CLI choices supersede file values without coercion."""
     parsed = _build_parser().parse_args(
         ["/tmp/bids", "/tmp/out", "participant", "--dsc-deconv-method", method])
-    merged = merge_cli_config(vars(parsed), {"dsc": {"method": "vascular"}})
+    merged = merge_cli_config(vars(parsed), {"dsc": {"method": "invalid"}})
     assert build_dsc_config(merged).method == method
 
 
-def test_dsc_interface_rejects_unsupported_method_and_has_no_cth() -> None:
-    """Direct interfaces enforce the same method and derivative contract."""
+def test_dsc_interface_rejects_unsupported_method() -> None:
+    """The interface and datasinks reject an unknown deconvolution method."""
     from traits.trait_errors import TraitError
     from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
     from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
 
     with pytest.raises(TraitError):
-        ComputeDSCMaps(method="vascular")
-    assert "out_cth" not in ComputeDSCMaps().output_spec().traits()
+        ComputeDSCMaps(method="unknown")
     with pytest.raises(ValueError, match="method"):
         init_dsc_datasinks_wf(output_dir="/tmp/out", bids_dir="/tmp/bids",
-            subject_id="01", session_id="01", deconvolution_method="vascular")
+            subject_id="01", session_id="01", deconvolution_method="unknown")
 
 
 @pytest.mark.parametrize("inference", ["nlls", "map", "mcmc"])
@@ -466,15 +431,11 @@ def test_dce_inference_selection_is_independent(inference: str) -> None:
     assert ComputeDCEMaps(inference=config.inference).inputs.inference == inference
 
 
-def test_mcmc_configuration_is_dce_only() -> None:
-    """DCE retains its internal sampling path; DSC has no sampling settings."""
+def test_dce_mcmc_settings_reach_interface() -> None:
+    """DCE sampling settings are parsed and passed to the interface."""
     from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-    from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
     config = build_dce_config({"dce": {"inference": "mcmc", "mcmc_samples": "321"}})
     assert config.inference == "mcmc"
     assert config.mcmc_samples == 321
     assert ComputeDCEMaps(inference=config.inference, mcmc_samples=config.mcmc_samples).inputs.mcmc_samples == 321
-    with pytest.raises(ValueError, match="Unknown dsc configuration option"):
-        build_dsc_config({"dsc": {"mcmc_samples": 321}})
-    assert "mcmc_samples" not in ComputeDSCMaps().inputs.traits()

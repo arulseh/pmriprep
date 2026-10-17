@@ -28,19 +28,6 @@ def _make_t1w(anat: Path, sub: str, ses: str | None) -> Path:
     return nii
 
 
-def test_discovery_returns_path_objects(tmp_path: Path) -> None:
-    """Discovery must wrap layout's str paths back into ``pathlib.Path``."""
-    bids = tmp_path / "bids"
-    anat = bids / "sub-01" / "anat"
-    anat.mkdir(parents=True)
-    _write_dd(bids)
-    _make_t1w(anat, "01", None)
-
-    layout = BIDSLayout(str(bids), validate=False)
-    sd = discover_session_data(bids, "01", None, layout=layout)
-    assert isinstance(sd.modalities.t1w_pre, Path)
-
-
 def test_discovery_anat_only_session(tmp_path: Path) -> None:
     """A session with only anat/ must yield dce/dsc=None without raising."""
     bids = tmp_path / "bids"
@@ -67,7 +54,7 @@ def test_discovery_session_less_dataset(tmp_path: Path) -> None:
 
     layout = BIDSLayout(str(bids), validate=False)
     sd = discover_session_data(bids, "01", None, layout=layout)
-    assert sd.modalities.t1w_pre is not None
+    assert isinstance(sd.modalities.t1w_pre, Path)
     assert sd.modalities.t1w_pre.name == "sub-01_T1w.nii.gz"
 
 

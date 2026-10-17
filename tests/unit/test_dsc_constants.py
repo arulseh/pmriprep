@@ -3,15 +3,7 @@
 import pytest
 
 from pmriprep.utils.dsc_constants import (
-    CBF_BOUNDS,
-    DEFAULT_OI_THRESHOLD,
-    DEFAULT_OSVD_GRID_STEPS,
-    DEFAULT_SVD_THRESHOLD,
     DSC_DETECTION_LEVELS,
-    EPSILON_CONCENTRATION,
-    EPSILON_DELTA_R2,
-    EPSILON_SIGNAL,
-    MTT_BOUNDS,
     calculate_k_h,
     get_r2_star,
     get_r2_star_tissue,
@@ -64,41 +56,6 @@ class TestCalculateKH:
         expected = (1.04 / 1.05) * (1.0 / (1.0 - 0.45)) * 100.0
         result = calculate_k_h(hematocrit=0.45)
         assert result == pytest.approx(expected, rel=1e-6)
-
-
-class TestParameterBounds:
-    """Tests for physiological parameter bounds."""
-
-    def test_cbf_bounds_valid(self) -> None:
-        """CBF bounds are (0.0, 2.0) with min < max (relative s⁻¹ units)."""
-        assert CBF_BOUNDS.min == 0.0
-        assert CBF_BOUNDS.max == 2.0
-        assert CBF_BOUNDS.min < CBF_BOUNDS.max
-
-    def test_mtt_bounds_valid(self) -> None:
-        """Vascular fitting MTT bounds are (0.5, 60.0) with min < max."""
-        assert MTT_BOUNDS.min == 0.5
-        assert MTT_BOUNDS.max == 60.0
-        assert MTT_BOUNDS.min < MTT_BOUNDS.max
-
-
-class TestDefaultThresholds:
-    """Tests for default deconvolution thresholds."""
-
-    def test_default_thresholds(self) -> None:
-        """SVD and OI thresholds have expected values."""
-        assert DEFAULT_SVD_THRESHOLD == 0.2
-        assert DEFAULT_OI_THRESHOLD == 0.095
-        assert DEFAULT_OSVD_GRID_STEPS == 50
-
-class TestEpsilonGuards:
-    """Tests for numerical epsilon guards."""
-
-    def test_epsilon_guards_positive(self) -> None:
-        """All epsilon guards are positive and non-zero."""
-        assert EPSILON_SIGNAL > 0
-        assert EPSILON_DELTA_R2 > 0
-        assert EPSILON_CONCENTRATION > 0
 
 
 class TestSplitDetectionLevel:

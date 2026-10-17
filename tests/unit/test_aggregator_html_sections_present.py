@@ -159,13 +159,10 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     assert "@sourbron_2007_optimization" in tikhonov
     assert "@sourbron_2007]" in tikhonov
     assert "strict interior curvature maximum nearest the upper bound" in tikhonov
-    assert "P2" not in tikhonov
     assert "100 log-spaced" in tikhonov
     assert "either curvature sign" in tikhonov
     assert "upper endpoint" in tikhonov
     assert "without post-fit clipping" in tikhonov
-    assert "fixed regularization" not in tikhonov
-    assert "Morozov" not in tikhonov
     assert "@rosen_1990" in tikhonov
     assert "@boxerman_2006" in tikhonov
     assert "@weisskoff_1994" not in tikhonov

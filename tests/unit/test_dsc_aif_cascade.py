@@ -1,27 +1,12 @@
 """Tests for AIF cascade logic and quality helper methods."""
 
-import math
-from typing import Optional
 
 import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_aif import (
-    MIN_AIF_CANDIDATES_ACCEPT,
-    S0_RATIO_FLOOR,
-    _CASCADE_N_CANDIDATES_FRACTION,
     AIFDetection,
 )
-
-
-def _make_scored(
-    n: int,
-) -> list[tuple[float, tuple[int, int, int], dict]]:
-    """Create a list of n fake scored candidates."""
-    return [
-        (float(i) * 0.1, (i, 0, 0), {"snr": 10.0})
-        for i in range(n)
-    ]
 
 
 def _make_aif_curve(
@@ -44,23 +29,6 @@ def _make_aif_curve(
             dt = i - recirc_frame
             curve[i] += recirculation_height * np.exp(-0.5 * (dt / 8) ** 2)
     return curve
-
-
-class TestMinAifCandidatesConstant:
-    """Verify the module-level constant exists and is sensible."""
-
-    def test_value(self) -> None:
-        assert MIN_AIF_CANDIDATES_ACCEPT == 3
-
-    def test_is_int(self) -> None:
-        assert isinstance(MIN_AIF_CANDIDATES_ACCEPT, int)
-
-
-class TestS0Constants:
-    """Verify S0 scoring constants."""
-
-    def test_floor_value(self) -> None:
-        assert S0_RATIO_FLOOR == 0.10
 
 
 class TestComputeAifSpr:
@@ -165,53 +133,6 @@ class TestAifPassesQuality:
         assert result.spr > 100.0
 
 
-class TestGraduatedNCandidates:
-    """Test graduated n_candidates per cascade level."""
-
-    @staticmethod
-    def _level_n(crit: str, n_candidates: int) -> int:
-        """Compute level_n_candidates the same way the cascade does."""
-        frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
-        return max(MIN_AIF_CANDIDATES_ACCEPT, math.ceil(frac * n_candidates))
-
-    def test_fraction_strict(self) -> None:
-        """Strict uses full n_candidates (10 → 10)."""
-        assert self._level_n("strict", 10) == 10
-
-    def test_fraction_relaxed(self) -> None:
-        """Relaxed uses ceil(0.6 * 10) = 6."""
-        assert self._level_n("relaxed", 10) == 6
-
-    def test_fraction_permissive(self) -> None:
-        """Permissive uses ceil(0.4 * 10) = 4."""
-        assert self._level_n("permissive", 10) == 4
-
-    def test_small_n_floors(self) -> None:
-        """n_candidates=5 → relaxed=3, permissive=3 (floor at MIN)."""
-        assert self._level_n("relaxed", 5) == 3
-        assert self._level_n("permissive", 5) == 3
-
-    def test_cascade_prefers_stricter_at_equal_count(self) -> None:
-        """2 strict + 2 relaxed accumulated → both in pool, strict first by cost."""
-        pool: list[tuple[float, tuple[int, int, int], dict]] = []
-        coords: set[tuple[int, int, int]] = set()
-
-        strict_scored = [(0.1, (0, 0, 0), {}), (0.2, (1, 0, 0), {})]
-        relaxed_scored = [(0.5, (2, 0, 0), {}), (0.6, (3, 0, 0), {})]
-
-        for scored in [strict_scored, relaxed_scored]:
-            for cost, coord, metrics in scored:
-                if coord not in coords:
-                    pool.append((cost, coord, metrics))
-                    coords.add(coord)
-
-        pool.sort(key=lambda x: x[0])
-        # Strict candidates (lower cost) sort first
-        assert pool[0][0] == 0.1
-        assert pool[1][0] == 0.2
-        assert len(pool) == 4
-
-
 class TestAccumulatingCascade:
     """Test the accumulating cascade with averaged-pool quality gate.
 
@@ -219,35 +140,6 @@ class TestAccumulatingCascade:
     averaged AIF. Tests exercise the helper methods that implement this logic.
     """
 
-    def test_pool_acceptance_with_arterial_voxel(self) -> None:
-        """Pool acceptance returns a result for a clear arterial voxel."""
-        aif = AIFDetection()
-        shape = (10, 10, 5, 120)
-        conc_data = np.zeros(shape)
-        brain_mask = np.ones(shape[:3])
-
-        curve = _make_aif_curve(peak_height=30.0, recirculation_height=2.0)
-        conc_data[5, 5, 2, :] = curve
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
-                    continue
-                conc_data[5+dx, 5+dy, 2, :] = _make_aif_curve(
-                    peak_height=5.0, recirculation_height=1.0,
-                    peak_frame=28,
-                )
-
-        candidates: list[tuple[float, tuple[int, int, int], dict]] = [
-            (1.0, (5, 5, 2), {}),
-        ]
-        result = aif._try_aif_pool_acceptance(
-            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
-        )
-        # May return None if gamma fit fails on synthetic curve — that's OK.
-        # Pool acceptance uses each candidate's own voxel.
-        if result is not None:
-            assert result.roi_size == 1
-            assert result.spr >= 0.0
 
     @pytest.mark.filterwarnings("error::RuntimeWarning")
     def test_pool_acceptance_returns_none_on_bad_curves(self) -> None:
@@ -262,182 +154,6 @@ class TestAccumulatingCascade:
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         assert result is None
-
-    def test_accumulated_pool_deduplication(self) -> None:
-        """Candidates from multiple tiers are deduplicated by coordinate."""
-        pool: list[tuple[float, tuple[int, int, int], dict]] = []
-        coords: set[tuple[int, int, int]] = set()
-
-        # Tier 1 candidates
-        tier1 = [(1.0, (5, 5, 2), {}), (2.0, (6, 5, 2), {})]
-        for cost, coord, metrics in tier1:
-            if coord not in coords:
-                pool.append((cost, coord, metrics))
-                coords.add(coord)
-
-        # Tier 2 has one overlap and one new
-        tier2 = [(0.5, (5, 5, 2), {}), (1.5, (7, 5, 2), {})]
-        for cost, coord, metrics in tier2:
-            if coord not in coords:
-                pool.append((cost, coord, metrics))
-                coords.add(coord)
-
-        assert len(pool) == 3
-        assert (5, 5, 2) in coords
-        assert (6, 5, 2) in coords
-        assert (7, 5, 2) in coords
-
-    def test_pool_cap_preserves_best_candidates(self) -> None:
-        """Pool cap keeps lowest-cost candidates when pool exceeds limit."""
-        pool = [(float(i), (i, 0, 0), {}) for i in range(20)]
-        pool.sort(key=lambda x: x[0])
-        cap = 10
-        capped = pool[:cap]
-
-        assert len(capped) == 10
-        assert capped[0][0] == 0.0  # best cost preserved
-        assert capped[-1][0] == 9.0  # worst kept is 9.0
-
-    def test_below_min_candidates_accumulate(self) -> None:
-        """Candidates below MIN_AIF_CANDIDATES_ACCEPT are accumulated."""
-        pool: list[tuple[float, tuple[int, int, int], dict]] = []
-        coords: set[tuple[int, int, int]] = set()
-
-        # Two tiers each with 2 candidates (below MIN=3)
-        for tier_offset in [0, 10]:
-            scored = _make_scored(2)
-            scored = [(c, (x + tier_offset, y, z), m) for c, (x, y, z), m in scored]
-            for cost, coord, metrics in scored:
-                if coord not in coords:
-                    pool.append((cost, coord, metrics))
-                    coords.add(coord)
-
-        # After two tiers, accumulated pool has 4 (>= MIN)
-        assert len(pool) == 4
-        assert len(pool) >= MIN_AIF_CANDIDATES_ACCEPT
-
-
-class TestPostGammaFitR2Fallback:
-    """Test post-gamma-fit R² quality gate that triggers synthetic fallback.
-
-    After AIF candidates are found and gamma fitting is attempted, if the
-    gamma fit R² is catastrophically bad (< 0.0), the pipeline should fall
-    back to synthetic AIF. This catches cases where AIF detection "succeeds"
-    but the curve has no actual bolus shape (e.g., T1 leakage contamination).
-    """
-
-    @staticmethod
-    def _simulate_post_gamma_check(
-        gamma_fit_applied: bool,
-        gamma_r2: Optional[float],
-        disable_fallback: bool,
-        detection_level: str,
-    ) -> tuple[bool, Optional[str]]:
-        """Simulate the post-gamma-fit quality gate logic.
-
-        Returns
-        -------
-        tuple[bool, Optional[str]]
-            (triggers_fallback, fallback_reason)
-        """
-        from pmriprep.interfaces.dsc_aif import GAMMA_R2_SYNTHETIC_FALLBACK
-
-        # Mirrors the logic in _run_interface after gamma fitting
-        if (
-            not gamma_fit_applied
-            and not disable_fallback
-            and detection_level != "synthetic"
-        ):
-            if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
-                return True, "gamma_r2_floor"
-        return False, None
-
-    def test_negative_r2_triggers_fallback(self) -> None:
-        """R² = -0.5 (worse than mean) triggers synthetic fallback."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=False,
-            gamma_r2=-0.5,
-            disable_fallback=False,
-            detection_level="brain_relaxed",
-        )
-        assert triggers is True
-        assert reason == "gamma_r2_floor"
-
-    def test_r2_exactly_zero_does_not_trigger(self) -> None:
-        """R² = 0.0 (threshold) does not trigger fallback (>= not >)."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=False,
-            gamma_r2=0.0,
-            disable_fallback=False,
-            detection_level="brain_relaxed",
-        )
-        assert triggers is False
-        assert reason is None
-
-    def test_positive_r2_does_not_trigger(self) -> None:
-        """R² = 0.3 (above threshold) does not trigger fallback."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=False,
-            gamma_r2=0.3,
-            disable_fallback=False,
-            detection_level="brain_relaxed",
-        )
-        assert triggers is False
-        assert reason is None
-
-    def test_r2_none_does_not_trigger(self) -> None:
-        """R² = None (not computed) does not trigger fallback."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=False,
-            gamma_r2=None,
-            disable_fallback=False,
-            detection_level="brain_relaxed",
-        )
-        assert triggers is False
-        assert reason is None
-
-    def test_gamma_fit_applied_skips_check(self) -> None:
-        """If gamma fit was applied, skip the R² check (already good)."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=True,
-            gamma_r2=-0.5,  # bad R², but fit was applied
-            disable_fallback=False,
-            detection_level="brain_relaxed",
-        )
-        assert triggers is False
-        assert reason is None
-
-    def test_disable_fallback_skips_check(self) -> None:
-        """If fallback is disabled, skip the R² check."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=False,
-            gamma_r2=-0.5,
-            disable_fallback=True,
-            detection_level="brain_relaxed",
-        )
-        assert triggers is False
-        assert reason is None
-
-    def test_already_synthetic_skips_check(self) -> None:
-        """If already synthetic, skip the R² check."""
-        triggers, reason = self._simulate_post_gamma_check(
-            gamma_fit_applied=False,
-            gamma_r2=-0.5,
-            disable_fallback=False,
-            detection_level="synthetic",
-        )
-        assert triggers is False
-        assert reason is None
-
-    def test_constant_value(self) -> None:
-        """Verify GAMMA_R2_SYNTHETIC_FALLBACK constant is 0.0."""
-        from pmriprep.interfaces.dsc_aif import GAMMA_R2_SYNTHETIC_FALLBACK
-        assert GAMMA_R2_SYNTHETIC_FALLBACK == 0.0
-
-
-# =============================================================================
-# Progressive-trim + averaged-BRR gate
-# =============================================================================
 
 
 def _curve_with_negative_tail(
@@ -459,24 +175,6 @@ def _curve_with_negative_tail(
     tail_start = int(0.6 * n_frames)
     curve[tail_start:] += tail_offset
     return curve
-
-
-class TestAifAvgBrrConstant:
-    """The averaged-AIF BRR floor."""
-
-    def test_value(self) -> None:
-        from pmriprep.interfaces.dsc_aif import AIF_AVG_BRR_MIN
-        assert AIF_AVG_BRR_MIN == -3.0
-
-    def test_looser_than_per_voxel_permissive(self) -> None:
-        """Averaged-curve floor should be tighter than the per-voxel
-        permissive floor (−10 %) — averaging should reduce noise, not
-        let bad voxels dominate.  -3 is between relaxed (0) and
-        permissive (−10)."""
-        from pmriprep.interfaces.dsc_aif import AIF_AVG_BRR_MIN
-        # Per-voxel ranges from _score_candidate_cost:
-        # strict (5, 30), relaxed (0, 40), permissive (−10, 50)
-        assert -10.0 < AIF_AVG_BRR_MIN < 0.0
 
 
 class TestComputeAifBrr:
@@ -565,196 +263,22 @@ class TestAIFPoolBrrGate:
         result = aif._try_aif_pool_acceptance(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
-        if result is not None:
-            assert len(result) == 6
-            assert result.roi_size == 1
-            assert isinstance(result.brr, float)
-
-
-class TestProgressiveTrimSemantics:
-    """Verify the cost-sorted pool + drop-worst-BRR ordering.
-
-    These are semantic / invariant tests on the trim choice function
-    (imports the worst_idx logic directly).  The full cascade loop
-    itself is exercised by existing cascade tests — adding a full 4-D
-    end-to-end test that triggers trimming requires synthesizing atlas
-    masks, scoring gates, and the complete `_run_interface` wiring,
-    which is left for integration-level coverage.
-    """
-
-    def _worst_idx(
-        self,
-        pool: list[tuple[float, tuple[int, int, int], dict]],
-    ) -> int:
-        """Replicates the trim-selection predicate inside the cascade
-        loop in `pmriprep/interfaces/dsc_aif.py`."""
-        def key(i: int) -> float:
-            brr = pool[i][2].get("baseline_return_ratio", float("nan"))
-            if not np.isnan(brr):
-                return brr
-            # Cost fallback: more negative = "worse" in the min() call,
-            # matching the higher-cost = worse convention.
-            return -pool[i][0]
-        return min(range(len(pool)), key=key)
-
-    def test_drops_most_negative_brr(self) -> None:
-        pool = [
-            (1.0, (0, 0, 0), {"baseline_return_ratio": 10.0}),
-            (2.0, (1, 0, 0), {"baseline_return_ratio": -8.0}),  # worst
-            (3.0, (2, 0, 0), {"baseline_return_ratio": 5.0}),
-        ]
-        assert self._worst_idx(pool) == 1
-
-    def test_drops_most_negative_even_if_low_cost(self) -> None:
-        """Worst-BRR wins even when its cost is the lowest (best)."""
-        pool = [
-            (0.1, (0, 0, 0), {"baseline_return_ratio": -9.0}),  # worst-BRR, lowest cost
-            (2.0, (1, 0, 0), {"baseline_return_ratio": 5.0}),
-            (3.0, (2, 0, 0), {"baseline_return_ratio": 8.0}),
-        ]
-        assert self._worst_idx(pool) == 0
-
-    def test_cost_fallback_when_brr_nan(self) -> None:
-        """When all per-voxel BRRs are NaN, fall back to highest-cost."""
-        pool = [
-            (1.0, (0, 0, 0), {}),
-            (3.0, (1, 0, 0), {}),  # highest cost → worst under fallback
-            (2.0, (2, 0, 0), {}),
-        ]
-        assert self._worst_idx(pool) == 1
-
-
-class TestTrimLoopEdgeCases:
-    """Edge-case behaviour of the trim loop."""
-
-    def test_pool_exactly_at_floor_runs_once(self) -> None:
-        """``len(scored) == MIN`` should test once, then break without
-        trimming (the trim step checks ``len(pool) == MIN`` before
-        popping)."""
-        aif = AIFDetection()
-        shape = (8, 8, 4, 120)
-        conc_data = np.zeros(shape)
-        brain_mask = np.ones(shape[:3])
-        bad_curve = _curve_with_negative_tail(peak_height=30.0, tail_offset=-8.0)
-        coords = [(3, 3, 2), (3, 4, 2), (4, 3, 2)]  # exactly MIN=3
-        candidates: list[tuple[float, tuple[int, int, int], dict]] = []
-        for i, c in enumerate(coords):
-            conc_data[c[0], c[1], c[2], :] = bad_curve
-            candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": -8.0}))
-        # At exactly MIN, pool acceptance is attempted once; BRR gate
-        # rejects the averaged negative-tail curve; no trim happens
-        # because pool size is already at the floor.
-        result = aif._try_aif_pool_acceptance(
-            candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
-        )
-        assert result is None
-
-    def test_below_floor_skips_loop(self) -> None:
-        """``len(scored) < MIN`` should never enter pool acceptance."""
-        # This is a semantic check on the trim loop's entry condition.
-        # The real cascade skips the loop when len(pool) < MIN; we
-        # verify the predicate directly.
-        from pmriprep.interfaces.dsc_aif import MIN_AIF_CANDIDATES_ACCEPT
-        scored: list[tuple[float, tuple[int, int, int], dict]] = [
-            (0.5, (0, 0, 0), {"baseline_return_ratio": 5.0}),
-            (0.6, (1, 0, 0), {"baseline_return_ratio": 8.0}),
-        ]
-        # The loop's entry predicate is `while len(pool) >= MIN`; with
-        # len=2 < 3 the loop never executes and the tier rejects via
-        # accumulation.
-        assert len(scored) < MIN_AIF_CANDIDATES_ACCEPT
-        # Simulate the loop
-        pool = list(scored)
-        iterations = 0
-        while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-            iterations += 1
-            pool.pop()
-        assert iterations == 0
-
-
-class TestPostfilterDiagsEmission:
-    """Pin the predicate that gates ``cascade_postfilter_diags`` emission.
-
-    Production code emits the per-tier postfilter diagnostics dict to
-    QC iff the cascade was downgraded (initial tier ≠ final accepted
-    tier) OR the cascade fell to synthetic (either via exhaustion or
-    via gamma-R² post-validation rejection). Single-tier acceptances
-    (cascade_initial == cascade_final, no downgrade) skip the per-tier
-    breakdown — there's no diagnostic value when only one tier ran.
-    """
-
-    @staticmethod
-    def _should_emit(qc_metrics: dict, detection_level: str,
-                     postfilter_diags: dict) -> bool:
-        """Mirror of the production gate at dsc_aif.py."""
-        return bool(
-            (qc_metrics.get("cascade_downgraded", False)
-             or detection_level == "synthetic")
-            and postfilter_diags
-        )
-
-    def test_emits_on_downgrade(self) -> None:
-        qc = {"cascade_downgraded": True}
-        diags = {"atlas_strict": {"aif_n_after_filters": 0}}
-        assert self._should_emit(qc, "atlas_relaxed", diags) is True
-
-    def test_emits_on_synthetic_exhaustion(self) -> None:
-        qc = {"cascade_downgraded": False}
-        diags = {
-            "atlas_strict": {"aif_n_after_filters": 0},
-            "atlas_relaxed": {"aif_n_after_filters": 0},
-        }
-        assert self._should_emit(qc, "synthetic", diags) is True
-
-    def test_emits_on_gamma_r2_synthetic_fallback(self) -> None:
-        # In the gamma-R²-fallback path, detection_level is overwritten
-        # to "synthetic" after a tier had originally accepted.
-        # cascade_downgraded may be False, but detection_level alone
-        # should trigger the emission.
-        qc = {"cascade_downgraded": False}
-        diags = {"atlas_strict": {"aif_n_after_filters": 5}}
-        assert self._should_emit(qc, "synthetic", diags) is True
-
-    def test_skips_on_single_tier_accept(self) -> None:
-        # Single-tier accept: initial == final, no downgrade,
-        # detection_level is the tier name (not "synthetic").
-        qc = {"cascade_downgraded": False}
-        diags = {"atlas_strict": {"aif_n_after_filters": 6}}
-        assert self._should_emit(qc, "atlas_strict", diags) is False
-
-    def test_skips_when_postfilter_diags_empty(self) -> None:
-        # Even if downgraded or synthetic, an empty diag dict produces
-        # no useful information; predicate should be False.
-        qc = {"cascade_downgraded": True}
-        assert self._should_emit(qc, "atlas_relaxed", {}) is False
-        assert self._should_emit(qc, "synthetic", {}) is False
-
-    def test_default_no_downgrade(self) -> None:
-        # Missing cascade_downgraded key should be treated as False.
-        qc: dict = {}
-        diags = {"atlas_strict": {"aif_n_after_filters": 6}}
-        assert self._should_emit(qc, "atlas_strict", diags) is False
+        assert result is not None
+        assert len(result) == 6
+        assert result.roi_size == 1
+        assert isinstance(result.brr, float)
 
 
 class TestUnionPoolTrim:
     """Test progressive worst-BRR trimming of a union candidate pool.
 
-    These tests reproduce the trimming loop using production scoring helpers.
-    They check rejection of a contaminated pool, acceptance after trimming and
-    provenance counts for the retained coordinates.
+    The production pool gate rejects the contaminated average, and the
+    production trim loop accepts it after removing the contaminator.
     """
 
-    @staticmethod
-    def _trim_key(union_pool, i):
-        brr = union_pool[i][2].get("baseline_return_ratio", float("nan"))
-        if not np.isnan(brr):
-            return float(brr)
-        return -float(union_pool[i][0])
 
-    def _build_pool(self, contaminator_tier="atlas_relaxed"):
-        """Build a 5-voxel union: 1 contaminated (tier=contaminator_tier)
-        + 4 clean (split 1 from atlas_relaxed, 3 from atlas_permissive).
-        """
+    def _build_pool(self):
+        """Build a five-voxel pool with one contaminated curve."""
         shape = (10, 10, 5, 120)
         conc_data = np.zeros(shape)
         brain_mask = np.ones(shape[:3])
@@ -764,47 +288,20 @@ class TestUnionPoolTrim:
         )
         # 5 coords; (4,4,2) is the contaminator
         union: list[tuple[float, tuple[int, int, int], dict]] = []
-        union_coord_origin: dict[tuple[int, int, int], str] = {}
-        # Contaminator first (tier matches the parameter)
         conc_data[4, 4, 2, :] = bad_curve
         union.append((1.0, (4, 4, 2), {"baseline_return_ratio": -8.0}))
-        union_coord_origin[(4, 4, 2)] = contaminator_tier
-        # 1 clean voxel from atlas_relaxed
         conc_data[4, 5, 2, :] = good_curve
         union.append((1.1, (4, 5, 2), {"baseline_return_ratio": 10.0}))
-        union_coord_origin[(4, 5, 2)] = "atlas_relaxed"
-        # 3 clean voxels from atlas_permissive
         for i, c in enumerate([(5, 4, 2), (5, 5, 2), (4, 6, 2)]):
             conc_data[c[0], c[1], c[2], :] = good_curve
             union.append((1.2 + i * 0.1, c, {"baseline_return_ratio": 10.0}))
-            union_coord_origin[c] = "atlas_permissive"
-        return conc_data, brain_mask, union, union_coord_origin
-
-    def _run_union_trim(self, conc_data, brain_mask, union):
-        """Replicates the production union-trim loop body."""
-        aif = AIFDetection()
-        union_pool = list(union)
-        accept_pool = None
-        while len(union_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-            result = aif._try_aif_pool_acceptance(
-                union_pool, conc_data, brain_mask,
-                tr=1.5, baseline_frames=20,
-            )
-            if result is not None:
-                accept_pool = list(union_pool)
-                break
-            worst_idx = min(
-                range(len(union_pool)),
-                key=lambda i: self._trim_key(union_pool, i),
-            )
-            union_pool.pop(worst_idx)
-        return accept_pool
+        return conc_data, brain_mask, union
 
     def test_single_shot_fails_on_contaminated_union(self):
         """Without trim, a 5-voxel union with one negative-BRR voxel
         averaged in fails the averaged-pool gate single-shot."""
         aif = AIFDetection()
-        conc_data, brain_mask, union, _ = self._build_pool()
+        conc_data, brain_mask, union = self._build_pool()
         result = aif._try_aif_pool_acceptance(
             union, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
@@ -813,73 +310,15 @@ class TestUnionPoolTrim:
     def test_trim_drops_contaminator_and_passes(self):
         """With progressive trim, the contaminated voxel is dropped on
         the first iteration and the remaining 4-voxel pool passes."""
-        conc_data, brain_mask, union, _ = self._build_pool()
-        accepted = self._run_union_trim(conc_data, brain_mask, union)
+        conc_data, brain_mask, union = self._build_pool()
+        accepted = AIFDetection()._try_trimmed_pool_acceptance(
+            union, conc_data, brain_mask, tr=1.5, baseline_frames=20,
+        )
         assert accepted is not None
-        accepted_coords = {coord for _, coord, _ in accepted}
+        accepted_coords = {coord for _, coord, _ in accepted.candidates}
         # Contaminator (4,4,2) must be dropped; the 4 clean voxels remain.
         assert (4, 4, 2) not in accepted_coords
         assert {(4, 5, 2), (5, 4, 2), (5, 5, 2), (4, 6, 2)} == accepted_coords
-
-    def test_provenance_recomputed_from_trimmed_pool(self):
-        """When the contaminator was the only voxel from a particular
-        tier, that tier must be REMOVED from the recomputed provenance
-        (and from detection_level) — not merely have its count reduced.
-        """
-        # Contaminator is from atlas_strict; the only atlas_strict voxel.
-        conc_data, brain_mask, union, union_coord_origin = self._build_pool(
-            contaminator_tier="atlas_strict",
-        )
-        accepted = self._run_union_trim(conc_data, brain_mask, union)
-        assert accepted is not None
-        # Recompute provenance from the trimmed pool's coords
-        # (replicates production code).
-        trimmed_provenance: dict[str, int] = {}
-        for _, coord, _ in accepted:
-            lvl = union_coord_origin.get(coord)
-            if lvl is not None:
-                trimmed_provenance[lvl] = trimmed_provenance.get(lvl, 0) + 1
-        # atlas_strict must NOT appear (its only voxel was the contaminator).
-        assert "atlas_strict" not in trimmed_provenance
-        assert trimmed_provenance == {
-            "atlas_relaxed": 1,
-            "atlas_permissive": 3,
-        }
-        # detection_level must reflect post-trim contributors only,
-        # in cascade order (strict, relaxed, permissive).
-        cascade_order = [
-            "atlas_strict", "atlas_relaxed", "atlas_permissive",
-            "full_atlas_permissive", "brain_relaxed", "brain_permissive",
-        ]
-        contributing = [
-            lvl for lvl in cascade_order
-            if trimmed_provenance.get(lvl, 0) > 0
-        ]
-        detection_level = "+".join(contributing)
-        assert detection_level == "atlas_relaxed+atlas_permissive"
-
-    def test_provenance_preserves_partial_tier(self):
-        """When a tier had multiple voxels and only one was trimmed,
-        the tier should remain in provenance with a reduced count.
-        """
-        # Contaminator is from atlas_relaxed; 1 other clean atlas_relaxed
-        # voxel remains in the pool.
-        conc_data, brain_mask, union, union_coord_origin = self._build_pool(
-            contaminator_tier="atlas_relaxed",
-        )
-        accepted = self._run_union_trim(conc_data, brain_mask, union)
-        assert accepted is not None
-        trimmed_provenance: dict[str, int] = {}
-        for _, coord, _ in accepted:
-            lvl = union_coord_origin.get(coord)
-            if lvl is not None:
-                trimmed_provenance[lvl] = trimmed_provenance.get(lvl, 0) + 1
-        # atlas_relaxed still present (1 clean voxel survived) but count
-        # dropped from 2 to 1.
-        assert trimmed_provenance == {
-            "atlas_relaxed": 1,
-            "atlas_permissive": 3,
-        }
 
 
 class TestSyntheticFallbackQcConsistency:

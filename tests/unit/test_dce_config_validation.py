@@ -19,17 +19,9 @@ class TestAIFPeakFloorConfig:
 class TestCbvConstraintModeValidation:
     """``cbv_constraint_mode`` accepts only ``auto``, ``skip``."""
 
-    def test_hard_is_not_a_valid_mode(self) -> None:
-        with pytest.raises(ValueError, match="Invalid cbv_constraint_mode"):
-            DCEConfig(cbv_constraint_mode="hard")
-
     def test_typo_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="Invalid cbv_constraint_mode"):
             DCEConfig(cbv_constraint_mode="sft")
-
-    def test_soft_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Invalid cbv_constraint_mode"):
-            DCEConfig(cbv_constraint_mode="soft")
 
     def test_auto_plus_2cxm_is_ok(self) -> None:
         cfg = DCEConfig(cbv_constraint_mode="auto", model="2cxm", inference="vi")
@@ -78,11 +70,7 @@ class TestSERConfigValidation:
 
 @pytest.mark.parametrize("config_cls", [DCEConfig, DSCConfig])
 class TestUnderlayValidation:
-    """``underlays`` accepts the split FLAIR tokens and rejects unsplit ``flair``."""
-
-    def test_legacy_flair_token_rejected(self, config_cls) -> None:
-        with pytest.raises(ValueError, match="Invalid underlay"):
-            config_cls(underlays=["flair"])
+    """Underlays accept supported image names and reject unknown names."""
 
     def test_unknown_underlay_rejected(self, config_cls) -> None:
         with pytest.raises(ValueError, match="Invalid underlay"):

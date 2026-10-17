@@ -237,10 +237,6 @@ class TestQIBASSVDExponential:
         mtt_tol: float,
     ) -> None:
         """Test sSVD recovery with synthetic recirculation AIF."""
-        if tissue_key == "low_perfusion" and noise_key != "zero":
-            pytest.xfail(
-                "SVD regularization inflates MTT for low-CBF (12) residues"
-            )
 
         tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
             tissue_key, noise_key
@@ -340,10 +336,6 @@ class TestQIBAOSVDExponential:
         mtt_tol: float,
     ) -> None:
         """Test oSVD recovery with synthetic recirculation AIF and noise."""
-        if tissue_key == "low_perfusion":
-            pytest.xfail(
-                "SVD regularization inflates MTT for low-CBF (12) residues"
-            )
 
         tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
             tissue_key, noise_key
@@ -589,6 +581,7 @@ class TestQIBACrossMethodComparison:
 TCIA_METHODS = ["ssvd", "osvd"]
 
 
+@pytest.mark.local_validation
 @skip_no_tcia_dro
 class TestTCIAGBMDSCDRO:
     """Validate DSC deconvolution against TCIA GBM-DSC-MRI-DRO.
@@ -664,20 +657,10 @@ class TestTCIAGBMDSCDRO:
     def test_k2_correction_effectiveness(self, method: str) -> None:
         """K2-corrected leak rCBV should be closer to noleak rCBV.
 
-        oSVD's block-circulant matrix changes CBV scaling relative to
-        K2 correction calibration; rCBV ratio shift reverses the correction
-        direction. This is expected from the forward/inverse model mismatch.
-
         Without correction, tumor-leak has negative deltaR2* post-bolus
         (T1 leakage), depressing CBV. K2 correction should bring it
         closer to the noleak estimate.
         """
-        if method == "osvd":
-            pytest.xfail(
-                "Block-circulant CBF underestimation is non-uniform across "
-                "tissue types (tumor -39% vs WM -22%), shifting the rCBV "
-                "ratio and reversing K2 correction direction"
-            )
 
         from pmriprep.utils.dsc_preload import apply_k2_correction
 
@@ -1141,6 +1124,7 @@ class TestTCIAGBMDSCDRO:
 # =============================================================================
 
 
+@pytest.mark.local_validation
 @skip_no_tcia_dro
 @skip_no_tcia_preload
 class TestTCIAPreloadLeakage:

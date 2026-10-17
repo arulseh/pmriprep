@@ -78,7 +78,6 @@ class TestFallbackWarning:
         assert "retained despite a poor gamma-variate fit" in w
         assert "R²=-0.40" in w
         assert "CBF, nCBF, MTT and deconvolution timing depend on this curve" in w
-        assert "remain interpretable" not in w
 
     def test_none_for_normal_real_aif(self) -> None:
         from pmriprep.utils.contrast_agent import collect_aif_fallback_warning

@@ -120,15 +120,6 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     dd = out_root / "pmriprep" / "dataset_description.json"
     assert dd.exists()
 
-    # No QC JSON orphan at session root
-    legacy_qc = (
-        out_root / "pmriprep" / "sub-01" / "ses-0001"
-        / "sub-01_ses-0001_desc-anatQC_quality.json"
-    )
-    assert not legacy_qc.exists(), (
-        f"desc-anatQC_quality.json should not exist: {legacy_qc}"
-    )
-
 
 def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> None:
     """Cross-check every produced sidecar carries required provenance fields."""
@@ -344,13 +335,6 @@ def test_warnings_block_populated_in_anchor_sidecar(
     assert any("Tissue segmentation" in w for w in warnings), warnings
     assert not any("FLAIR not available" in w for w in warnings), warnings
     assert not any("T2w not available" in w for w in warnings), warnings
-
-    # No QC JSON orphan at session root
-    legacy_qc = (
-        out_root / "pmriprep" / "sub-01" / "ses-0001"
-        / "sub-01_ses-0001_desc-anatQC_quality.json"
-    )
-    assert not legacy_qc.exists()
 
 
 def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None:

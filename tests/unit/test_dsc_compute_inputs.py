@@ -268,10 +268,12 @@ def test_compute_timing_maps_preserves_delays_above_30_seconds() -> None:
 def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
     tmp_path: Path,
 ) -> None:
-    """Tissue and measured AIF share BAT window, baseline subtraction, and dt."""
-    corrected = np.array([[[[0.0, 0.0, 1.0, 2.0, 1.0, 0.0]]]])
+    """Signed tissue ratios include the full bolus and recirculation window."""
+    pulse = np.array([0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.5, 1.0, 0.5, 0.25])
+    corrected = np.stack((pulse, -pulse))[:, None, None, :]
     raw = corrected + 5.0
-    measured_aif = np.array([1.0, 1.0, 3.0, 5.0, 3.0, 1.0])
+    measured_aif = 2.0 * pulse + 1.0
+    dt = 1.5
     measured_file = tmp_path / "measured_aif.txt"
     np.savetxt(measured_file, measured_aif)
     interface = ComputeDSCMaps(measured_aif_file=str(measured_file))
@@ -282,20 +284,19 @@ def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
         n_baseline=2,
         detected_baseline=2,
         detection_info={"arrival_index": 2},
-        dt=1.0,
+        dt=dt,
     )
 
-    expected_raw = np.trapezoid(raw - raw[..., :2].mean(axis=-1, keepdims=True), axis=-1)
-    expected_corrected = np.trapezoid(corrected, axis=-1)
-    expected_aif_auc = np.trapezoid((measured_aif - 1.0)[2:])
-    expected_tissue_auc = np.trapezoid(corrected[..., 2:], axis=-1)
+    expected_raw = np.trapezoid(raw - raw[..., :2].mean(axis=-1, keepdims=True), dx=dt, axis=-1)
+    expected_corrected = np.trapezoid(corrected, dx=dt, axis=-1)
+    expected_aif_auc = np.trapezoid((measured_aif - 1.0)[2:], dx=dt)
     np.testing.assert_allclose(result.raw, expected_raw)
     np.testing.assert_allclose(result.corrected, expected_corrected)
     np.testing.assert_allclose(result.difference, expected_raw - expected_corrected)
-    np.testing.assert_allclose(result.cbv, expected_tissue_auc / expected_aif_auc)
+    np.testing.assert_allclose(result.cbv[:, 0, 0], [0.5, -0.5])
     assert result.qc == {
         "cbv_auc_bat_frame": 2,
-        "cbv_auc_end_frame": 6,
+        "cbv_auc_end_frame": len(pulse),
         "cbv_auc_aif_integral": round(float(expected_aif_auc), 6),
     }
 

@@ -86,6 +86,7 @@ def test_registered_t1_preserves_values_over_valid_support(
     assert result is not None
     output = nib.load(result).get_fdata()
     assert output.shape == (4, 4, 4)
+    assert np.count_nonzero(np.isfinite(output)) > 0
     assert np.allclose(output[np.isfinite(output)], 1200.0)
     assert np.isnan(output).any()
 
@@ -123,6 +124,7 @@ def test_registered_b1_preserves_ratio_over_valid_support(
 
     assert result is not None
     output = nib.load(result).get_fdata()
+    assert np.count_nonzero(output > 0) > 0
     assert np.allclose(output[output > 0], 0.9)
     assert np.any(output == 0)
 

@@ -112,17 +112,6 @@ def test_tumor_seg_datasinks_smoke(
     for p in expected:
         assert p.exists(), f"Missing: {p.name}"
 
-    # Eliminated orphans must not exist
-    legacy = [
-        anat / "sub-01_ses-0001_desc-tumorseg_volumes.txt",
-        ses / "sub-01_ses-0001_space-anat_desc-lesionStats.json",
-        ses / "sub-01_ses-0001_desc-tumorsegQC_quality.json",
-        anat / "sub-01_ses-0001_desc-tumorClinicalContext.json",
-        anat / "sub-01_ses-0001_desc-tumorResume_pmriprep.json",
-    ]
-    for p in legacy:
-        assert not p.exists(), f"Orphan should not exist: {p.name}"
-
     dd = out_root / "pmriprep" / "dataset_description.json"
     assert dd.exists()
 

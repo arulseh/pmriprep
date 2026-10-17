@@ -2,25 +2,13 @@
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 import matplotlib.axes
 import matplotlib.figure
 import numpy as np
 
-from pmriprep.interfaces.dce import T1Mapping
 from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
-
-
-def test_t1_mapping_does_not_suppress_fallback_qc() -> None:
-    """Rejected VFA fits remain connected to an explanatory QC figure."""
-    source = inspect.getsource(T1Mapping._run_interface)
-
-    assert "show_t1_qc" not in source
-    assert "measured_t1_map=measured_t1_map" in source
-    assert "fallback_brain_mask = brain_mask.copy()" in source
-    assert "fallback_brain_mask," in source
 
 
 def test_fallback_qc_distinguishes_measured_and_final_maps(

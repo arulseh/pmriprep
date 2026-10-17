@@ -1,8 +1,4 @@
-"""Test linearized SPGR weighting and VFA fit-residual reporting.
-
-Compare denominator floors on paired synthetic noise, check noiseless T1
-recovery and verify that report residuals use B1-corrected flip angles.
-"""
+"""Test WLLS T1 recovery and residuals computed at B1-corrected flip angles."""
 from __future__ import annotations
 
 import nibabel as nib
@@ -44,16 +40,6 @@ _FA_EXPOSED = np.deg2rad([2.0, 5.0, 12.0])  # >=3 angles, small-flip anchor
 _T1_EXPOSED = 0.600  # 600 ms -> E1 ~ 0.9934, in the exposed band (0.99, 0.995)
 
 
-class TestExposedRegime:
-    """The fixture weight denominator lies between the two comparison floors."""
-
-    def test_smallflip_denominator_between_old_and_new_floor(self) -> None:
-        """The smallest-flip weight denominator is between 1e-6 and 0.01."""
-        e1 = np.exp(-_TR_S / _T1_EXPOSED)
-        denom_w = 1.0 - e1 * np.cos(_FA_EXPOSED[0])  # smallest flip
-        assert 1e-6 < denom_w < 1e-2  # Between the two comparison floors
-
-
 class TestNoiselessRecovery:
     """Noiseless SPGR lies exactly on the DESPOT1 line -> exact E1 for any weights."""
 
@@ -72,46 +58,8 @@ class TestNoiselessRecovery:
         assert t1[0] == pytest.approx(_T1_EXPOSED, rel=1e-3)
 
 
-class TestWeightDebiasVsOldFloor:
-    """Compare T1 bias and RMSE with denominator floors of 1e-6 and 0.01.
-
-    Both fits use identical synthetic noise samples. These assertions
-    characterize the fixture, not performance for arbitrary acquisitions.
-    """
-
-    def _mc(self, monkeypatch, floor: float, seed: int = 20240712, n: int = 8000):
-        monkeypatch.setattr(
-            "pmriprep.utils.dce_constants.EPSILON_WEIGHT_DENOM", floor
-        )
-        rng = np.random.default_rng(seed)
-        sig_true = _spgr(1.0, _FA_EXPOSED, _TR_S, _T1_EXPOSED)
-        sigma = sig_true.max() / 30.0  # SNR ~30 on the peak flip
-        noisy = sig_true[:, None, None, None] + rng.normal(
-            0.0, sigma, size=(len(_FA_EXPOSED), n, 1, 1)
-        )
-        return _fit(noisy, _FA_EXPOSED, _TR_S)
-
-    def test_new_floor_reduces_bias_and_rmse(self, monkeypatch) -> None:
-        """The 1e-6 floor gives lower mean bias and RMSE in the paired fixture."""
-        # Same seed -> paired on identical noise.
-        t1_old = self._mc(monkeypatch, 0.01)
-        t1_new = self._mc(monkeypatch, 1e-6)
-        ok = np.isfinite(t1_old) & np.isfinite(t1_new)
-        t1_old, t1_new = t1_old[ok], t1_new[ok]
-
-        bias_old = abs(t1_old.mean() - _T1_EXPOSED)
-        bias_new = abs(t1_new.mean() - _T1_EXPOSED)
-        rmse_old = np.sqrt(np.mean((t1_old - _T1_EXPOSED) ** 2))
-        rmse_new = np.sqrt(np.mean((t1_new - _T1_EXPOSED) ** 2))
-
-        # Compare paired estimates, mean bias and RMSE on the same noise.
-        assert (t1_old - t1_new).mean() > 0  # The larger floor gives higher paired estimates
-        assert bias_new < bias_old  # Lower absolute mean bias
-        assert rmse_new < rmse_old  # Lower RMSE in this fixture
-
-
 class TestDegenerateGuard:
-    """Zero-scale voxels stay finite; 2-angle case is weight-invariant."""
+    """Zero-scale voxels stay finite and two flip angles recover noiseless T1."""
 
     def test_zero_signal_voxel_is_finite(self) -> None:
         """All-zero signal -> determinant 0, but the abs backstop avoids 0/0 NaN."""
@@ -119,18 +67,13 @@ class TestDegenerateGuard:
         t1 = _fit(sig, _FA_EXPOSED, _TR_S)
         assert np.all(np.isfinite(t1))
 
-    def test_nfa2_weight_invariant(self, monkeypatch) -> None:
-        """Both denominator floors give equal fits to two noiseless flip angles."""
+    def test_two_angle_recovers_t1(self) -> None:
+        """Two noiseless flip angles recover T1 with the configured weighting."""
         fa2 = np.deg2rad([3.0, 15.0])
         sig = _spgr(500.0, fa2, _TR_S, _T1_EXPOSED)[:, None, None, None]
 
-        monkeypatch.setattr("pmriprep.utils.dce_constants.EPSILON_WEIGHT_DENOM", 0.01)
-        t1_old = _fit(sig, fa2, _TR_S)
-        monkeypatch.setattr("pmriprep.utils.dce_constants.EPSILON_WEIGHT_DENOM", 1e-6)
-        t1_new = _fit(sig, fa2, _TR_S)
-
-        assert np.allclose(t1_old, t1_new, rtol=1e-6)
-        assert t1_new[0] == pytest.approx(_T1_EXPOSED, rel=1e-3)
+        t1 = _fit(sig, fa2, _TR_S)
+        assert t1[0] == pytest.approx(_T1_EXPOSED, rel=1e-3)
 
 
 class TestVFAFitNRMSECorrectedAngles:

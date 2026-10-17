@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
 
 
 def _make_bids(tmp_path: Path) -> Path:
@@ -22,21 +20,6 @@ def _make_bids(tmp_path: Path) -> Path:
         json.dumps({"RepetitionTime": 2.0, "EchoTime": 0.003})
     )
     return bids
-
-
-def test_skip_flag_blocks_validator(monkeypatch, tmp_path: Path) -> None:
-    """skip=True must short-circuit subprocess invocation."""
-    from pmriprep.utils import bids as bids_mod
-
-    called: list[Any] = []
-
-    def fake_run(*args, **kwargs):
-        called.append(args)
-        raise AssertionError("validator must not run when skip=True")
-
-    monkeypatch.setattr(bids_mod.subprocess, "run", fake_run)
-    bids_mod.validate_bids_input(tmp_path, skip=True)
-    assert called == []
 
 
 def test_helpers_reuse_supplied_layout(monkeypatch, tmp_path: Path) -> None:

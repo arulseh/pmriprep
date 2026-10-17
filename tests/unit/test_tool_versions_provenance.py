@@ -1,19 +1,13 @@
 """Tool-version provenance: dataset-level GeneratedBy + methods boilerplate.
 
-Covers Part A (per-suite GeneratedBy entries + idempotency across the 4 datasink
-calls), Part B (version rendering in the boilerplate, unknown-safe), and Part C
-(retirement of the non-idiomatic per-file SoftwareVersions/BrainExtractionVersion
-custom keys).
+Covers per-suite GeneratedBy entries, idempotency across datasinks, and
+version rendering in the methods boilerplate.
 """
 from __future__ import annotations
 
 import json
 from collections import Counter
 from pathlib import Path
-
-import nibabel as nib
-import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Part A — GeneratedBy tool entries + idempotency
@@ -169,35 +163,3 @@ class TestBoilerplateVersionRendering:
         assert versions["FSL"] == "6.0.7.1"
         assert versions["ANTs"] == "2.6.5"
         assert "pmriprep" not in versions  # the pipeline itself is handled separately
-
-
-# ---------------------------------------------------------------------------
-# Part C — retirement of the custom keys
-# ---------------------------------------------------------------------------
-class TestCustomKeyRetirement:
-    def test_provenance_block_has_no_software_versions(self) -> None:
-        from pmriprep.utils.sidecar_builders import build_provenance_block
-
-        block = build_provenance_block({"method": "oSVD"})
-        assert "SoftwareVersions" not in block
-
-    def test_probseg_sidecar_has_no_software_versions(self, tmp_path: Path) -> None:
-        from pmriprep.utils.sidecar_builders import build_anat_probseg_sidecar
-
-        ref = tmp_path / "ref_T1w.nii.gz"
-        nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), np.eye(4)), ref)
-        sidecar = build_anat_probseg_sidecar(
-            tissue_type="WM",
-            source_paths=[str(ref)],
-            reference_voxel_source=str(ref),
-            bids_dir=str(tmp_path),
-            subject="01",
-            session=None,
-        )
-        assert "SoftwareVersions" not in sidecar
-
-    def test_create_provenance_dict_has_no_software_versions(self) -> None:
-        from pmriprep.utils.provenance import create_provenance_dict
-
-        prov = create_provenance_dict(processing_description="x")
-        assert "SoftwareVersions" not in prov

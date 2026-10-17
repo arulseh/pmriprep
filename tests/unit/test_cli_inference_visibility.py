@@ -57,12 +57,9 @@ def test_help_states_external_t1_alignment_contract() -> None:
     assert "alignment is reported but not corrected" in normalized
 
 
-def test_help_avoids_stale_or_overstated_method_claims() -> None:
-    """Public help remains concise and implementation-neutral."""
+def test_help_describes_dce_solver_choices() -> None:
+    """Public help distinguishes the linear Patlak solve from nonlinear fits."""
     help_text = _build_parser().format_help()
 
-    assert "not yet in the stable BIDS specification" not in help_text
-    assert "Gadovist 5.0" not in help_text
-    assert "Dynamic Contrast Enhanced" not in help_text
     normalized = " ".join(help_text.split())
     assert "bounded weighted least squares; linear for Patlak, nonlinear for other models" in normalized

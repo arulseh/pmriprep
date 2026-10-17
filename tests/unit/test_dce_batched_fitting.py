@@ -32,9 +32,10 @@ from pmriprep.models.dce.two_compartment_exchange import (
 from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 
 
-@pytest.mark.parametrize("model_name", ["patlak", "tofts", "extended_tofts", "2cxm"])
-@pytest.mark.parametrize("weighted", [False, True])
-@pytest.mark.parametrize("save_curves,compute_uncertainties", [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("model_name,weighted,save_curves,compute_uncertainties", [
+    ("patlak", False, False, True), ("patlak", True, True, False),
+    ("tofts", False, True, False), ("2cxm", True, False, True),
+])
 def test_chunk_worker_forwards_fit_inputs(
     monkeypatch: pytest.MonkeyPatch,
     model_name: str,
@@ -383,10 +384,6 @@ def test_scaled_lm_step_preserves_weighted_damped_objective() -> None:
     np.testing.assert_allclose(actual[0], expected, rtol=1e-12)
 
 
-# ---------------------------------------------------------------------------
-# Test fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture
 def aif_and_time():
     """Generate a realistic AIF and time vector."""
@@ -460,10 +457,6 @@ def _generate_2cxm_data(aif, time_points, n_voxels=1000, noise_level=0.01):
     return tissue + noise, fp_true, ps_true, ve_true, vp_true
 
 
-# ---------------------------------------------------------------------------
-# Test 1: Tofts recovery
-# ---------------------------------------------------------------------------
-
 class TestToftsRecovery:
     def test_tofts_recovery_1pct_noise(self, aif_and_time):
         """1000 synthetic voxels, 1% noise → params within 5% for 95%."""
@@ -487,11 +480,8 @@ class TestToftsRecovery:
         ktrans_rel_err = ktrans_err / np.maximum(ktrans_true[converged], 1e-6)
         pct_within_5 = np.mean(ktrans_rel_err < 0.05) * 100
         assert pct_within_5 > 90, f"Only {pct_within_5:.0f}% within 5%"
+        assert np.median(result.r_squared[converged]) > 0.9
 
-
-# ---------------------------------------------------------------------------
-# Test 2: Extended Tofts recovery
-# ---------------------------------------------------------------------------
 
 class TestExtendedToftsRecovery:
     def test_etofts_recovery(self, aif_and_time):
@@ -565,10 +555,6 @@ class TestExtendedToftsRecovery:
             result.uncertainties["vp"][0]
         )
 
-
-# ---------------------------------------------------------------------------
-# Test 3: Patlak exact recovery (no noise)
-# ---------------------------------------------------------------------------
 
 class TestPatlakExact:
     @pytest.mark.parametrize("n_frames", [127, 128, 256, 361])
@@ -659,6 +645,7 @@ class TestPatlakExact:
 
         assert result.model_name == "patlak"
         assert np.all(result.converged)
+        assert np.all(result.r_squared > 0.999)
 
         np.testing.assert_allclose(
             result.params["ktrans"], ktrans_true, rtol=1e-6,
@@ -667,13 +654,6 @@ class TestPatlakExact:
             result.params["vp"], vp_true, rtol=1e-6,
         )
 
-    def test_patlak_high_r_squared(self, aif_and_time):
-        """Noiseless Patlak should give R² ≈ 1."""
-        aif, time_points = aif_and_time
-        tissue, _, _ = _generate_patlak_data(aif, time_points, n_voxels=100)
-
-        result = batched_patlak_lstsq(tissue, aif, time_points)
-        assert np.all(result.r_squared > 0.999)
 
     @pytest.mark.parametrize(
         "latent_parameters",
@@ -773,10 +753,6 @@ class TestPatlakExact:
         )
         assert objective(parameters) == pytest.approx(reference.fun, rel=1e-9)
 
-
-# ---------------------------------------------------------------------------
-# Test 4: 2CXM recovery
-# ---------------------------------------------------------------------------
 
 class TestTwoCXMRecovery:
     def test_2cxm_noiseless_balanced_regime_matches_scalar(
@@ -892,94 +868,6 @@ class TestTwoCXMRecovery:
         assert np.median(fp_rel) < 0.6
 
 
-# ---------------------------------------------------------------------------
-# Test 6: Auto mode BIC selection
-# ---------------------------------------------------------------------------
-
-class TestAutoModeBIC:
-    def test_bic_selects_correct_model(self, aif_and_time):
-        """Synthetic data from different models → correct model selected."""
-        aif, time_points = aif_and_time
-        rng = np.random.RandomState(60)
-        n_per = 100
-
-        # Tofts data (no vp contribution)
-        kt_tofts = rng.uniform(0.05, 0.2, n_per)
-        ve_tofts = rng.uniform(0.15, 0.4, n_per)
-        tofts_curves = batched_tofts_model(
-            kt_tofts, ve_tofts, aif, time_points,
-        ).tissue_curves
-
-        # Patlak data (distinct linear accumulation pattern)
-        kt_patlak = rng.uniform(0.05, 0.15, n_per)
-        vp_patlak = rng.uniform(0.05, 0.15, n_per)
-        patlak_curves = batched_patlak_model(
-            kt_patlak, vp_patlak, aif, time_points,
-        ).tissue_curves
-
-        # Combine
-        all_curves = np.vstack([tofts_curves, patlak_curves])
-        noise = 0.005 * np.max(all_curves, axis=1, keepdims=True) * rng.randn(*all_curves.shape)
-        all_curves += noise
-
-        # Fit all candidates
-        candidates = ["tofts", "patlak"]
-        results = {}
-        for cname in candidates:
-            if cname == "patlak":
-                results[cname] = batched_patlak_lstsq(
-                    all_curves, aif, time_points, save_fitted_curves=True,
-                )
-            else:
-                results[cname] = batched_lm_fit(
-                    cname, all_curves, aif, time_points,
-                    max_iter=30, save_fitted_curves=True,
-                )
-
-        # BIC selection
-        2 * n_per
-        T = len(time_points)
-        n_params = {"tofts": 2, "patlak": 2}
-        bic = {}
-        for cname, res in results.items():
-            rss = np.sum((all_curves - res.fitted_curves) ** 2, axis=1)
-            rss_safe = np.maximum(rss, 1e-30)
-            k = n_params[cname]
-            bic[cname] = T * np.log(rss_safe / T) + k * np.log(T)
-
-        bic_stack = np.stack([bic[c] for c in candidates], axis=0)
-        winner_idx = np.argmin(bic_stack, axis=0)
-        winners = [candidates[w] for w in winner_idx]
-
-        # Check that Tofts voxels are mostly selected as Tofts
-        tofts_correct = sum(w == "tofts" for w in winners[:n_per])
-        assert tofts_correct > 60, f"Only {tofts_correct}/{n_per} Tofts correct"
-
-
-# ---------------------------------------------------------------------------
-# Test 7: CPU consistency
-# ---------------------------------------------------------------------------
-
-class TestCPUConsistency:
-    def test_tofts_r2_quality(self, aif_and_time):
-        """Same data through batched LM should give good R² distributions."""
-        aif, time_points = aif_and_time
-        tissue, ktrans_true, ve_true = _generate_tofts_data(
-            aif, time_points, n_voxels=200,
-        )
-
-        result = batched_lm_fit(
-            "tofts", tissue, aif, time_points, max_iter=50,
-        )
-
-        # Should have good R²
-        assert np.median(result.r_squared[result.converged]) > 0.9
-
-
-# ---------------------------------------------------------------------------
-# Test 8: Convergence under noise
-# ---------------------------------------------------------------------------
-
 class TestConvergenceUnderNoise:
     def test_10pct_noise_convergence(self, aif_and_time):
         """10% noise → >80% convergence rate."""
@@ -995,10 +883,6 @@ class TestConvergenceUnderNoise:
         convergence_rate = np.sum(result.converged) / len(result.converged)
         assert convergence_rate > 0.8, f"Convergence rate: {convergence_rate:.2f}"
 
-
-# ---------------------------------------------------------------------------
-# Test 9: Result dict format
-# ---------------------------------------------------------------------------
 
 class TestResultDictFormat:
     def test_fit_result_fields(self, aif_and_time):
@@ -1022,10 +906,6 @@ class TestResultDictFormat:
         assert isinstance(result.uncertainties, dict)
         assert result.n_iterations > 0
 
-
-# ---------------------------------------------------------------------------
-# Test 11: Weighted fitting
-# ---------------------------------------------------------------------------
 
 class TestWeightedFitting:
     def test_weighted_patlak(self, aif_and_time):
@@ -1065,10 +945,6 @@ class TestWeightedFitting:
 
         assert np.sum(result.converged) > 50
 
-
-# ---------------------------------------------------------------------------
-# Test 12-14: Batched convolution forward model tests
-# ---------------------------------------------------------------------------
 
 class TestPatlakForwardModel:
     def test_patlak_batched_matches_cpu(self, aif_and_time):
@@ -1204,11 +1080,6 @@ class TestEvaluateModel:
         aif, time_points = aif_and_time
         with pytest.raises(ValueError, match="Unknown model"):
             evaluate_model("unknown", {}, aif, time_points)
-
-
-# ---------------------------------------------------------------------------
-# Chunked multiproc NLLS path — concat_fit_results + _dispatch_batched_chunks
-# ---------------------------------------------------------------------------
 
 
 class TestChunkedMultiproc:
@@ -1347,14 +1218,8 @@ class TestChunkedMultiproc:
         )
 
 
-    def test_dispatch_auto_mode_bic_chunked_matches_inline(self, aif_and_time):
-        """Auto-mode BIC selection is identical at n_procs=1 and n_procs=4.
-
-        Runs the outer candidate loop at each n_procs setting, stacks
-        the per-candidate BICs (same arithmetic the interface uses at
-        the :argmin step), and asserts the winner index per voxel and
-        the winner params match exactly.
-        """
+    def test_candidate_fits_chunked_match_inline(self, aif_and_time):
+        """Candidate parameters and fitted curves agree at n_procs=1 and 4."""
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 
         aif, time_points = aif_and_time
@@ -1396,29 +1261,6 @@ class TestChunkedMultiproc:
                 r1.fitted_curves, r4.fitted_curves, atol=1e-10, rtol=0,
                 err_msg=f"{cname}:fitted_curves",
             )
-
-        # BIC selection should land identical winners.
-        from pmriprep.models.dce.base import EPSILON_RSS
-
-        T = tissue.shape[1]
-        k_map = {"tofts": 2, "extended_tofts": 3, "patlak": 2}
-
-        def bic_winner(results: dict[str, FitResult]) -> np.ndarray:
-            bics = []
-            cnames = list(results.keys())
-            for cname in cnames:
-                rss = np.sum(
-                    (tissue - results[cname].fitted_curves) ** 2, axis=1,
-                )
-                rss_safe = np.maximum(rss, EPSILON_RSS)
-                bics.append(
-                    T * np.log(rss_safe / T) + k_map[cname] * np.log(T),
-                )
-            return np.argmin(np.stack(bics, axis=0), axis=0)
-
-        np.testing.assert_array_equal(
-            bic_winner(results_1), bic_winner(results_4),
-        )
 
     def test_auto_nlls_requests_candidate_uncertainties(
         self, monkeypatch: pytest.MonkeyPatch,

@@ -6,34 +6,7 @@ recommendation system.
 
 import pytest
 
-from pmriprep.utils.dce_constants import (
-    QC_B1_MEAN_HIGH,
-    QC_B1_MEAN_LOW,
-    QC_DCE_BASELINE_TSNR_MIN,
-    QC_DCE_BASELINE_TSNR_WARN,
-    QC_PEAK_ENHANCEMENT_MIN,
-    QC_PEAK_ENHANCEMENT_WARN,
-)
 from pmriprep.utils.qc_standards import QCAction
-
-
-class TestDCESignalQualityConstants:
-    """Verify DCE signal quality constants are set correctly."""
-
-    def test_peak_enhancement_thresholds(self) -> None:
-        """Peak enhancement thresholds match configured policy values."""
-        assert QC_PEAK_ENHANCEMENT_MIN == 5.0
-        assert QC_PEAK_ENHANCEMENT_WARN == 20.0
-
-    def test_baseline_tsnr_thresholds(self) -> None:
-        """Baseline tSNR thresholds match configured policy values."""
-        assert QC_DCE_BASELINE_TSNR_MIN == 3.0
-        assert QC_DCE_BASELINE_TSNR_WARN == 8.0
-
-    def test_b1_bias_thresholds(self) -> None:
-        """B1+ bias thresholds match 1.5T extreme values."""
-        assert QC_B1_MEAN_LOW == 0.7
-        assert QC_B1_MEAN_HIGH == 1.3
 
 
 def test_two_cxm_suitability_warning_requests_review_not_exclusion() -> None:

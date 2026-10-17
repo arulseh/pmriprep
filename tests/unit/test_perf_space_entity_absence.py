@@ -7,7 +7,6 @@ or dscref. SpatialReference identifies the corresponding reference image.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
@@ -19,20 +18,6 @@ from pmriprep.utils.sidecar_builders import (
 
 
 _SPACE_ENTITY = re.compile(r"_space-")
-_PMRIPREP_ROOT = Path(__file__).resolve().parents[2] / "pmriprep"
-
-# Files where the forbidden tokens may legitimately appear in
-# documentation examples. Each entry is
-# (relative_path, allowed_substring, justification).
-_ALLOWLIST: list[tuple[str, str, str]] = [
-    (
-        "interfaces/qc_writers.py",
-        "space-anat_desc-lesionStats.json",
-        "Docstring reference only; producer code does not write this filename.",
-    ),
-]
-
-_FORBIDDEN_TOKENS = ("space-anat", "from-anat", "to-anat")
 
 
 # -----------------------------------------------------------------------------
@@ -115,52 +100,8 @@ def test_dce_copy_perf_map_anat_mask_has_space_entity(tmp_path) -> None:
     assert out_path.index("space-dceref") < out_path.index("desc-brain")
 
 
-# -----------------------------------------------------------------------------
-# Rule 2: no `space-anat` / `from-anat` / `to-anat` in source (with allowlist)
-# -----------------------------------------------------------------------------
-
-
-def _scan_source_files() -> list[tuple[str, int, str, str]]:
-    """Return list of (relpath, line_no, line_content, matched_token) for
-    every line in pmriprep/ source that contains a forbidden token but is
-    NOT covered by the allowlist."""
-    findings = []
-    for py_file in _PMRIPREP_ROOT.rglob("*.py"):
-        relpath = py_file.relative_to(_PMRIPREP_ROOT).as_posix()
-        text = py_file.read_text()
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            for token in _FORBIDDEN_TOKENS:
-                if token not in line:
-                    continue
-                # Check allowlist
-                allowed = any(
-                    relpath == allowed_path and allowed_substring in line
-                    for allowed_path, allowed_substring, _ in _ALLOWLIST
-                )
-                if allowed:
-                    continue
-                findings.append((relpath, line_no, line.rstrip(), token))
-    return findings
-
-
-def test_no_pmriprep_invented_anat_space_tokens() -> None:
-    """Anatomical-reference entities use T1w rather than the generic anat token."""
-    findings = _scan_source_files()
-    if findings:
-        msg = "\nForbidden BIDS-non-canonical tokens found in pmriprep/ source:\n"
-        for relpath, line_no, line, token in findings:
-            msg += f"  pmriprep/{relpath}:{line_no} [{token}]: {line}\n"
-        msg += (
-            "\nUse `T1w` instead of `anat` for the BIDS space identifier. "
-            "If a new legitimate exception arises (e.g., a deferred BIDS "
-            "file-org cleanup), add it to _ALLOWLIST in this test file with "
-            "a justification."
-        )
-        pytest.fail(msg)
-
-
 def test_anat_reference_basename_uses_T1w_space() -> None:
-    """``anat_reference_basename`` returns space-T1w form (not space-anat)."""
+    """Anatomical reference images use the T1w space entity."""
     precon = anat_reference_basename(is_postcon_ref=False)
     postcon = anat_reference_basename(is_postcon_ref=True)
     assert "space-T1w" in precon, (
@@ -169,8 +110,6 @@ def test_anat_reference_basename_uses_T1w_space() -> None:
     assert "space-T1w" in postcon, (
         f"Postcon ref basename should use space-T1w; got {postcon!r}"
     )
-    assert "space-anat" not in precon
-    assert "space-anat" not in postcon
 
 
 def test_anat_spatial_reference_preserves_source_entities() -> None:

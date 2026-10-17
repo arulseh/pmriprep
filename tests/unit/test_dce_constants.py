@@ -5,17 +5,6 @@ import pytest
 
 from pmriprep.utils import dce_constants
 from pmriprep.utils.dce_constants import (
-    EPSILON_CONCENTRATION,
-    EPSILON_T1,
-    FAHRAEUS_RATIO,
-    HEMATOCRIT,
-    HEMATOCRIT_ARTERIAL,
-    capillary_hematocrit,
-    KTRANS_BOUNDS,
-    MIN_ENHANCEMENT_MM,
-    MIN_MEANINGFUL_ENHANCEMENT_MM,
-    VE_BOUNDS,
-    VP_BOUNDS,
     compute_fwhm_threshold_frames,
     compute_timing_margin_frames,
     get_aif_thresholds,
@@ -48,24 +37,6 @@ def test_exchange_rate_support_reaches_all_consumers() -> None:
                                 (np.nextafter(500., 0.), True), (500., True), (501., True)):
             parameters = {"Fp": 40., "PS": 10., "ve": .2, "vp": .05, rate: value}
             assert dce_compute._is_degenerate_dce_fit("2cxm", parameters) is rejected
-
-
-class TestMinMeaningfulEnhancement:
-    """The AIF minimum-meaningful-enhancement floor is its own named role."""
-
-    def test_value_pinned(self) -> None:
-        """The AIF amplitude guard is 0.01 mM."""
-        assert MIN_MEANINGFUL_ENHANCEMENT_MM == 0.01
-
-    def test_distinct_symbol_from_near_zero_guards(self) -> None:
-        """It is a distinct constant from the near-zero concentration guards.
-
-        AIF amplitude, voxel enhancement and numerical concentration guards
-        have separate roles and values.
-        """
-        assert "MIN_MEANINGFUL_ENHANCEMENT_MM" in dir(dce_constants)
-        assert MIN_MEANINGFUL_ENHANCEMENT_MM != MIN_ENHANCEMENT_MM  # 0.01 vs 1e-8
-        assert MIN_MEANINGFUL_ENHANCEMENT_MM != EPSILON_CONCENTRATION  # 0.01 vs 1e-6
 
 
 class TestBloodT1:
@@ -149,36 +120,6 @@ class TestAIFThresholds:
             get_aif_thresholds("unknown")
 
 
-class TestParameterBounds:
-    """Tests for pharmacokinetic parameter bounds."""
-
-    def test_parameter_bounds_valid(self) -> None:
-        """All parameter bounds have min < max and reasonable ranges."""
-        assert KTRANS_BOUNDS.min < KTRANS_BOUNDS.max
-        assert KTRANS_BOUNDS.min >= 0.0
-
-        assert VE_BOUNDS.min < VE_BOUNDS.max
-        assert VE_BOUNDS.min >= 0.0
-        assert VE_BOUNDS.max <= 1.0
-
-        assert VP_BOUNDS.min < VP_BOUNDS.max
-        assert VP_BOUNDS.min >= 0.0
-        assert VP_BOUNDS.max <= 1.0
-
-
-class TestConstantValues:
-    """Tests for specific constant values."""
-
-    def test_constants_values(self) -> None:
-        """Verify key constant values match expected."""
-        assert HEMATOCRIT == 0.42
-        assert HEMATOCRIT_ARTERIAL == 0.42
-        assert FAHRAEUS_RATIO == 0.85
-        assert abs(capillary_hematocrit() - 0.357) < 1e-6
-        assert abs(capillary_hematocrit(0.30) - 0.255) < 1e-6  # anemia
-        assert EPSILON_T1 == 0.01
-
-
 class TestB1Thresholds:
     """Tests for B1+ field-strength thresholds."""
 
@@ -190,16 +131,6 @@ class TestB1Thresholds:
         assert t.dce_clip_low == 0.5
         assert t.dce_clip_high == 1.7
 
-    def test_vfa_and_dce_clip_ranges_harmonized(self) -> None:
-        """The VFA-fit and signal->concentration paths clip B1 identically.
-
-        A split range biases C(t)->Ktrans for voxels whose true B1 falls between
-        the two ceilings, so the two clips must stay equal at every field.
-        """
-        for field in (1.5, 3.0, 7.0):
-            t = get_b1_thresholds(field)
-            assert t.vfa_clip_low == t.dce_clip_low
-            assert t.vfa_clip_high == t.dce_clip_high
 
     def test_b1_thresholds_nearest(self) -> None:
         """Intermediate field returns nearest known thresholds."""

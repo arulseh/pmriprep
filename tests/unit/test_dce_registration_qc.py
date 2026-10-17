@@ -17,13 +17,13 @@ def _identity_flirt_mat(path: Path) -> None:
     np.savetxt(str(path), np.eye(4), fmt="%.6f")
 
 
-@pytest.mark.skipif(
-    shutil.which("flirt") is None or shutil.which("fslmaths") is None,
-    reason="FSL FLIRT/fslmaths not available",
-)
 class TestTransformMaskToGrid:
     """Helper-level test for transform_mask_to_grid same-space shortcut."""
 
+    @pytest.mark.skipif(
+        shutil.which("flirt") is None or shutil.which("fslmaths") is None,
+        reason="FSL FLIRT/fslmaths not available",
+    )
     def test_same_space_shortcut_produces_dce_grid_mask(
         self, tmp_path: Path
     ) -> None:
@@ -54,9 +54,7 @@ class TestTransformMaskToGrid:
         out_img = nib.load(out)
         assert out_img.shape == (8, 8, 4)
         out_data = np.asarray(out_img.dataobj)
-        assert set(np.unique(out_data).tolist()) <= {0, 1}
-        assert out_data.sum() > 0
-        assert not np.isnan(out_data).any()
+        np.testing.assert_array_equal(out_data, mask_data)
 
     def test_returns_empty_when_mask_unset(self, tmp_path: Path) -> None:
         """Unset mask returns "" so downstream traits.Str ports accept it."""

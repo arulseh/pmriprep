@@ -1,14 +1,9 @@
-"""Test consistent 3 T B1+ bounds in T1 mapping and concentration conversion.
-
-Both paths use an upper B1+ ratio of 1.7. Synthetic comparisons with a 1.5
-conversion ceiling measure the effect of mismatched effective flip angles.
-"""
+"""Concentration recovery with B1-corrected SPGR flip angles."""
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-import pmriprep.utils.dce_constants as dce_constants
 from pmriprep.utils.dce_signal import signal_to_concentration
 
 _NOMINAL_FA_DEG = 20.0
@@ -48,42 +43,8 @@ def _invert(signal: np.ndarray, b1: float) -> np.ndarray:
     return res.concentration.reshape(-1)
 
 
-class TestHighB1Harmonization:
-    """Concentration recovery for a true B1+ ratio between 1.5 and 1.7."""
-
-    def test_new_clip_recovers_peak_and_beats_old(self, monkeypatch) -> None:
-        """A 1.7 ceiling recovers the peak more closely than a 1.5 ceiling."""
-        c_peak = 0.5
-        signal, c_curve = _forward_signal(true_b1=1.6, c_peak=c_peak)
-
-        # Production constants (dce_clip_high == 1.7 == vfa_clip_high).
-        c_new = _invert(signal, b1=1.6)
-        err_new = abs(c_new[-1] - c_peak)
-
-        # Compare with a lower conversion ceiling (dce_clip_high == 1.5).
-        old_entry = dce_constants.B1_THRESHOLDS_BY_FIELD[3.0]._replace(
-            dce_clip_high=1.5
-        )
-        monkeypatch.setitem(dce_constants.B1_THRESHOLDS_BY_FIELD, 3.0, old_entry)
-        c_old = _invert(signal, b1=1.6)
-        err_old = abs(c_old[-1] - c_peak)
-
-        assert err_new == pytest.approx(0.0, abs=5e-3)  # Effective flip matches the T1 map
-        assert err_new < err_old  # harmonization removes the high-B1 bias
-
-
-class TestLowB1Unchanged:
-    """B1+ ratios at or below 1.5 fall below both comparison ceilings."""
-
-    def test_b1_below_old_ceiling_is_identical(self, monkeypatch) -> None:
-        """A B1+ ratio of 1.4 produces equal concentration arrays with either ceiling."""
-        signal, _ = _forward_signal(true_b1=1.4, c_peak=0.5)
-        c_new = _invert(signal, b1=1.4)
-
-        old_entry = dce_constants.B1_THRESHOLDS_BY_FIELD[3.0]._replace(
-            dce_clip_high=1.5
-        )
-        monkeypatch.setitem(dce_constants.B1_THRESHOLDS_BY_FIELD, 3.0, old_entry)
-        c_old = _invert(signal, b1=1.4)
-
-        assert np.allclose(c_new, c_old, rtol=0, atol=0)
+@pytest.mark.parametrize("b1", [1.4, 1.6])
+def test_concentration_recovery_with_b1(b1: float) -> None:
+    """SPGR inversion recovers the known curve at the effective flip angle."""
+    signal, expected = _forward_signal(true_b1=b1, c_peak=0.5)
+    np.testing.assert_allclose(_invert(signal, b1), expected, rtol=0, atol=5e-3)

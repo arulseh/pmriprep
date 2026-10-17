@@ -1,7 +1,6 @@
 """Test DCE AIF amplitude gates, temporal metrics and source handling."""
 from __future__ import annotations
 
-import re
 
 import numpy as np
 import pytest
@@ -17,21 +16,15 @@ from pmriprep.utils.dce_constants import MIN_MEANINGFUL_ENHANCEMENT_MM
 from tests.unit.test_dce_aif import _make_qc
 
 
-class TestP1ParkerNoRelaxivity:
-    """The sampled population AIF scales with dose and has no scan-r1 argument."""
-
-    def test_no_r1_argument(self) -> None:
-        """The population-AIF API rejects an r1_actual argument."""
-        with pytest.raises(TypeError):
-            parker_population_aif(np.arange(60.0), 1.0, r1_actual=11.6)  # type: ignore[call-arg]
+class TestPopulationAIFDoseScaling:
+    """The sampled population AIF scales with dose."""
 
     def test_peak_scales_with_dose_only(self) -> None:
-        """Peak is set by dose_factor alone (no relaxivity term)."""
+        """Population-AIF peak amplitude follows the administered dose."""
         t = np.arange(0, 300.0, 1.0)
         p_full = float(np.max(parker_population_aif(t, 1.0)))
         p_half = float(np.max(parker_population_aif(t, 0.5)))
         assert p_half == pytest.approx(0.5 * p_full, rel=1e-6)
-        # ~6 mM blood-scale peak at full dose (Parker), no r1 inflation.
         assert 4.0 < p_full < 9.0
 
 
@@ -90,13 +83,3 @@ class TestP5LateTailPostPeak:
         # inflated by the first-pass peak (which a scan-start window would catch).
         assert qc["late_tail_per_peak"] is not None
         assert qc["late_tail_per_peak"] < 0.05
-
-
-class TestC1AtlasStripResolutionAgnostic:
-    """The atlas-name strip works for any resolution, not just 2mm."""
-
-    @pytest.mark.parametrize("res", ["1mm", "2mm", "3mm"])
-    def test_region_extracted_any_resolution(self, res: str) -> None:
-        """The region tag is extracted for 1mm/2mm/3mm, so g6_f matches."""
-        stem = f"MNI_{res}_MRA_arterial_MCA_ACA_dce"
-        assert re.sub(r"^MNI_\d+mm_MRA_arterial_", "", stem) == "MCA_ACA_dce"

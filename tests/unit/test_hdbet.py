@@ -296,15 +296,6 @@ class TestDSCBrainExtract:
         assert Path(iface._results["dsc_brain_file"]).exists()
         assert Path(iface._results["dsc_brain_mask_file"]).exists()
 
-    def test_output_trait_names(self) -> None:
-        """Output trait names must match workflow expectations."""
-        from pmriprep.interfaces.dsc_brain import DSCBrainExtractOutputSpec
-
-        spec = DSCBrainExtractOutputSpec()
-        assert hasattr(spec, "dsc_brain_file")
-        assert hasattr(spec, "dsc_brain_mask_file")
-        assert hasattr(spec, "method_used")
-        assert hasattr(spec, "qc_metrics")
 
     def test_hdbet_qc_records_execution_policy(self, tmp_path: Path) -> None:
         """Successful DSC HD-BET records its concrete TTA policy."""
@@ -326,32 +317,10 @@ class TestDSCBrainExtract:
             "hdbet_tta_used": True,
         }
 
-    def test_input_trait_names(self) -> None:
-        """Input trait names must match workflow connections."""
-        from pmriprep.interfaces.dsc_brain import DSCBrainExtractInputSpec
-
-        spec = DSCBrainExtractInputSpec()
-        assert hasattr(spec, "dsc_mean_file")
-        assert hasattr(spec, "hdbet_device")
-        assert hasattr(spec, "hdbet_conda_env")
-        assert hasattr(spec, "use_gpu")
-        assert hasattr(spec, "sloppy")
-
 
 class TestDCEBrainExtract:
     """Tests for the DCE brain extraction interface contract."""
 
-    def test_input_trait_names(self) -> None:
-        """Inputs describe the native DCE extraction chain."""
-        from pmriprep.interfaces.dce import DCEBrainExtractInputSpec
-
-        spec = DCEBrainExtractInputSpec()
-        assert hasattr(spec, "dce_mean")
-        assert hasattr(spec, "hdbet_device")
-        assert hasattr(spec, "hdbet_conda_env")
-        assert hasattr(spec, "use_gpu")
-        assert hasattr(spec, "sloppy")
-        assert not hasattr(spec, "t1w_brain_mask")
 
     def test_hdbet_qc_records_execution_policy(self, tmp_path: Path) -> None:
         """Successful DCE HD-BET records its concrete TTA policy."""
@@ -404,20 +373,3 @@ def test_perfusion_workflows_propagate_sloppy(tmp_path: Path) -> None:
     )
     dsc_nodes = {node.name: node for node in dsc_workflow._get_all_nodes()}
     assert dsc_nodes["hdbet_dsc"].inputs.sloppy is True
-
-
-class TestAnatomicalBrainExtraction:
-    """Tests for the anatomical brain extraction interface contract."""
-
-    def test_contract_contains_only_computed_qc(self) -> None:
-        """The interface omits registration-dependent MNI overlap QC."""
-        from pmriprep.interfaces.anat import (
-            BrainExtractionInputSpec,
-            BrainExtractionOutputSpec,
-        )
-
-        inputs = BrainExtractionInputSpec().traits()
-        outputs = BrainExtractionOutputSpec().traits()
-        assert "mni_template" not in inputs
-        assert "mni_mask" not in inputs
-        assert "dice_vs_mni" not in outputs

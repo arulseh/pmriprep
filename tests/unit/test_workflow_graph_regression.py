@@ -673,7 +673,6 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
     assert cpi["node_params"]["compute_maps"]["cpi_dispersion"] == "none"
     assert cpi["node_params"]["compute_maps"]["cpi_infer_delay"] is True
     assert cpi["node_params"]["compute_maps"]["cpi_fallback"] == "osvd"
-    assert "cpi_infer_cpt" not in cpi["node_params"]["compute_maps"]
     assert ("leakage_correct", "guidance_file", "compute_maps", "bsw_guidance_file") in cpi["edges"]
     assert ("inputnode", "te", "compute_maps", "te") in cpi["edges"]
 

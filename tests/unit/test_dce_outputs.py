@@ -30,7 +30,6 @@ def test_pk_sidecar_records_plasma_input_compartment(tmp_path: Path) -> None:
         qc_metrics={"aif_detection": {"hematocrit": 0.42}},
     )
     assert sidecar["InputFunctionCompartment"] == "plasma"
-    assert "KtransConvention" not in sidecar
     assert "KtransConventionHct" not in sidecar
 
 

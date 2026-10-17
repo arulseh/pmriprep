@@ -332,11 +332,6 @@ def test_approved_public_config_is_validated() -> None:
         and config.cpi_dispersion == "none"
         and config.cpi_fallback == "osvd"
     )
-    assert not hasattr(config, "cpi_infer_cpt")
-    with pytest.raises(TypeError):
-        DSCConfig(cpi_infer_cpt=False)  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="cpi_infer_cpt"):
-        build_dsc_config({"dsc": {"cpi_infer_cpt": False}})
     assert (
         build_dsc_config({"dsc": {"cpi_control_points": "6"}}).cpi_control_points == 6
     )

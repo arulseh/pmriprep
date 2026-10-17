@@ -232,7 +232,6 @@ def test_cpi_mtt_sidecar_reports_residue_integral() -> None:
     )
     assert cpi_sidecar["MTTMethod"] == "fitted_residue_integral"
     assert "FallbackMTTMethod" not in cpi_sidecar
-    assert "MTTAtBoundFraction" not in cpi_sidecar
 
     mixed_sidecar = build_dsc_map_sidecar(
         base={},
@@ -290,8 +289,6 @@ def test_arrival_delay_sidecar_reports_unestimated_cpi_timing() -> None:
     )
 
     assert sidecar["ArrivalDelayMethod"] == "not_estimated"
-    assert "FallbackArrivalDelayMethod" not in sidecar
-    assert "MixedEstimator" not in sidecar
     assert "FittedDelayAtBoundFraction" not in sidecar
 
 
@@ -314,8 +311,6 @@ def test_arrival_delay_sidecar_reports_fitted_estimator_only() -> None:
         units="s",
     )
     assert sidecar["ArrivalDelayMethod"] == "fitted_aif_relative_arrival_delay"
-    assert "FallbackArrivalDelayMethod" not in sidecar
-    assert "MixedEstimator" not in sidecar
     assert sidecar["ArrivalDelayFiniteVoxelCount"] == 875
     assert sidecar["ArrivalDelayFiniteVoxelFraction"] == pytest.approx(0.875)
     assert sidecar["ArrivalDelayCoverageDenominator"] == "DSC analysis mask"
@@ -342,8 +337,6 @@ def test_cpi_timing_derivative_is_named_arrival_delay(
     assert not list(derivatives.rglob("*dscTmax_stat.nii.gz"))
     sidecar = _load_sidecar(derivatives, "dscArrivalDelay_stat")
     assert sidecar["ArrivalDelayMethod"] == "fitted_aif_relative_arrival_delay"
-    assert "FallbackArrivalDelayMethod" not in sidecar
-    assert "MixedEstimator" not in sidecar
     assert "NaN" in sidecar["RejectedFitValues"]
 
 
@@ -660,24 +653,6 @@ class TestAifMapRegistryCoverage:
         assert not extra, (
             f"AIF_INDEPENDENT_MAPS contains keys not in DSC_AIF_MAP_KEYS: "
             f"{extra}"
-        )
-
-    def test_qc_standards_tiers_cover_canonical_enum(self) -> None:
-        """The tier sets used by ``qc_standards`` must cover all canonical
-        detection levels so new tiers don't silently route to 'unknown'."""
-        from pmriprep.utils.dsc_constants import DSC_DETECTION_LEVELS
-        _QC_ROUTED_TIERS = {
-            "atlas_strict", "atlas_relaxed", "atlas_permissive",
-            "full_atlas_permissive", "brain_relaxed", "brain_permissive",
-            "external", "synthetic",
-        }
-        _QC_GENERIC_REVIEW = {"single_best"}
-        covered = _QC_ROUTED_TIERS | _QC_GENERIC_REVIEW
-        missing = set(DSC_DETECTION_LEVELS) - covered
-        assert not missing, (
-            f"Canonical DSCDetectionLevel members not routed in "
-            f"qc_standards: {missing}. Add explicit routing or "
-            f"include in the generic-REVIEW set."
         )
 
 

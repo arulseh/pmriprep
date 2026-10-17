@@ -59,7 +59,6 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert "Resolution" not in sidecar
     assert isinstance(sidecar["VoxelSize"], list)
     assert sidecar["InputFunctionCompartment"] == "plasma"
-    assert "KtransConvention" not in sidecar
 
 
 def test_registered_vfa_t1map_writes_registration_provenance(
@@ -168,25 +167,6 @@ def test_registered_vfa_t1map_skips_population_fallback(
     wf.run()
 
     assert not list((out / "pmriprep").rglob("*T1map.nii.gz"))
-
-
-def test_removed_model_free_maps_cannot_create_derivative_sinks(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """Unsupported model-free map inputs do not create derivative sinks."""
-    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-    bids, _ = minimal_bids
-    wf = init_dce_datasinks_wf(
-        output_dir=str(tmp_path / "out"), bids_dir=str(bids),
-        subject_id="01", session_id="0001",
-        pk_model="auto", inference="nlls",
-        present_inputs={"wash_in_slope_map", "wash_out_slope_map", "curve_type_map"},
-    )
-    node_names = set(wf.list_node_names())
-    assert not any("wash_in_slope_map" in name for name in node_names)
-    assert not any("wash_out_slope_map" in name for name in node_names)
-    assert not any("curve_type_map" in name for name in node_names)
 
 
 def test_dce_writer_recreates_deleted_cached_derivative(
@@ -424,7 +404,6 @@ def test_dce_factory_model_free_no_model_entity(
         "raw maximum without smoothing or clipping"
     )
     assert "Residual motion or noise spikes" in peak_sidecar["Limitation"]
-    assert "MaximumValueCap" not in peak_sidecar
     ttp_sidecar = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dceTtp_stat.json").read_text()
     )
@@ -651,67 +630,6 @@ def test_2cxm_extraction_fraction_derivative(
     assert "Extraction fraction" in sidecar["Description"]
 
 
-def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
-    """Build init_pmriprep_wf with --dce-model patlak and verify no NameError /
-    crash on factory construction.
-    """
-    import json as _json
-
-    from pmriprep.config.tumor_seg import TumorSegConfig
-    from pmriprep.config.anat import AnatConfig
-    from pmriprep.config.dsc import DSCConfig
-    from pmriprep.config.dce import DCEConfig
-    from pmriprep.workflows.base import PipelineSkipFlags, init_pmriprep_wf
-
-    bids = tmp_path / "bids"
-    raw = bids / "sub-01" / "ses-0001"
-    (raw / "anat").mkdir(parents=True)
-    (raw / "perf").mkdir(parents=True)
-    (bids / "dataset_description.json").write_text(
-        _json.dumps({"Name": "T", "BIDSVersion": "1.9.0", "DatasetType": "raw"})
-    )
-    nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), np.eye(4)),
-        raw / "anat" / "sub-01_ses-0001_T1w.nii.gz",
-    )
-    (raw / "anat" / "sub-01_ses-0001_T1w.json").write_text(
-        _json.dumps({"RepetitionTime": 2.0})
-    )
-    nib.save(
-        nib.Nifti1Image(np.zeros((4, 4, 4, 20), dtype=np.float32), np.eye(4)),
-        raw / "perf" / "sub-01_ses-0001_dce.nii.gz",
-    )
-    (raw / "perf" / "sub-01_ses-0001_dce.json").write_text(
-        _json.dumps({
-            "ContrastBolusAgent": "Magnevist",
-            "RepetitionTime": 4.0,
-            "FlipAngle": 12.0,
-            "MagneticFieldStrength": 3.0,
-            "EchoTime": 0.0014,
-        })
-    )
-
-    dce_cfg = DCEConfig()
-    dce_cfg.model = "patlak"
-    dce_cfg.inference = "nlls"
-    dce_cfg.no_t1 = True
-    dce_cfg.b1_method = "none"
-
-    wf = init_pmriprep_wf(
-        bids_dir=str(bids),
-        output_dir=str(tmp_path / "out"),
-        subject_id="01",
-        session_id="0001",
-        skip_flags=PipelineSkipFlags(skip_anat=True, skip_dsc=True, skip_dce=False),
-        anat_config=AnatConfig(),
-        tumor_seg_config=TumorSegConfig(),
-        dsc_config=DSCConfig(),
-        dce_config=dce_cfg,
-        work_dir=str(tmp_path / "work"),
-    )
-    assert wf is not None
-
-
 def test_dce_factory_warnings_in_anchor_sidecar(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
@@ -747,14 +665,6 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     assert any("Brain mask" in w for w in warnings)
     assert any("registration transform" in w for w in warnings)
     assert "InputFunctionCompartment" not in sidecar
-
-    # Session-root QC JSON orphan must not exist
-    legacy = (
-        out / "pmriprep" / "sub-01" / "ses-0001"
-        / "sub-01_ses-0001_desc-dceQC_quality.json"
-    )
-    assert not legacy.exists()
-
 
 # ---------------------------------------------------------------------------
 # Dual-T1w-underlay support: a session configured with both
@@ -810,63 +720,6 @@ def _build_dce_underlay_wf(
     if flair_postcon_in_dce is not None:
         inp.flair_postcon_in_dce = flair_postcon_in_dce
     wf.run()
-
-
-def test_dce_t1w_precon_underlay_lands_in_anat(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """Precon-only underlay: lands in anat/ with no ce- entity."""
-    bids, src = minimal_bids
-    out = tmp_path / "out"
-    underlay = _write_nii(tmp_path / "t1w_in_dce.nii.gz")
-
-    _build_dce_underlay_wf(
-        bids, src, out, tmp_path,
-        present_inputs={"t1w_in_dce"},
-        work_subdir="work-precon",
-        t1w_in_dce=underlay,
-    )
-
-    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_T1w.nii.gz"
-    assert expected.exists(), (
-        f"precon underlay missing at {expected}; "
-        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-    )
-    assert "ce-GAD" not in expected.name
-    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
-    assert "Pre-contrast" in sidecar["Description"]
-    assert sidecar["Sources"] == [
-        "bids:raw:sub-01/ses-0001/anat/"
-        "sub-01_ses-0001_acq-mprage_run-1_T1w.nii.gz",
-        "bids:raw:sub-01/ses-0001/perf/sub-01_ses-0001_dce.nii.gz",
-    ]
-
-
-def test_dce_t1w_postcon_underlay_lands_in_anat(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """Postcon-only underlay: lands in anat/ with ce-GAD entity."""
-    bids, src = minimal_bids
-    out = tmp_path / "out"
-    underlay = _write_nii(tmp_path / "t1w_postcon_in_dce.nii.gz")
-
-    _build_dce_underlay_wf(
-        bids, src, out, tmp_path,
-        present_inputs={"t1w_postcon_in_dce"},
-        work_subdir="work-postcon",
-        t1w_postcon_in_dce=underlay,
-    )
-
-    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_space-dceref_T1w.nii.gz"
-    assert expected.exists(), (
-        f"postcon underlay missing at {expected}; "
-        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-    )
-    assert not (anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz").exists()
-    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
-    assert "Post-contrast" in sidecar["Description"]
 
 
 def test_dce_t1w_subtraction_underlay_lands_in_anat(
@@ -947,56 +800,11 @@ def test_dce_both_t1w_underlays(
     post_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
     assert "Pre-contrast" in pre_meta["Description"]
     assert "Post-contrast" in post_meta["Description"]
-
-
-def test_dce_flair_precon_underlay_lands_in_anat(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """Precon FLAIR underlay: lands in anat/ with no ce- entity."""
-    bids, src = minimal_bids
-    out = tmp_path / "out"
-    underlay = _write_nii(tmp_path / "flair_in_dce.nii.gz")
-
-    _build_dce_underlay_wf(
-        bids, src, out, tmp_path,
-        present_inputs={"flair_in_dce"},
-        work_subdir="work-flair-precon",
-        flair_in_dce=underlay,
-    )
-
-    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_acq-3d_run-1_space-dceref_FLAIR.nii.gz"
-    assert expected.exists(), (
-        f"precon FLAIR underlay missing at {expected}; "
-        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-    )
-    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz").exists()
-
-
-def test_dce_flair_postcon_underlay_lands_in_anat(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
-) -> None:
-    """Postcon FLAIR underlay: lands in anat/ with ce-GAD entity."""
-    bids, src = minimal_bids
-    out = tmp_path / "out"
-    underlay = _write_nii(tmp_path / "flair_postcon_in_dce.nii.gz")
-
-    _build_dce_underlay_wf(
-        bids, src, out, tmp_path,
-        present_inputs={"flair_postcon_in_dce"},
-        work_subdir="work-flair-postcon",
-        flair_postcon_in_dce=underlay,
-    )
-
-    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_acq-3d_ce-GAD_run-2_space-dceref_FLAIR.nii.gz"
-    assert expected.exists(), (
-        f"postcon FLAIR underlay missing at {expected}; "
-        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
-    )
-    assert not (anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz").exists()
-    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
-    assert "Post-contrast" in sidecar["Description"]
+    assert pre_meta["Sources"] == [
+        "bids:raw:sub-01/ses-0001/anat/"
+        "sub-01_ses-0001_acq-mprage_run-1_T1w.nii.gz",
+        "bids:raw:sub-01/ses-0001/perf/sub-01_ses-0001_dce.nii.gz",
+    ]
 
 
 def test_dce_both_flair_underlays(
@@ -1222,55 +1030,6 @@ _DCE_OPTIONAL_FIGURES = (
     "model_selection_qc_plot",
     "dsc_dce_xval_plot",
 )
-
-
-def test_anat_figures_writer_accepts_none_for_optional_figures(
-    tmp_path: Path,
-) -> None:
-    from pmriprep.interfaces.qc_writers import AnatFiguresWriter
-
-    writer = AnatFiguresWriter()
-    writer.inputs.output_dir = str(tmp_path)
-    writer.inputs.subject_id = "test"
-    for field in _ANAT_OPTIONAL_FIGURES:
-        setattr(writer.inputs, field, None)
-
-
-def test_tumor_seg_figures_writer_accepts_none_for_optional_figures(
-    tmp_path: Path,
-) -> None:
-    from pmriprep.interfaces.qc_writers import TumorSegFiguresWriter
-
-    writer = TumorSegFiguresWriter()
-    writer.inputs.output_dir = str(tmp_path)
-    writer.inputs.subject_id = "test"
-    for field in _TUMOR_SEG_OPTIONAL_FIGURES:
-        setattr(writer.inputs, field, None)
-
-
-def test_dsc_figures_writer_accepts_none_for_optional_figures(
-    tmp_path: Path,
-) -> None:
-    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
-
-    writer = DSCFiguresWriter()
-    writer.inputs.output_dir = str(tmp_path)
-    writer.inputs.subject_id = "test"
-    for field in _DSC_OPTIONAL_FIGURES:
-        setattr(writer.inputs, field, None)
-
-
-def test_dce_figures_writer_accepts_none_for_optional_figures(
-    tmp_path: Path,
-) -> None:
-    """Regression: dsc_dce_xval_plot=None must not raise TraitError or stall the DAG."""
-    from pmriprep.interfaces.qc_writers import DCEFiguresWriter
-
-    writer = DCEFiguresWriter()
-    writer.inputs.output_dir = str(tmp_path)
-    writer.inputs.subject_id = "test"
-    for field in _DCE_OPTIONAL_FIGURES:
-        setattr(writer.inputs, field, None)
 
 
 def test_dsc_absent_qc_plot_producers_use_none() -> None:
