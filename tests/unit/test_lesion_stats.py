@@ -11,7 +11,6 @@ from pmriprep.utils.lesion_stats import (
     compute_dce_derived_metrics,
     compute_dsc_derived_metrics,
     compute_fraction_above_threshold,
-    compute_hotspot_value,
     compute_map_statistics,
     compute_nawm_reference,
     compute_region_volume,
@@ -85,38 +84,6 @@ class TestComputeFractionAboveThreshold:
         data = np.ones((3, 3, 3))
         mask = np.zeros((3, 3, 3), dtype=bool)
         assert compute_fraction_above_threshold(data, mask, 0.5) is None
-
-
-class TestComputeHotspotValue:
-    """Tests for compute_hotspot_value()."""
-
-    def test_default_90th_percentile(self) -> None:
-        """Known data returns correct 90th percentile."""
-        data = np.zeros((10, 10, 1))
-        mask = np.ones((10, 10, 1), dtype=bool)
-        values = np.arange(1.0, 101.0)
-        data.flat[:100] = values
-
-        result = compute_hotspot_value(data, mask)
-        expected = float(np.percentile(values, 90))
-        assert result == pytest.approx(expected, abs=1e-5)
-
-    def test_custom_95th_percentile(self) -> None:
-        """Custom 95th percentile returns correct value."""
-        data = np.zeros((10, 10, 1))
-        mask = np.ones((10, 10, 1), dtype=bool)
-        values = np.arange(1.0, 101.0)
-        data.flat[:100] = values
-
-        result = compute_hotspot_value(data, mask, percentile=95.0)
-        expected = float(np.percentile(values, 95))
-        assert result == pytest.approx(expected, abs=1e-5)
-
-    def test_empty_mask_returns_none(self) -> None:
-        """Empty mask returns None."""
-        data = np.ones((3, 3, 3))
-        mask = np.zeros((3, 3, 3), dtype=bool)
-        assert compute_hotspot_value(data, mask) is None
 
 
 class TestDetectMaskType:

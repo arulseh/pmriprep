@@ -388,42 +388,6 @@ def compute_fraction_above_threshold(
     return round(fraction, 4)
 
 
-def compute_hotspot_value(
-    map_data: np.ndarray,
-    mask: np.ndarray,
-    percentile: float = 90.0,
-) -> Optional[float]:
-    """Compute hotspot value (high percentile) for a map within mask.
-
-    Hotspot values represent the most aggressive tumor regions and are
-    clinically relevant for treatment planning.
-
-    Parameters
-    ----------
-    map_data : np.ndarray
-        3D array of perfusion map values.
-    mask : np.ndarray
-        3D boolean array defining the ROI.
-    percentile : float, optional
-        Percentile to compute (default 90th).
-
-    Returns
-    -------
-    float or None
-        Percentile of finite masked values, or None when the mask contains
-        no finite values.
-    """
-    values = map_data[mask]
-    if len(values) == 0:
-        return None
-
-    values = values[np.isfinite(values)]
-    if len(values) == 0:
-        return None
-
-    return round(float(np.percentile(values, percentile)), 6)
-
-
 def detect_mask_type(
     mask_data: np.ndarray,
 ) -> Tuple[str, int]:

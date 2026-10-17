@@ -227,7 +227,7 @@ def _distance_from_range(value: float, range_tuple: Tuple[float, float]) -> floa
 
 
 # ============================================================================
-# VFA quality and tissue-segmented T1 helpers
+# VFA T1 support
 # ============================================================================
 
 
@@ -256,66 +256,6 @@ def valid_t1_support(
         field_key = get_field_strength_key(field_strength)
         support &= values <= T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
     return support
-
-
-def build_tissue_t1_map(
-    wm_probseg: npt.NDArray[np.floating],
-    gm_probseg: npt.NDArray[np.floating],
-    field_strength: float,
-    smooth_fwhm_vox: float = 1.5,
-) -> npt.NDArray[np.floating]:
-    """Build a tissue-segmented T1 map from WM/GM probability maps.
-
-    Uses literature T1 values weighted by tissue probability. Regions with
-    low total probability (neither WM nor GM) receive the field-strength
-    expected median. The map is smoothed with a Gaussian kernel to reduce
-    sharp tissue boundaries.
-
-    Parameters
-    ----------
-    wm_probseg : ndarray
-        White matter probability map (0-1).
-    gm_probseg : ndarray
-        Gray matter probability map (0-1).
-    field_strength : float
-        Scanner field strength in Tesla.
-    smooth_fwhm_vox : float
-        FWHM of Gaussian smoothing kernel in voxels (default: 1.5).
-        ``gaussian_filter`` operates in voxel units; the default of 1.5
-        gives ~2-3mm smoothing for typical DCE voxel sizes (1.5-2mm).
-
-    Returns
-    -------
-    ndarray
-        Tissue-segmented T1 map in milliseconds.
-    """
-    from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
-
-    field_key = get_field_strength_key(field_strength)
-    t1_ref = T1_TISSUE_REFERENCE[field_key]
-
-    # Midpoints from literature ranges (e.g., WM 800-1000 → 900ms at 3T)
-    wm_range = t1_ref["wm"]
-    gm_range = t1_ref["gm"]
-    t1_wm = float(wm_range[0] + wm_range[1]) / 2.0
-    t1_gm = float(gm_range[0] + gm_range[1]) / 2.0
-    expected_median = t1_ref["expected_median"]
-
-    # Probability-weighted T1
-    p_total = wm_probseg + gm_probseg
-    # Use expected_median where tissue probability is too low
-    low_prob_mask = p_total < 0.1
-    p_total_safe = np.where(low_prob_mask, 1.0, p_total)
-    t1_map = (wm_probseg * t1_wm + gm_probseg * t1_gm) / p_total_safe
-    t1_map[low_prob_mask] = expected_median
-
-    # Smooth AFTER filling defaults (no NaN propagation)
-    if smooth_fwhm_vox > 0:
-        # FWHM to sigma: sigma = FWHM / (2 * sqrt(2 * ln(2))) ≈ FWHM / 2.355
-        sigma = smooth_fwhm_vox / 2.3548
-        t1_map = gaussian_filter(t1_map, sigma=sigma)
-
-    return np.asarray(t1_map, dtype=np.float32)
 
 
 # ============================================================================

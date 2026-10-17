@@ -16,7 +16,6 @@ from pmriprep.utils.dce_t1_validation import (
     T1GapFillResult,
     T1_TISSUE_REFERENCE,
     apply_t1_correction,
-    build_tissue_t1_map,
     fill_t1_gaps,
     get_field_strength_key,
     valid_t1_support,
@@ -39,83 +38,6 @@ class TestValidT1Support:
         assert valid_t1_support(values, 3.0).tolist() == [
             False, True, True, True, True, False,
         ]
-
-
-class TestBuildTissueT1Map:
-    """Tests for tissue-segmented T1 map construction."""
-
-    def test_pure_wm_returns_wm_t1(self) -> None:
-        """Pure WM probability → WM midpoint T1."""
-        shape = (10, 10, 10)
-        wm = np.ones(shape)
-        gm = np.zeros(shape)
-        t1_map = build_tissue_t1_map(wm, gm, field_strength=3.0, smooth_fwhm_vox=0)
-        wm_range = T1_TISSUE_REFERENCE[3.0]["wm"]
-        expected_wm_t1 = (wm_range[0] + wm_range[1]) / 2.0
-        assert np.median(t1_map) == pytest.approx(expected_wm_t1, rel=0.01)
-
-    def test_pure_gm_returns_gm_t1(self) -> None:
-        """Pure GM probability → GM midpoint T1."""
-        shape = (10, 10, 10)
-        wm = np.zeros(shape)
-        gm = np.ones(shape)
-        t1_map = build_tissue_t1_map(wm, gm, field_strength=3.0, smooth_fwhm_vox=0)
-        gm_range = T1_TISSUE_REFERENCE[3.0]["gm"]
-        expected_gm_t1 = (gm_range[0] + gm_range[1]) / 2.0
-        assert np.median(t1_map) == pytest.approx(expected_gm_t1, rel=0.01)
-
-    def test_low_probability_uses_expected_median(self) -> None:
-        """Both probs near zero → expected_median fallback."""
-        shape = (10, 10, 10)
-        wm = np.full(shape, 0.01)
-        gm = np.full(shape, 0.01)
-        t1_map = build_tissue_t1_map(wm, gm, field_strength=3.0, smooth_fwhm_vox=0)
-        expected = T1_TISSUE_REFERENCE[3.0]["expected_median"]
-        assert np.median(t1_map) == pytest.approx(expected, rel=0.01)
-
-    def test_mixed_tissue_weighted_average(self) -> None:
-        """50/50 WM/GM → midpoint of WM and GM T1."""
-        shape = (10, 10, 10)
-        wm = np.full(shape, 0.5)
-        gm = np.full(shape, 0.5)
-        t1_map = build_tissue_t1_map(wm, gm, field_strength=3.0, smooth_fwhm_vox=0)
-        wm_t1 = sum(T1_TISSUE_REFERENCE[3.0]["wm"]) / 2.0
-        gm_t1 = sum(T1_TISSUE_REFERENCE[3.0]["gm"]) / 2.0
-        expected = (wm_t1 + gm_t1) / 2.0
-        assert np.median(t1_map) == pytest.approx(expected, rel=0.01)
-
-    def test_smoothing_reduces_variance(self) -> None:
-        """Smoothing should reduce spatial variance."""
-        shape = (20, 20, 20)
-        rng = np.random.default_rng(42)
-        wm = rng.random(shape)
-        gm = 1.0 - wm
-        t1_no_smooth = build_tissue_t1_map(wm, gm, 3.0, smooth_fwhm_vox=0)
-        t1_smoothed = build_tissue_t1_map(wm, gm, 3.0, smooth_fwhm_vox=3.0)
-        assert np.std(t1_smoothed) < np.std(t1_no_smooth)
-
-    def test_no_nan_in_output(self) -> None:
-        """Output should contain no NaN values."""
-        shape = (10, 10, 10)
-        wm = np.zeros(shape)
-        gm = np.zeros(shape)
-        t1_map = build_tissue_t1_map(wm, gm, field_strength=3.0)
-        assert not np.any(np.isnan(t1_map))
-
-    def test_field_strength_1_5t(self) -> None:
-        """1.5T should produce lower T1 values than 3T."""
-        shape = (10, 10, 10)
-        wm = np.ones(shape)
-        gm = np.zeros(shape)
-        t1_1_5 = build_tissue_t1_map(wm, gm, 1.5, smooth_fwhm_vox=0)
-        t1_3_0 = build_tissue_t1_map(wm, gm, 3.0, smooth_fwhm_vox=0)
-        assert np.median(t1_1_5) < np.median(t1_3_0)
-
-    def test_output_dtype_float32(self) -> None:
-        """Output should be float32."""
-        shape = (5, 5, 5)
-        t1_map = build_tissue_t1_map(np.ones(shape), np.zeros(shape), 3.0)
-        assert t1_map.dtype == np.float32
 
 
 class TestT1CorrectionResult:
@@ -230,29 +152,6 @@ class TestApplyT1CorrectionAuto:
         assert result.deviation_type == "high"
         assert "may still include tumor or edema" in caplog.text
         assert "no population-T1 fallback was applied" in caplog.text
-
-
-class TestFieldStrengthOrderingMixedTissue:
-    """Test that 50/50 WM/GM tissue T1 increases with field strength."""
-
-    def test_t1_ordering_1_5_lt_3_lt_7(self) -> None:
-        """Mixed tissue T1: 1.5T < 3T < 7T."""
-        shape = (10, 10, 10)
-        wm = np.full(shape, 0.5)
-        gm = np.full(shape, 0.5)
-
-        t1_1_5 = build_tissue_t1_map(wm, gm, 1.5, smooth_fwhm_vox=0)
-        t1_3_0 = build_tissue_t1_map(wm, gm, 3.0, smooth_fwhm_vox=0)
-        t1_7_0 = build_tissue_t1_map(wm, gm, 7.0, smooth_fwhm_vox=0)
-
-        median_1_5 = float(np.median(t1_1_5))
-        median_3_0 = float(np.median(t1_3_0))
-        median_7_0 = float(np.median(t1_7_0))
-
-        assert median_1_5 < median_3_0 < median_7_0, (
-            f"Expected T1 ordering 1.5T ({median_1_5:.0f}) < "
-            f"3T ({median_3_0:.0f}) < 7T ({median_7_0:.0f})"
-        )
 
 
 class TestSkipT1Paths:
