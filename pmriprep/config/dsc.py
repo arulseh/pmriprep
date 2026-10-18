@@ -60,13 +60,6 @@ class DSCConfig:
     n_aif_candidates : int
         Maximum number of AIF candidate voxels to retain and average; fewer
         may survive selection.
-    disable_aif_fallback : bool
-        Disable the synthetic AIF fallback. Default False (on a detection
-        failure the pipeline substitutes a synthetic gamma-variate AIF and flags
-        it). When True, the pipeline instead **errors** if no AIF candidate is
-        found at any cascade tier, and **retains the detected AIF (flagged in
-        QC)** rather than substituting synthetic when its gamma fit is below the
-        quality floor.
     lesion_mask : Optional[Path]
         Path to lesion mask in DSC native space for AIF exclusion and
         lesion statistics.
@@ -87,13 +80,12 @@ class DSCConfig:
         but the uncorrected series is processed to avoid a second interpolation.
     pre_bolus : int
         Number of pre-bolus baseline frames for S0 estimation.
-        AIF detection auto-detects actual bolus arrival independently.
+        Tissue timing sets the integration baseline, with arterial refinement
+        when an accepted or supplied AIF is available.
     num_processes : int
         Number of parallel processes (0 = use system default).
     hdbet_device : Literal["auto", "cuda", "mps", "cpu"]
         Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
-    aif_method : Literal["auto", "synthetic"]
-        AIF detection method: auto or synthetic.
     leakage_method : Literal["bsw", "none"]
         Leakage-correction policy. "bsw" applies signed BSW correction;
         "none" retains the uncorrected concentration series.
@@ -117,8 +109,6 @@ class DSCConfig:
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10
-    disable_aif_fallback: bool = False
-    aif_method: Literal["auto", "synthetic"] = "auto"
 
     # User-supplied masks (DSC native space)
     lesion_mask: Optional[Path] = None
@@ -152,7 +142,6 @@ class DSCConfig:
         categorical_options = {
             "method": ({"sSVD", "oSVD", "tikhonov", "cpi"}, self.method),
             "inference": ({"vi", "svb"}, self.inference),
-            "aif_method": ({"auto", "synthetic"}, self.aif_method),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
         }
         for option, (valid, value) in categorical_options.items():
@@ -163,7 +152,6 @@ class DSCConfig:
 
         for option in (
             "cpi_infer_delay",
-            "disable_aif_fallback",
             "motion_correct",
             "sloppy",
         ):

@@ -331,8 +331,8 @@ def test_dce_aif_cards_follow_qc_hierarchy(env):
     rendered = template.render(dce=dce)
     _assert_in_order(
         rendered,
-        "AIF Status",
-        "Method",
+        '>AIF Detection</div>',
+        "AIF Used",
         "AIF Voxels",
         "Quality Score",
         "CNR",
@@ -750,41 +750,8 @@ def _dsc_ctx_with_aif_level(level: str, **extra) -> dict:
     }
 
 
-@pytest.mark.parametrize(
-    ("extra", "reason"),
-    [
-        ({"synthetic_fallback_reason": "no_candidates"},
-         "no arterial candidates survived automatic detection"),
-        ({"aif_detection": {"detection_method": "synthetic",
-                            "synthetic_fallback_reason": "gamma_r2_floor"}},
-         "the measured curve had a poor gamma-variate fit"),
-        ({"config": {"aif_source": "synthetic"},
-          "synthetic_fallback_reason": "no_candidates"}, "user-selected"),
-    ],
-)
-def test_synthetic_aif_caveat_rendered(env, extra, reason):
-    """detection_level == 'synthetic' triggers the caveat alert block."""
-    template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_aif_level("synthetic", **extra)
-    rendered = template.render(dsc=dsc_ctx)
-    assert "Synthetic gamma-variate AIF" in rendered
-    assert reason in rendered
-    assert "no_candidates" not in rendered
-    assert "CBF, nCBF, MTT and deconvolution timing" in rendered
-    assert "template AIF shape and timing" in rendered
-    assert "BSW K2 uses a tissue reference" in rendered
-    assert "AUC divided by its NAWM median" in rendered
-    if reason == "user-selected":
-        assert "no arterial candidates survived" not in rendered
-    assert 'class="metric-value poor"' in rendered
 
 
-def test_measured_aif_omits_caveat(env):
-    """atlas_strict detection renders no template-AIF caveat."""
-    template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_aif_level("atlas_strict")
-    rendered = template.render(dsc=dsc_ctx)
-    assert "Synthetic gamma-variate AIF" not in rendered
 
 
 # =============================================================================
@@ -929,14 +896,14 @@ def test_summary_renders_processing_warnings(env):
 
     template = env.get_template("sections/section_summary.html")
     warning = collect_aif_fallback_warning(
-        {"aif_detection": {"detection_method": "synthetic"}}, "DSC",
+        {"aif_detection": {"detection_method": "unavailable", "detection_status": "failed"}}, "DSC",
     )
     ctx = _summary_ctx(processing_warnings={
         "DSC Processing": [warning],
     })
     rendered = template.render(**ctx)
     assert "Processing Advisory" in rendered
-    assert "synthetic gamma-variate template" in rendered
+    assert "DSC AIF detection failed" in rendered
 
 
 def _dsc_ctx_with_preload(**preload) -> dict:
@@ -1005,7 +972,8 @@ def test_disabled_leakage_correction_has_explicit_note(env):
     assert "K2 reference unavailable" not in rendered
 
 
-def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
+@pytest.mark.parametrize('detection_method', ['atlas_strict', 'atlas_strict+atlas_relaxed'])
+def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_method):
     """DSC shared preprocessing and AIF fields follow the DCE hierarchy."""
     template = env.get_template("sections/section_dsc.html")
     dsc = {
@@ -1021,7 +989,7 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
                 "mean_cnr": 8.0,
             },
             "aif_detection": {
-                "detection_method": "atlas_strict",
+                "detection_method": detection_method,
                 "quality_score": 0.8,
                 "n_aif_voxels_selected": 5,
                 "n_aif_voxels_available": 8,
@@ -1041,6 +1009,7 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
         "display_status": {},
     }
     rendered = template.render(dsc=dsc)
+    assert 'class="metric-value pass">PASS' in rendered
     _assert_in_order(
         rendered,
         "DSC Preprocessing QC",
@@ -1053,8 +1022,8 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
         "Mean tSNR",
         "Mean CNR",
         "Arterial Input Function",
-        "AIF Status",
-        "Method",
+        '>AIF Detection</div>',
+        "AIF Used",
         "AIF Voxels",
         "Baseline Frames",
         "Arrival Time",
@@ -1108,3 +1077,30 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
         "Minimum Size Met",
         "NAWM selection warning",
     )
+
+
+@pytest.mark.parametrize("modality, source, outcome, label", [
+    ("dsc", "unavailable", "failed", "None"),
+    ("dce", "population", "failed", "Population"),
+    ("dce", "population", "not_attempted", "Population"),
+    ("dsc", "external", "not_attempted", "Supplied"),
+])
+def test_aif_detection_outcome_is_separate_from_used_source(env, modality, source, outcome, label):
+    context = {
+        "qc_metrics": {
+            "aif_detection": {"detection_method": source, "detection_status": outcome,
+                              "failure_reason": "quality_checks_failed"},
+            "deconvolution": {"processing_status": "partial"} if source == "unavailable" else {},
+        },
+        "images": {"aif_curve": "curve.png", "aif_location": "voxels.png", "dsc_fit_qc": "fit.png"},
+        "display_status": {},
+    }
+    rendered = env.get_template(f"sections/section_{modality}.html").render(**{modality: context})
+    assert "AIF Detection" in rendered
+    assert "AIF Used" in rendered
+    assert f">{label}</div>" in rendered
+    assert 'class="metric-value poor">FAILED' in rendered if outcome == "failed" else "Not attempted" in rendered
+    assert 'src="curve.png"' in rendered and 'src="voxels.png"' in rendered
+    if source == "unavailable":
+        assert "Not performed" in rendered and "Partial" in rendered
+        assert 'src="fit.png"' not in rendered

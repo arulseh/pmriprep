@@ -2672,6 +2672,8 @@ def init_dce_preproc_wf(
         (aif_detection, aif_qc_plot, [
             ("out_aif_curve", "aif_curve_file"),
             ("out_aif_mask", "aif_mask_file"),
+            ("out_rejected_aif_curve", "rejected_aif_curve_file"),
+            ("out_rejected_aif_mask", "rejected_aif_mask_file"),
             ("qc_metrics", "qc_metrics"),
         ]),
         (dce_preprocessing_wf, aif_qc_plot, [

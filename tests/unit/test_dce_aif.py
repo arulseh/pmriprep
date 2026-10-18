@@ -3048,3 +3048,38 @@ class TestDetectedAIFEmissionInSitu:
         assert whole_brain_kwargs["physical_erosion_mm"] == pytest.approx(12.0)
         assert whole_brain_kwargs["apply_superior_fraction_exclusion"] is False
         assert np.any(whole_brain_kwargs["symmetry_midline_zone"])
+
+
+def test_population_fallback_retains_rejected_curve_and_matching_voxels(tmp_path, monkeypatch) -> None:
+    """Diagnostic retention leaves the population input unchanged and preserves its rejected pool."""
+    import nibabel as nib
+    from pmriprep.interfaces.dce_aif import RejectedAIF
+
+    conc_f, mask_f = TestDetectedAIFEmissionInSitu._write_niftis(tmp_path)
+    concentration = np.asarray(nib.load(conc_f).dataobj)
+    coords = [(10, 10, 10), (11, 10, 10)]
+    scores = [0.7, 0.6]
+    curve, expected_mask = AIFDetection._compute_weighted_roi_aif(
+        coords, scores, concentration, np.asarray(nib.load(mask_f).dataobj),
+    )
+    rejected = RejectedAIF(curve / 0.58 * 1.5, coords, scores, "G1", 1.5)
+    cascade = CascadeResult(
+        [], [], [], "population", None, 7, [], None, "exhausted", 20,
+        rejected=rejected,
+    )
+    monkeypatch.setattr(AIFDetection, "_run_two_pass_cascade", lambda *args, **kwargs: cascade)
+    results = []
+    for mode in ("auto", "population"):
+        cwd = tmp_path / mode
+        cwd.mkdir()
+        results.append(AIFDetection(
+            concentration_file=conc_f, brain_mask_file=mask_f, tr=4.0,
+            hematocrit=0.42, aif_method=mode,
+        ).run(cwd=str(cwd)).outputs)
+    failed, configured = results
+    np.testing.assert_array_equal(np.loadtxt(failed.out_aif_curve), np.loadtxt(configured.out_aif_curve))
+    assert failed.qc_metrics["detection_status"] == "failed"
+    assert configured.qc_metrics["detection_status"] == "not_attempted"
+    np.testing.assert_array_equal(np.loadtxt(failed.out_rejected_aif_curve), rejected.curve)
+    np.testing.assert_array_equal(nib.load(failed.out_rejected_aif_mask).get_fdata(), expected_mask)
+    assert failed.qc_metrics["rejected_candidate"]["scaling_factor"] == 1.5

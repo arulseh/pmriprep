@@ -174,7 +174,6 @@ def merge_cli_config(
         "dsc_preload": ("dsc", "preload"),
         "dsc_dose": ("dsc", "dose"),
         "dsc_agent_standard_dose": ("dsc", "agent_standard_dose"),
-        "dsc_aif_method": ("dsc", "aif_method"),
         "dsc_aif_file": ("dsc", "aif_file"),
         # DCE options
         "dce_model": ("dce", "model"),

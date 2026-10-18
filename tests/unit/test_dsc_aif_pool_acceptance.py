@@ -129,7 +129,7 @@ def test_single_best_uses_lowest_cost_and_retries_larger_roi(
     )
     monkeypatch.setattr(detector, "_compute_aif_brr", lambda *args: 5.0)
 
-    result = detector._try_single_best_fallback(
+    result, rejected = detector._try_single_best_fallback(
         candidates,
         np.zeros((2, 2, 2, 8)),
         np.ones((2, 2, 2)),
@@ -160,7 +160,7 @@ def test_single_best_rejects_all_rois_below_brr_floor(
     monkeypatch.setattr(detector, "_aif_global_max_in_fp", lambda *args: True)
     monkeypatch.setattr(detector, "_compute_aif_brr", lambda *args: -4.0)
 
-    result = detector._try_single_best_fallback(
+    result, rejected = detector._try_single_best_fallback(
         [(0.5, (0, 0, 0), {})],
         np.zeros((2, 2, 2, 8)),
         np.ones((2, 2, 2)),

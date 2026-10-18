@@ -1,8 +1,7 @@
 """Gamma-variate AIF fitting for DSC-MRI.
 
-Fits a gamma-variate model to a DSC arterial input function (recirculation
-removal with AUC preservation), decides when the fit should be applied, and
-computes the peak FWHM the fit uses. AIF candidate detection and quality
+Fits a gamma-variate model for arterial shape QC and computes
+peak width and measured-curve diagnostics. AIF candidate detection and quality
 scoring are handled in the ``AIFDetection`` interface.
 """
 
@@ -156,8 +155,7 @@ class GammaVariateFitResult:
         Ratio of fitted/original AUC computed BEFORE preservation scaling
         — measures gamma-fit shape mismatch against the empirical
         first-pass area independent of dose-preservation. Should be ~1.0
-        for a good fit. Reported in QC for provenance; not a hard gate
-        (see ``should_apply_gamma_fit``).
+        for a good fit. This is an internal fit diagnostic.
     residual_rms : float
         Full-curve RMS residual between baseline-subtracted input and
         the unscaled fit, before optional AUC preservation.
@@ -668,153 +666,55 @@ def fit_gamma_variate(
     )
 
 
-# =============================================================================
-# Auto Gamma-Variate Decision Logic
-# =============================================================================
-
-# Hard gate thresholds — fit must satisfy ALL to be eligible
-GAMMA_R2_THRESHOLD: float = 0.85
-GAMMA_PEAK_RATIO_MIN: float = 0.90
-GAMMA_PEAK_RATIO_MAX: float = 1.10
-# AUC ratio bounds are QC provenance only, not a hard gate.
-# Symmetric-window auc_ratio (see ``fit_gamma_variate``) makes this metric
-# meaningful, but R² + peak_ratio + defect detection already cover the
-# pathology this band would catch.
-GAMMA_AUC_RATIO_MIN: float = 0.85
-GAMMA_AUC_RATIO_MAX: float = 1.15
-# Soft warning band: auc_ratio outside this is logged in QC but does not
-# trigger fallback.
-GAMMA_AUC_RATIO_SOFT_MIN: float = 0.70
-GAMMA_AUC_RATIO_SOFT_MAX: float = 1.30
-# Minimum first-pass samples for gamma fitting to be well-posed.
-GAMMA_MIN_FIRST_PASS_SAMPLES: int = 8
-
-# Defect detection thresholds
+# Descriptive curve-abnormality thresholds.
 GAMMA_SPR_THRESHOLD: float = 0.25
 GAMMA_NOISE_RATIO_THRESHOLD: float = 2.5
 GAMMA_NEG_TAIL_MIN_FRAMES: int = 3
 GAMMA_NEG_TAIL_FRACTION: float = 0.05
 
 
-@dataclass(frozen=True)
-class GammaAutoDecision:
-    """Result of the auto gamma-variate decision.
-
-    Attributes
-    ----------
-    apply : bool
-        Whether to apply the gamma-variate fit.
-    reason : str
-        Human-readable reason for the decision.
-    defect_detected : str or None
-        Type of defect detected: "recirculation",
-        "noise_and_negative_tail", or None.
-    """
-
-    apply: bool
-    reason: str
-    defect_detected: Optional[str] = None
-
-
-def should_apply_gamma_fit(
+def compute_gamma_diagnostics(
     original_aif: npt.NDArray[Any],
     fit_result: GammaVariateFitResult,
     baseline_frames: int = 5,
-) -> tuple["GammaAutoDecision", dict[str, Any]]:
-    """Decide whether to apply gamma-variate fitting to the AIF.
-
-    Requires the configured fit-quality gates and either a secondary-peak
-    trigger or the combination of roughness and negative-tail triggers.
-
-    Hard gates (must all pass for eligibility):
-        - ``fit_converged``
-        - ``first_pass_n >= GAMMA_MIN_FIRST_PASS_SAMPLES``.
-        - ``r_squared >= GAMMA_R2_THRESHOLD``
-        - ``peak_ratio in [GAMMA_PEAK_RATIO_MIN, GAMMA_PEAK_RATIO_MAX]``
-
-    AUC ratio is NOT a hard gate; it is reported in ``metrics["auc_ratio"]``
-    for QC provenance, with ``metrics["auc_ratio_warning"]`` set when the
-    symmetric-window ratio falls outside ``[GAMMA_AUC_RATIO_SOFT_MIN,
-    GAMMA_AUC_RATIO_SOFT_MAX]``.
+) -> dict[str, Any]:
+    """Describe peak agreement, secondary peaks, roughness and negative tails.
 
     Parameters
     ----------
-    original_aif : np.ndarray
-        1D original AIF concentration curve (before gamma fitting).
+    original_aif : ndarray
+        Measured arterial curve.
     fit_result : GammaVariateFitResult
-        Result from ``fit_gamma_variate()``.
+        Converged diagnostic gamma model.
     baseline_frames : int
-        Number of pre-bolus baseline frames.
+        Number of baseline samples.
 
     Returns
     -------
-    tuple[GammaAutoDecision, dict[str, Any]]
-        Decision and detailed metrics for QC logging.
+    dict
+        Measured diagnostics and descriptive abnormality flags.
     """
-    metrics: dict[str, Any] = {}
-
-    # --- Hard gates ---
-    if not fit_result.fit_converged:
-        return (
-            GammaAutoDecision(apply=False, reason="Fit did not converge"),
-            metrics,
-        )
-
-    # Apply the configured minimum number of first-pass samples.
-    metrics["first_pass_n"] = fit_result.first_pass_n
-    if fit_result.first_pass_n < GAMMA_MIN_FIRST_PASS_SAMPLES:
-        return (
-            GammaAutoDecision(
-                apply=False,
-                reason=(
-                    f"insufficient first-pass samples for gamma fit "
-                    f"({fit_result.first_pass_n} < {GAMMA_MIN_FIRST_PASS_SAMPLES})"
-                ),
-            ),
-            metrics,
-        )
-
-    if fit_result.r_squared < GAMMA_R2_THRESHOLD:
-        metrics["r_squared"] = fit_result.r_squared
-        return (
-            GammaAutoDecision(
-                apply=False,
-                reason=f"R2={fit_result.r_squared:.3f} < {GAMMA_R2_THRESHOLD}",
-            ),
-            metrics,
-        )
-
     peak_orig = float(np.max(original_aif))
     peak_fit = float(np.max(fit_result.fitted_curve))
-    if peak_orig > EPSILON_CONCENTRATION:
-        peak_ratio = peak_fit / peak_orig
-    else:
-        peak_ratio = 1.0
-    metrics["peak_ratio"] = peak_ratio
-
-    if not (GAMMA_PEAK_RATIO_MIN <= peak_ratio <= GAMMA_PEAK_RATIO_MAX):
-        return (
-            GammaAutoDecision(
-                apply=False,
-                reason=f"Peak ratio {peak_ratio:.3f} outside [{GAMMA_PEAK_RATIO_MIN}, {GAMMA_PEAK_RATIO_MAX}]",
-            ),
-            metrics,
-        )
-
-    # Report AUC-ratio warnings without changing eligibility.
-    auc_ratio = fit_result.auc_ratio
-    metrics["auc_ratio"] = auc_ratio
-    metrics["auc_ratio_warning"] = not (
-        GAMMA_AUC_RATIO_SOFT_MIN <= auc_ratio <= GAMMA_AUC_RATIO_SOFT_MAX
-    )
-
+    metrics: dict[str, Any] = {
+        "peak_ratio": peak_fit / peak_orig if peak_orig > EPSILON_CONCENTRATION else None,
+        "first_pass_samples": fit_result.first_pass_n,
+    }
     # --- Defect detection ---
     n = len(original_aif)
     peak_idx = int(np.argmax(original_aif))
     baseline_mean = float(np.mean(original_aif[:baseline_frames])) if baseline_frames > 0 else 0.0
-    peak_val = peak_orig - baseline_mean  # baseline-corrected peak
+    peak_val = peak_orig - baseline_mean
+    centered = original_aif - baseline_mean
+    end = baseline_frames + fit_result.first_pass_n
+    total_area = float(np.trapezoid(centered[baseline_frames:]))
+    first_pass_area = float(np.trapezoid(centered[baseline_frames:end]))
+    metrics["first_pass_area_fraction"] = (
+        first_pass_area / total_area if total_area > EPSILON_CONCENTRATION else None
+    )
+    metrics["first_pass_window"] = [baseline_frames, end]
 
-    # 1) Recirculation defect: secondary peak ratio > threshold AND is local max
+    # Secondary-peak magnitude and local-maximum status.
     # Look in post-first-pass window
     fwhm = compute_aif_fwhm_frames(original_aif, baseline_frames)
     recirc_start = peak_idx + max(fwhm, 5)
@@ -835,10 +735,10 @@ def should_apply_gamma_fit(
                 spr_is_local_max = left_slope > 0 and right_slope < 0
 
     metrics["spr"] = spr
-    metrics["spr_is_local_max"] = spr_is_local_max
+    metrics["spr_is_local_max"] = bool(spr_is_local_max)
     recirculation_defect = spr > GAMMA_SPR_THRESHOLD and spr_is_local_max
 
-    # 2) Roughness trigger: second-derivative L2 norm ratio (original / fitted)
+    # Relative roughness of the measured and fitted curves.
     if n > 4:
         d2_orig = np.diff(original_aif, n=2)
         d2_fit = np.diff(fit_result.fitted_curve, n=2)
@@ -850,7 +750,7 @@ def should_apply_gamma_fit(
     metrics["noise_ratio"] = noise_ratio
     noise_defect = noise_ratio > GAMMA_NOISE_RATIO_THRESHOLD
 
-    # 3) Negative tail defect: >N frames below zero AND min < -fraction of peak
+    # Extent of the measured negative tail.
     if peak_idx < n - 1 and peak_val > EPSILON_CONCENTRATION:
         tail_full = original_aif[peak_idx:] - baseline_mean
         neg_frames = int(np.sum(tail_full < 0))
@@ -866,34 +766,7 @@ def should_apply_gamma_fit(
         and neg_min_fraction > GAMMA_NEG_TAIL_FRACTION
     )
 
-    # --- Decision ---
-    if recirculation_defect:
-        return (
-            GammaAutoDecision(
-                apply=True,
-                reason=f"Recirculation detected (SPR={spr:.3f}, local max)",
-                defect_detected="recirculation",
-            ),
-            metrics,
-        )
-
-    if noise_defect and negative_tail_defect:
-        return (
-            GammaAutoDecision(
-                apply=True,
-                reason=(
-                    f"Noise (ratio={noise_ratio:.2f}) and negative tail "
-                    f"({neg_frames} frames, min={neg_min_fraction:.3f}*peak)"
-                ),
-                defect_detected="noise_and_negative_tail",
-            ),
-            metrics,
-        )
-
-    return (
-        GammaAutoDecision(
-            apply=False,
-            reason="No defect detected -- AIF is clean",
-        ),
-        metrics,
-    )
+    metrics["large_secondary_peak"] = bool(recirculation_defect)
+    metrics["noisy_curve"] = bool(noise_defect)
+    metrics["negative_tail"] = bool(negative_tail_defect)
+    return metrics

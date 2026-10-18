@@ -115,7 +115,7 @@ def test_auc_cbv_recovers_independent_tissue(name, cbf_true, mtt_true, tmp_path)
     aif_file = tmp_path / "aif.txt"
     np.savetxt(aif_file, aif)
     curves = tissue.reshape(1, 1, 1, -1)
-    maps = ComputeDSCMaps(measured_aif_file=str(aif_file))._compute_auc_maps(
+    maps = ComputeDSCMaps(aif_file=str(aif_file))._compute_auc_maps(
         curves, curves, n_baseline=6, detected_baseline=6,
         detection_info={"arrival_index": 6}, dt=dt,
     )

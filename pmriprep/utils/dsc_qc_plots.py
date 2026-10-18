@@ -352,6 +352,7 @@ def generate_dsc_parameter_maps_qc_plot(
     param_config: dict[str, tuple[str, float, str, float | None, str]] = {
         "rCBF": ("hot", 0.0, "pct98", None, "a.u."),
         "rCBV": ("hot", 0.0, "pct98", None, "a.u."),
+        "nCBV": ("hot", 0.0, "pct98", None, "dimensionless"),
         "MTT": ("viridis", 0.0, "fixed", 30.0, "seconds"),
         "Tmax": ("plasma", 0.0, "fixed", 30.0, "seconds"),
         "Arrival delay": ("coolwarm", -1.0, "symmetric_pct98", None, "seconds"),

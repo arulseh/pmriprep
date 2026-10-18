@@ -407,15 +407,12 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     )
     if configured_aif_source == "external":
         aif_source = "external"
-    elif configured_aif_source == "synthetic" or detected_aif_source == "synthetic":
-        aif_source = "synthetic"
     else:
         aif_source = detected_aif_source or configured_aif_source or "auto"
 
-    if aif_source == "synthetic":
+    if aif_source == "unavailable":
         sentences.append(
-            "A dose- and field-strength-scaled synthetic gamma-variate DSC AIF "
-            "was used [@rulseh_inprep]."
+            "DSC AIF detection failed; only AIF-independent maps were computed."
         )
     elif aif_source == "external":
         sentences.append("A user-supplied DSC arterial input function was used.")
@@ -456,90 +453,89 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             "baseline-centered."
         )
 
-    auc_cbv_available = deconv.get("cbv_auc_measured_aif_missing") is not True
+    auc_cbv_available = deconv.get("cbv_auc_available", aif_source != "unavailable")
     if auc_cbv_available:
         tissue_curve = (
             "BSW-corrected" if preload.get("preload_correction_applied")
             else "baseline-centered"
         )
-        if aif_source == "synthetic":
-            auc_aif = "synthetic AIF"
-        elif aif_source == "external":
+        if aif_source == "external":
             auc_aif = "user-supplied AIF"
         else:
             auc_aif = "measured AIF"
         sentences.append(
             "DSC AUC-CBV was computed as the "
-            f"ratio of the post-arrival integrals of the {tissue_curve} tissue "
+            f"ratio of the post-baseline integrals of the {tissue_curve} tissue "
             f"concentration curve and the {auc_aif}."
         )
 
-    if is_cpi:
-        if deconv.get("cpi_leakage_method") == "bsw":
-            sentences.append(
-                "Other model-derived DSC parameter maps were estimated using "
-                "control point interpolation fitted to the original DSC signal "
-                "[@mehndiratta_2013], jointly estimating signed "
-                "leakage with voxel-specific Gaussian priors on K2 "
-                "centred on the BSW estimate "
-                "[@boxerman_2006; @rulseh_inprep]."
+    if deconv.get("deconvolution_performed", aif_source != "unavailable"):
+        if is_cpi:
+            if deconv.get("cpi_leakage_method") == "bsw":
+                sentences.append(
+                    "Other model-derived DSC parameter maps were estimated using "
+                    "control point interpolation fitted to the original DSC signal "
+                    "[@mehndiratta_2013], jointly estimating signed "
+                    "leakage with voxel-specific Gaussian priors on K2 "
+                    "centred on the BSW estimate "
+                    "[@boxerman_2006; @rulseh_inprep]."
+                )
+            elif deconv.get("cpi_leakage_method") == "none":
+                sentences.append(
+                    "Other model-derived DSC parameter maps were estimated using "
+                    "control point interpolation fitted to the original DSC signal "
+                    "with a perfusion-only signal model "
+                    "[@mehndiratta_2013]."
+                )
+
+            if fallback_used:
+                sentences.append(
+                    "Voxels with a rejected CPI fit were replaced by oSVD "
+                    "estimates [@wu_2003]. The fallback retained signed residues "
+                    "without post-fit clipping and used the full 2N-sample "
+                    "periodic residue area, including circular closure."
+                )
+        else:
+            method_text = _DSC_DECONV_TEXT.get(
+                method, _DSC_DECONV_TEXT.get("oSVD", ""),
             )
-        elif deconv.get("cpi_leakage_method") == "none":
             sentences.append(
-                "Other model-derived DSC parameter maps were estimated using "
-                "control point interpolation fitted to the original DSC signal "
-                "with a perfusion-only signal model "
-                "[@mehndiratta_2013]."
+                f"Other model-derived DSC parameter maps were produced using {method_text}."
+            )
+            if method in ("sSVD", "tikhonov"):
+                sentences.append(
+                    "The full N-sample causal system used Volterra product "
+                    "integration [@sourbron_2007]."
+                )
+            sentences.append(
+                "Signed unconstrained residues were retained without post-fit clipping. "
+                "Reported MTT was computed as AUC-CBV divided by CBF."
+            )
+            sentences.append(
+                "Secondary residue-integral CBV used the full 2N-sample periodic "
+                "area, including circular closure."
+                if method == "oSVD" else
+                "Secondary residue-integral CBV used finite trapezoidal integration "
+                "over all N residue samples."
             )
 
-        if fallback_used:
+        if is_cpi and (deconv.get("cpi_gamma_fraction") or 0) > 0:
             sentences.append(
-                "Voxels with a rejected CPI fit were replaced by oSVD "
-                "estimates [@wu_2003]. The fallback retained signed residues "
-                "without post-fit clipping and used the full 2N-sample "
-                "periodic residue area, including circular closure."
+                "DSC arterial bolus dispersion was modelled with a gamma vascular "
+                "transport function in the retained dispersion-aware CPI fits "
+                "[@mehndiratta_2014]."
             )
-    else:
-        method_text = _DSC_DECONV_TEXT.get(
-            method, _DSC_DECONV_TEXT.get("oSVD", ""),
-        )
-        sentences.append(
-            f"Other model-derived DSC parameter maps were produced using {method_text}."
-        )
-        if method in ("sSVD", "tikhonov"):
-            sentences.append(
-                "The full N-sample causal system used Volterra product "
-                "integration [@sourbron_2007]."
-            )
-        sentences.append(
-            "Signed unconstrained residues were retained without post-fit clipping. "
-            "Reported MTT was computed as AUC-CBV divided by CBF."
-        )
-        sentences.append(
-            "Secondary residue-integral CBV used the full 2N-sample periodic "
-            "area, including circular closure."
-            if method == "oSVD" else
-            "Secondary residue-integral CBV used finite trapezoidal integration "
-            "over all N residue samples."
-        )
 
-    if is_cpi and (deconv.get("cpi_gamma_fraction") or 0) > 0:
-        sentences.append(
-            "DSC arterial bolus dispersion was modelled with a gamma vascular "
-            "transport function in the retained dispersion-aware CPI fits "
-            "[@mehndiratta_2014]."
-        )
-
-    # Inference engine (only for cpi parametric methods).
-    if is_cpi:
-        inference = deconv.get("inference", "vi")
-        if inference in _INFERENCE_TEXT:
-            sentences.append(f"CPI parameter estimation used {_INFERENCE_TEXT[inference]}")
+        # Inference engine (only for cpi parametric methods).
+        if is_cpi:
+            inference = deconv.get("inference", "vi")
+            if inference in _INFERENCE_TEXT:
+                sentences.append(f"CPI parameter estimation used {_INFERENCE_TEXT[inference]}")
 
     # NAWM normalization
     for output_name, source_name, factor_key in (
         ("nCBF", "CBF", "cbf_normalization_factor"),
-        ("nCBV", "AUC-CBV", "normalization_factor"),
+        ("nCBV", "post-baseline tissue concentration integral", "normalization_factor"),
     ):
         norm_factor = dsc_qc.get(factor_key)
         if norm_factor is not None and math.isfinite(norm_factor) and norm_factor > 0:

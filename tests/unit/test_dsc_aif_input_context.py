@@ -37,14 +37,13 @@ def test_rejects_brain_mask_outside_dsc_grid(tmp_path: Path) -> None:
     interface = AIFDetection(
         concentration_file=concentration,
         brain_mask_file=brain_mask,
-        aif_method="synthetic",
     )
 
     with pytest.raises(RuntimeError, match="must be in native DSC space"):
         interface.run(cwd=tmp_path)
 
 
-def test_header_tr_reaches_synthetic_aif_qc(tmp_path: Path) -> None:
+def test_header_tr_reaches_failed_detection_qc(tmp_path: Path) -> None:
     """A zero input TR uses the fourth NIfTI zoom in downstream QC."""
     concentration = _write_nifti(
         tmp_path / "concentration.nii.gz",
@@ -59,9 +58,8 @@ def test_header_tr_reaches_synthetic_aif_qc(tmp_path: Path) -> None:
     result = AIFDetection(
         concentration_file=concentration,
         brain_mask_file=brain_mask,
-        aif_method="synthetic",
         tr=0.0,
     ).run(cwd=tmp_path)
 
-    assert result.outputs.detection_level == "synthetic"
+    assert result.outputs.detection_level == "unavailable"
     assert result.outputs.qc_metrics["tr_used"] == pytest.approx(2.25)

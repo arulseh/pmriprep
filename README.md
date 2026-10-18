@@ -108,7 +108,6 @@ Key DSC options:
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,cpi}` | Select deconvolution (default: oSVD) |
 | `--dsc-inference {vi,svb}` | Select inference for CPI models (default: vi) |
 | `--dsc-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
-| `--dsc-aif-method {auto,synthetic}` | Select detected or synthetic AIF |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
 
 Key DCE options:
@@ -181,22 +180,24 @@ DSC fields:
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
 | `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
-| `aif_method` | `auto` | `auto` or `synthetic` |
 | `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
 | `aif_mask_file` | `null` | AIF search-space mask (native-DSC space) |
 | `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
-| `disable_aif_fallback` | `false` | Fail or retain a flagged AIF instead of substituting synthetic |
 | `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
 | `nawm_mask` | `null` | NAWM mask (native-DSC space) |
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
 | `leakage_method` | `bsw` | BSW correction (guidance for joint signal-domain CPI); `none` disables leakage correction/estimation |
-| `pre_bolus` | `5` | Initial baseline frames; final baseline is AIF-informed |
+| `pre_bolus` | `5` | Initial baseline frames; final baseline may be refined |
 | `motion_correct` | `true` | Apply motion correction |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
+
+DSC uses measured AIFs for deconvolution. If no acceptable
+AIF is found, tissue-based nCBV, AUC, K2, PSR, TTP, CNR and tSNR remain
+available; AIF-dependent perfusion maps are withheld.
 
 DCE fields:
 

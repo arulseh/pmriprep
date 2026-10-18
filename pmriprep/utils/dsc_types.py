@@ -4,7 +4,7 @@ Type-safe data structures for DSC perfusion processing results,
 including voxel-level perfusion parameters and uncertainty estimates.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -147,49 +147,3 @@ class DSCQCMetrics:
         if self.rhat_max is None or self.ess_min is None:
             return True  # Not applicable for non-Bayesian methods
         return self.rhat_max < 1.1 and self.ess_min > 100
-
-
-@dataclass
-class DSCAIFResult:
-    """Result from AIF detection.
-
-    Attributes
-    ----------
-        aif_curve: The arterial input function concentration time course.
-        aif_mask: Binary mask indicating AIF voxel locations.
-        detection_level: Method used ('atlas', 'relaxed', 'synthetic').
-        quality_score: Overall AIF quality score (0-1).
-        gamma_fit_applied: Whether gamma-variate fitting was applied.
-        candidate_count: Number of candidate voxels evaluated.
-        metrics: Detailed AIF quality metrics.
-    """
-
-    aif_curve: list[float] = field(default_factory=list)
-    aif_mask: Optional[list[list[list[int]]]] = None  # 3D mask
-    detection_level: str = ""
-    quality_score: float = 0.0
-    gamma_fit_applied: bool = False
-    candidate_count: int = 0
-    metrics: dict[str, float] = field(default_factory=dict)
-
-    def is_valid(self) -> bool:
-        """Check if AIF detection was successful.
-
-        Returns
-        -------
-        bool
-            True if AIF curve has non-zero values and quality is acceptable.
-        """
-        if not self.aif_curve:
-            return False
-        return len(self.aif_curve) > 0 and self.quality_score > 0.0
-
-    def is_synthetic(self) -> bool:
-        """Check if synthetic (population) AIF was used.
-
-        Returns
-        -------
-        bool
-            True if synthetic AIF was used as fallback.
-        """
-        return self.detection_level == "synthetic"

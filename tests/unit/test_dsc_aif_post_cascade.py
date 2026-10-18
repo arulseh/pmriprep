@@ -1,39 +1,15 @@
-"""Characterization tests for DSC AIF post-cascade finalization."""
+"""DSC AIF interface orchestration, diagnostic curves and output contracts."""
 
-import logging
+import json
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 
 from pmriprep.interfaces import dsc_aif
-from pmriprep.utils.dsc_aif import GammaVariateFitResult
-
-
-def _context(*, disable_fallback: bool = False) -> dsc_aif._DSCAIFDetectionContext:
-    concentration = np.zeros((2, 2, 2, 6), dtype=float)
-    return dsc_aif._DSCAIFDetectionContext(
-        concentration=concentration,
-        affine=np.eye(4),
-        brain_mask=np.ones(concentration.shape[:3], dtype=bool),
-        atlas_mask=None,
-        atlas_is_mra=False,
-        full_atlas_mask=None,
-        lesion_mask=None,
-        enhancing_mask=None,
-        signal=None,
-        aif_method="auto",
-        initial_criteria="strict",
-        n_candidates=10,
-        baseline_frames=2,
-        gamma_fit_mode="auto",
-        disable_fallback=disable_fallback,
-        lesion_distance=15.0,
-        n_timepoints=6,
-        field_strength=3.0,
-        synthetic_effective_dose=1.0,
-        voxel_sizes=(1.0, 1.0, 1.0),
-        tr=1.5,
-    )
+import nibabel as nib
+from nipype.interfaces.base import isdefined
 
 
 def _cascade(*, accepted: bool = True) -> dsc_aif._CascadeDetectionResult:
@@ -45,7 +21,7 @@ def _cascade(*, accepted: bool = True) -> dsc_aif._CascadeDetectionResult:
         accepted_aif=(curve, mask, 1) if accepted else None,
         candidates=candidates,
         n_available=len(candidates),
-        detection_level="atlas_strict" if accepted else "none",
+        detection_level="atlas_strict" if accepted else "unavailable",
         filter_metadata={},
         initial_level="atlas_strict",
         tiers_attempted=["atlas_strict"],
@@ -72,293 +48,102 @@ def _detected_result(*, baseline_frames: int = 2) -> dsc_aif._FinalizedDetectedA
     )
 
 
-def test_gamma_r2_floor_replaces_detected_state_with_synthetic(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("outcome", ["accepted", "accepted_fit_failed", "rejected", "no_candidates"])
+def test_run_interface_preserves_analysis_and_diagnostic_roles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
 ) -> None:
-    """A rejected sub-floor gamma fit clears spatial state and uses synthetic AIF."""
-    detector = dsc_aif.AIFDetection()
-    synthetic = np.array([0.0, 0.0, 2.0, 8.0, 3.0, 1.0])
-    monkeypatch.setattr(
-        detector,
-        "_finalize_detected_aif",
-        lambda *args: _detected_result(baseline_frames=4),
+    """The public runner exports usable input separately from diagnostic artifacts."""
+    concentration = tmp_path / "concentration.nii.gz"
+    mask = tmp_path / "mask.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((2, 2, 2, 6)), np.eye(4)), concentration)
+    nib.save(nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4)), mask)
+    detector = dsc_aif.AIFDetection(
+        concentration_file=str(concentration), brain_mask_file=str(mask),
+        baseline_frames=3, tr=1.5,
     )
+    accepted = outcome.startswith("accepted")
+    cascade = _cascade(accepted=accepted)
+    measured = _detected_result()
+    diagnostic = measured.curve * 0.5
+    if outcome == "rejected":
+        cascade = cascade._replace(rejected=dsc_aif._RejectedAIF(
+            measured.curve, measured.mask,
+            {"reason": "quality_checks_failed", "candidate_coords": [[0, 0, 0]],
+             "candidate_scores": [0.1]},
+        ))
+    def fixed_cascade(
+        context: dsc_aif._DSCAIFDetectionContext, baseline_frames: int, logger: Any,
+    ) -> dsc_aif._CascadeDetectionResult:
+        assert baseline_frames == 2
+        return cascade
 
-    def reject_gamma(
-        *args: object,
-    ) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
-        curve = np.asarray(args[0])
-        qc_metrics = args[-1]
-        assert isinstance(qc_metrics, dict)
-        qc_metrics["gamma_fit_converged"] = True
-        qc_metrics["gamma_fit_r_squared"] = -0.25
-        return False, curve * 0.9, curve, curve * 0.9
+    def diagnostic_fit(
+        curve: np.ndarray, baseline_frames: int, tr: float, qc: dict[str, Any],
+    ) -> np.ndarray | None:
+        assert baseline_frames == 2 and tr == 1.5
+        np.testing.assert_array_equal(curve, measured.curve)
+        qc["gamma_fit_converged"] = outcome != "accepted_fit_failed"
+        if outcome == "accepted_fit_failed":
+            qc["gamma_fit_failure_reason"] = "optimizer_not_converged"
+            return None
+        qc["gamma_fit_r_squared"] = -0.25
+        return diagnostic
 
-    monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", reject_gamma)
-    monkeypatch.setattr(
-        detector,
-        "_prepare_cached_synthetic_fallback",
-        lambda *args: (
-            synthetic,
-            {"synthetic_peak": 8.0, "synthetic_aif_arrival_frame": 3},
-        ),
-    )
-
-    state = detector._finalize_post_cascade(
-        _context(), _cascade(), 2, logging.getLogger(__name__)
-    )
-
-    np.testing.assert_array_equal(state.curve, synthetic)
-    np.testing.assert_array_equal(state.measured_curve, synthetic)
-    assert not state.mask.any()
-    assert state.gamma_curve is None
-    assert state.raw_curve is None
-    assert state.detection_level == "synthetic"
-    assert state.quality_score == 0.3
-    assert state.qc_metrics["synthetic_fallback_reason"] == "gamma_r2_floor"
-    assert state.qc_metrics["gamma_r2_at_fallback"] == -0.25
-    assert state.qc_metrics["bootstrap_baseline_frames"] == 2
-    assert state.qc_metrics["baseline_frames_used"] == 2
-    assert state.qc_metrics["n_baseline_frames"] == 2
-    assert state.qc_metrics["candidate_baseline_frames"] == 4
-    assert state.qc_metrics["arrival_time_seconds"] == 4.5
-    assert state.qc_metrics["aif_metrics"]["arrival"] == 4.5
-    assert state.qc_metrics["aif_metrics"]["peak_conc"] == 8.0
-    assert state.qc_metrics["rejected_measured_aif"]["baseline_frames"] == 4
-    assert state.qc_metrics["cbv_auc_denominator_is_synthetic"] is True
-    assert "aif_voxel_coord" not in state.qc_metrics
-    assert "cascade_postfilter_diags" in state.qc_metrics
-
-
-def test_disabled_fallback_retains_sub_floor_detected_aif(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Disabling fallback retains the measured curve and exposes degraded QC."""
-    detector = dsc_aif.AIFDetection()
-    monkeypatch.setattr(
-        detector,
-        "_finalize_detected_aif",
-        lambda *args: _detected_result(),
-    )
-
-    def reject_gamma(*args: object) -> tuple[bool, None, np.ndarray, np.ndarray]:
-        curve = np.asarray(args[0])
-        qc_metrics = args[-1]
-        assert isinstance(qc_metrics, dict)
-        qc_metrics["gamma_fit_converged"] = True
-        qc_metrics["gamma_fit_r_squared"] = -0.25
-        return False, None, curve, curve * 0.9
-
-    monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", reject_gamma)
-
-    state = detector._finalize_post_cascade(
-        _context(disable_fallback=True),
-        _cascade(),
-        2,
-        logging.getLogger(__name__),
-    )
-
-    assert state.detection_level == "atlas_strict"
-    assert state.quality_score == 0.8
-    assert state.mask.sum() == 1
-    assert state.qc_metrics["aif_gamma_fit_below_floor_retained"] is True
-    assert state.qc_metrics["gamma_r2_retained"] == -0.25
-    assert state.qc_metrics["aif_quality"] == "detected"
-
-
-def test_gamma_optimizer_failure_retains_detected_aif(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An optional gamma-fit failure cannot invalidate an accepted measured AIF."""
-    detector = dsc_aif.AIFDetection()
-    detected = _detected_result()
-    monkeypatch.setattr(
-        detector,
-        "_finalize_detected_aif",
-        lambda *args: detected,
-    )
-
-    def fail_gamma(*args: object) -> tuple[bool, None, np.ndarray, None]:
-        curve = np.asarray(args[0])
-        qc_metrics = args[-1]
-        assert isinstance(qc_metrics, dict)
-        qc_metrics["gamma_fit_converged"] = False
-        qc_metrics["gamma_fit_failure_reason"] = "optimizer_error"
-        qc_metrics["gamma_fit_rejected_reason"] = "Fit did not converge"
-        qc_metrics["gamma_fit_r_squared"] = -1.0
-        return False, None, curve, None
-
-    monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", fail_gamma)
-    state = detector._finalize_post_cascade(
-        _context(), _cascade(), 2, logging.getLogger(__name__)
-    )
-
-    np.testing.assert_array_equal(state.curve, detected.curve)
-    assert state.detection_level == "atlas_strict"
-    assert state.mask.sum() == 1
-    assert state.qc_metrics["gamma_fit_converged"] is False
-    assert state.qc_metrics["gamma_fit_failure_reason"] == "optimizer_error"
-    assert "synthetic_fallback_reason" not in state.qc_metrics
-    assert "aif_gamma_fit_below_floor_retained" not in state.qc_metrics
-
-
-def test_gamma_optimizer_failure_has_no_numeric_fit_metrics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed optimizer cannot publish or apply its provisional fitted curve."""
-    curve = np.array([0.0, 0.0, 1.0, 4.0, 2.0, 0.5])
-    failed = GammaVariateFitResult(
-        fitted_curve=curve * 0.9,
-        amplitude=1.0,
-        t0=2.0,
-        alpha=2.0,
-        beta=3.0,
-        auc_original=7.5,
-        auc_fitted=6.75,
-        auc_ratio=0.9,
-        residual_rms=0.1,
-        r_squared=-1.0,
-        fit_converged=False,
-        failure_reason="optimizer_error",
-    )
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_aif.fit_gamma_variate",
-        lambda **kwargs: failed,
-    )
-    qc_metrics: dict[str, object] = {}
-
-    applied, overlay, retained, gamma_curve = (
-        dsc_aif.AIFDetection._apply_gamma_fit_if_appropriate(
-            curve,
-            "auto",
-            2,
-            1.5,
-            qc_metrics,
-        )
-    )
-
-    assert applied is False
-    assert overlay is None
-    np.testing.assert_array_equal(retained, curve)
-    assert gamma_curve is None
-    assert qc_metrics["gamma_fit_converged"] is False
-    assert qc_metrics["gamma_fit_failure_reason"] == "optimizer_error"
-    assert "gamma_fit_r_squared" not in qc_metrics
-    assert "gamma_fit_auc_ratio" not in qc_metrics
-
-
-def test_nonfinite_gamma_initialization_fails_candidate_gate_gracefully(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Candidate gamma-shape screening converts initialization failure to None."""
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_aif._estimate_initial_params",
-        lambda *args: (float("inf"), 2.0, 2.0, 3.0),
-    )
-    curve = np.array([0.0, 0.0, 1.0, 4.0, 2.0, 0.5])
-
-    assert dsc_aif._compute_aif_peak_ratio(curve, 2, 1.5) is None
-
-
-def test_gamma_fit_refreshes_final_peak_provenance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Gamma peak provenance changes while measured-denominator QC is retained."""
-    detector = dsc_aif.AIFDetection()
-    detected = _detected_result()
-    detected.qc_metrics["aif_metrics"] = {"ph": 31.0, "brr": 17.0}
-    monkeypatch.setattr(detector, "_finalize_detected_aif", lambda *args: detected)
-
-    fitted = np.array([0.0, 0.0, 1.0, 5.5, 2.0, 0.5])
-
-    def accept_gamma(*args: object) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
-        raw = np.asarray(args[0])
-        return True, raw, fitted, fitted
-
-    monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", accept_gamma)
-    state = detector._finalize_post_cascade(
-        _context(), _cascade(), 2, logging.getLogger(__name__)
-    )
-
-    np.testing.assert_array_equal(state.curve, fitted)
-    np.testing.assert_array_equal(state.measured_curve, detected.curve)
-    assert state.qc_metrics["aif_metrics"]["peak_conc"] == 5.5
-    assert state.qc_metrics["aif_metrics"]["ph"] == 31.0
-    assert state.qc_metrics["aif_metrics"]["brr"] == 17.0
-
-
-@pytest.mark.parametrize("aif_method", ["auto", "synthetic"])
-def test_synthetic_selection_builds_complete_qc(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    aif_method: str,
-) -> None:
-    """Synthetic output carries acquisition QC and the actual selection reason."""
-    detector = dsc_aif.AIFDetection()
-    synthetic = np.array([0.0, 0.0, 2.0, 8.0, 3.0, 1.0])
-    monkeypatch.setattr(
-        detector,
-        "_prepare_cached_synthetic_fallback",
-        lambda *args: (synthetic, {"synthetic_peak": 8.0}),
-    )
-
-    exhausted = _cascade(accepted=False)._replace(
-        spatial_filter_diagnostics={
-            "atlas_strict": {
-                "n_distance_excluded": 3,
-                "all_candidates_excluded_by_distance": True,
-            }
-        }
-    )
-    with caplog.at_level(logging.WARNING):
-        state = detector._finalize_post_cascade(
-            _context()._replace(aif_method=aif_method),
-            exhausted, 3, logging.getLogger(__name__),
-        )
-
-    assert state.detection_level == "synthetic"
-    assert state.candidate_count == 0
-    assert state.baseline_frames == 3
-    assert state.qc_metrics["synthetic_fallback_reason"] == (
-        "user_selected" if aif_method == "synthetic" else "no_candidates"
-    )
-    assert state.qc_metrics["gamma_fit_rejected_reason"] == "synthetic_aif"
-    assert state.qc_metrics["aif_baseline_frames"] == 3
-    assert state.qc_metrics["bootstrap_baseline_frames"] == 2
-    assert state.qc_metrics["baseline_frames_used"] == 3
-    assert state.qc_metrics["cascade_postfilter_diags"] == (
-        _cascade(accepted=False).postfilter_diagnostics
-    )
-    warnings = state.qc_metrics["synthetic_aif_warnings"]
-    if aif_method == "auto":
-        assert "automatic detection failed" in warnings[0]
-        assert "exhausted all candidate tiers" in caplog.text
-        assert "using the synthetic AIF fallback" in caplog.text
-        assert "3 candidates excluded by lesion distance" in caplog.text
+    monkeypatch.setattr(detector, "_prepare_detection_baseline", lambda *args: dsc_aif._TissueBaseline(2, {"confidence": "high"}))
+    monkeypatch.setattr(detector, "_run_candidate_cascade", fixed_cascade)
+    monkeypatch.setattr(detector, "_finalize_detected_aif", lambda *args: measured)
+    monkeypatch.setattr(detector, "_fit_gamma_for_qc", diagnostic_fit)
+    outputs = detector.run(cwd=str(tmp_path)).outputs
+    qc = outputs.qc_metrics
+    json.dumps(qc, allow_nan=False)
+    assert outputs.aif_baseline_frames == 2
+    assert qc["bootstrap_baseline_frames"] == 3
+    assert qc["tissue_baseline_confidence"] == "high"
+    assert qc["cascade_tiers_attempted"] == ["atlas_strict"]
+    assert qc["cbv_auc_denominator_available"] is accepted
+    assert outputs.detection_level == ("atlas_strict" if accepted else "unavailable")
+    if accepted:
+        np.testing.assert_array_equal(np.loadtxt(outputs.out_aif_curve), measured.curve)
+        np.testing.assert_array_equal(nib.load(outputs.out_aif_mask).get_fdata(), measured.mask)
+        assert qc["detection_status"] == "accepted"
+        assert outputs.candidate_count == 1
     else:
-        assert "selected by the user" in warnings[0]
-        assert "automatic detection failed" not in " ".join(warnings)
-        assert "exhausted all candidate tiers" not in caplog.text
-    assert state.qc_metrics["cascade_spatial_filter_diags"] == (
-        exhausted.spatial_filter_diagnostics
-    )
+        assert not isdefined(outputs.out_aif_curve)
+        assert not isdefined(outputs.out_aif_mask)
+        assert qc["detection_status"] == "failed"
+        assert outputs.candidate_count == qc["n_aif_voxels_selected"] == 0
+        assert qc["failure_reason"] == ("quality_checks_failed" if outcome == "rejected" else "no_candidates")
+    if outcome == "rejected":
+        np.testing.assert_array_equal(np.loadtxt(outputs.out_rejected_aif_curve), measured.curve)
+        np.testing.assert_array_equal(nib.load(outputs.out_rejected_aif_mask).get_fdata(), measured.mask)
+        assert qc["rejected_candidate"]["candidate_coords"] == [[0, 0, 0]]
+    else:
+        assert not isdefined(outputs.out_rejected_aif_curve)
+    if outcome in {"accepted", "rejected"}:
+        np.testing.assert_array_equal(np.loadtxt(outputs.out_gamma_aif_curve), diagnostic)
+        fit_qc = qc["rejected_candidate"] if outcome == "rejected" else qc
+        assert fit_qc["gamma_fit_r_squared"] == -0.25
+    else:
+        assert not isdefined(outputs.out_gamma_aif_curve)
+        if outcome == "accepted_fit_failed":
+            assert qc["gamma_fit_failure_reason"] == "optimizer_not_converged"
 
 
-def test_cascade_exhaustion_logs_before_disabled_fallback_error(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Terminal detection failure is explicit when fallback is disabled."""
-    detector = dsc_aif.AIFDetection()
-
-    with caplog.at_level(logging.ERROR), pytest.raises(
-        RuntimeError, match="failed at all levels"
-    ):
-        detector._finalize_post_cascade(
-            _context(disable_fallback=True),
-            _cascade(accepted=False),
-            3,
-            logging.getLogger(__name__),
-        )
-
-    assert "exhausted all candidate tiers" in caplog.text
-    assert "synthetic fallback is disabled" in caplog.text
+def test_gamma_diagnostic_preserves_measured_curve_and_reports_window() -> None:
+    from pmriprep.utils.dsc_aif import fit_gamma_variate
+    time = np.arange(80, dtype=float)
+    first = np.maximum(time - 10, 0)**3 * np.exp(-np.maximum(time - 10, 0) / 2)
+    second = 0.2 * np.maximum(time - 32, 0)**3 * np.exp(-np.maximum(time - 32, 0) / 3)
+    curve = first + second
+    original = curve.copy()
+    qc = {}
+    gamma = dsc_aif.AIFDetection._fit_gamma_for_qc(curve, 8, 1.0, qc)
+    np.testing.assert_array_equal(curve, original)
+    assert gamma is not None
+    assert qc["gamma_fit_converged"]
+    start, end = qc["gamma_fit_diagnostics"]["first_pass_window"]
+    expected_fraction = np.trapezoid(curve[start:end]) / np.trapezoid(curve[start:])
+    assert qc["gamma_fit_diagnostics"]["first_pass_area_fraction"] == pytest.approx(expected_fraction)
+    assert expected_fraction < 0.8
+    reference = fit_gamma_variate(curve, baseline_frames=8, remove_recirculation=True, preserve_auc=True, tr=1.0)
+    np.testing.assert_allclose(gamma, reference.fitted_curve)

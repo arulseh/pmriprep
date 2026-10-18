@@ -147,11 +147,8 @@ class LesionStatisticsResult:
     qc_filtered_regions: Dict[str, RegionStatistics] = field(default_factory=dict)
     qc_filtered_nawm_reference: Optional[Dict[str, Any]] = None
     qc_filtered_derived_metrics: Optional[Dict[str, Any]] = None
-    # AIF provenance for DSC stats: a prebuilt ``PerfusionProcessing.AIF``
-    # sub-block (Source, DetectionLevel, QualityFlag, GammaFitApplied,
-    # optionally SyntheticFallbackReason / ExternalAIFVerified).
-    # None for DCE stats or when AIF QC is
-    # unavailable.
+    # Shared PerfusionProcessing.AIF provenance for DSC statistics;
+    # None for DCE statistics or unavailable AIF QC.
     aif_provenance: Optional[Dict[str, Any]] = None
 
     def augment_with_cohens_d(self) -> None:

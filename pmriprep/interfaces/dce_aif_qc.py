@@ -75,6 +75,8 @@ class DCEAIFQCPlotInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="3D AIF voxel mask NIfTI (not provided for population AIF)",
     )
+    rejected_aif_curve_file = File(exists=True, desc="Rejected diagnostic AIF in plasma mM")
+    rejected_aif_mask_file = File(exists=True, desc="Support of the rejected diagnostic AIF")
     dce_file = File(
         exists=True,
         mandatory=True,
@@ -120,7 +122,7 @@ class DCEAIFQCPlotOutputSpec(TraitedSpec):
     """Output specification for DCEAIFQCPlot interface."""
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
-    out_aif_location = File(desc="AIF location overlay PNG (None for population AIF)")
+    out_aif_location = File(desc="Measured or rejected candidate location overlay PNG")
     out_aif_candidates = File(desc="AIF candidates glass brain PNG")
 
 
@@ -153,7 +155,16 @@ class DCEAIFQCPlot(BaseInterface):
         qc = self.inputs.qc_metrics if isdefined(self.inputs.qc_metrics) else {}
         sub = self.inputs.subject_id or ""
         ses = self.inputs.session_id or ""
-        detection_method = qc.get("detection_method", "unknown")
+
+        rejected_curve = (
+            np.loadtxt(self.inputs.rejected_aif_curve_file)
+            if isdefined(self.inputs.rejected_aif_curve_file) and self.inputs.rejected_aif_curve_file
+            else None
+        )
+        display_qc = dict(qc)
+        if rejected_curve is not None:
+            display_qc.update(qc.get("rejected_candidate") or {})
+            display_qc["candidate_rejected"] = True
 
         # Generate plots
         out_dir = Path.cwd()
@@ -161,20 +172,23 @@ class DCEAIFQCPlot(BaseInterface):
         # Always generate curve plot
         aif_plot_path = str(out_dir / "aif_curve_qc.png")
         self._plot_aif_curve(
-            aif_curve, tr, qc, sub, ses, aif_plot_path,
+            aif_curve, tr, qc, sub, ses, aif_plot_path, rejected_curve=rejected_curve,
         )
 
-        # Only generate location plot if voxel-based detection was used
+        mask_file = (
+            self.inputs.rejected_aif_mask_file if rejected_curve is not None
+            else self.inputs.aif_mask_file
+        )
         aif_location_path: str | None = None
-        if detection_method not in ("population", "external") and isdefined(self.inputs.aif_mask_file):
-            aif_mask_img = nib.load(self.inputs.aif_mask_file)
-            aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
-
-            aif_location_path = str(out_dir / "aif_location_qc.png")
-            self._plot_aif_location(
-                dce_data, aif_mask, brain_mask, voxel_sizes,
-                qc, sub, ses, aif_location_path,
-            )
+        if isdefined(mask_file) and mask_file:
+            aif_mask_img: Any = nib.load(mask_file)
+            aif_mask = aif_mask_img.get_fdata()
+            if np.any(aif_mask > 0):
+                aif_location_path = str(out_dir / "aif_location_qc.png")
+                self._plot_aif_location(
+                    dce_data, aif_mask, brain_mask, voxel_sizes,
+                    display_qc, sub, ses, aif_location_path,
+                )
 
         # Generate glass brain candidates plot if transforms are available
         aif_candidates_path: str | None = None
@@ -183,14 +197,13 @@ class DCEAIFQCPlot(BaseInterface):
             and isdefined(self.inputs.t1w_to_mni_xfm)
         )
         if (
-            detection_method not in ("population", "external")
-            and has_xfms
-            and qc.get("candidate_coords")
+            has_xfms
+            and display_qc.get("candidate_coords")
         ):
             aif_candidates_path = str(out_dir / "aif_candidates_qc.png")
             plot_aif_candidates_glass_brain(
-                candidate_coords=qc["candidate_coords"],
-                candidate_scores=qc.get("candidate_scores", []),
+                candidate_coords=display_qc["candidate_coords"],
+                candidate_scores=display_qc.get("candidate_scores", []),
                 native_img=dce_img,
                 t1w_to_native_xfm=self.inputs.t1w_to_dce_xfm,
                 t1w_to_mni_xfm=self.inputs.t1w_to_mni_xfm,
@@ -228,6 +241,7 @@ class DCEAIFQCPlot(BaseInterface):
         subject_id: str,
         session_id: str,
         output_path: str,
+        rejected_curve: npt.NDArray[Any] | None = None,
     ) -> None:
         """Plot AIF concentration curve with quality annotations.
 
@@ -250,8 +264,14 @@ class DCEAIFQCPlot(BaseInterface):
                 linewidth=1.5,
                 marker="o",
                 markersize=3,
-                label="AIF",
+                label=("Population AIF (used)" if qc.get("detection_method") == "population"
+                       else "Supplied AIF" if qc.get("detection_method") == "external"
+                       else "Measured AIF"),
             )
+
+            if rejected_curve is not None:
+                ax.plot(time, rejected_curve, color=COLORBLIND_PALETTE.error,
+                        linewidth=1.5, label="Rejected candidate")
 
             # Peak marker
             peak_idx = int(np.argmax(aif_curve))
@@ -281,7 +301,7 @@ class DCEAIFQCPlot(BaseInterface):
             # Title
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
-            ax.set_title(f"{sub_label}{ses_label} | DCE AIF Quality", fontsize=12)
+            ax.set_title(f"{sub_label}{ses_label} | DCE AIF", fontsize=12)
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -371,7 +391,7 @@ class DCEAIFQCPlot(BaseInterface):
                 )
                 if np.any(mask_slice > 0.5):
                     masked = np.ma.masked_where(mask_slice < 0.5, mask_slice)  # type: ignore[no-untyped-call]
-                    ax_plt.imshow(masked, cmap="hot", alpha=0.4, aspect=aspect)
+                    ax_plt.imshow(masked, cmap="hot", vmin=0, vmax=1, alpha=0.4, aspect=aspect)
 
                 # Crosshair at best candidate / centroid
                 # Map 3D coord to 2D slice position after radiological transform.
@@ -447,7 +467,7 @@ class DCEAIFQCPlot(BaseInterface):
             # Overall title
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
-            fig.suptitle(f"{sub_label}{ses_label} | DCE AIF Location", fontsize=12)
+            fig.suptitle(f"{sub_label}{ses_label} | {'Candidate voxels' if qc.get('candidate_rejected') else 'DCE AIF Location'}", fontsize=12)
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -546,7 +566,7 @@ def plot_aif_candidates_glass_brain(
     sub_label = f"sub-{subject_id}" if subject_id else ""
     ses_label = f" | ses-{session_id}" if session_id else ""
     fig.suptitle(
-        f"{sub_label}{ses_label} | {modality} AIF Sources (n={n})",
+        f"{sub_label}{ses_label} | {modality} Candidate voxels (n={n})",
         fontsize=12, color="white", y=0.95,
     )
 

@@ -512,12 +512,6 @@ Examples:
         "from ContrastBolusAgent when available; unresolved agents use 0.1.",
     )
     dsc_group.add_argument(
-        "--dsc-aif-method",
-        choices=["auto", "synthetic"],
-        default=None,
-        help="AIF detection method for DSC (default: auto).",
-    )
-    dsc_group.add_argument(
         "--dsc-aif-file",
         type=Path,
         default=None,

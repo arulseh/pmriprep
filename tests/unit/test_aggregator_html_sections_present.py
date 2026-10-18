@@ -138,15 +138,6 @@ def test_boilerplate_bib_has_unique_fields_per_entry() -> None:
 
 def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     """Boilerplate avoids unsupported sources and optional-method overclaims."""
-    synthetic = ru._build_dsc_boilerplate(
-        {"config": {"aif_source": "synthetic"}, "deconvolution": {"method": "oSVD"}}
-    )
-    assert "dose- and field-strength-scaled synthetic gamma-variate DSC AIF" in synthetic
-    assert "DSC AUC-CBV was computed" in synthetic
-    assert "concentration curve and the synthetic AIF" in synthetic
-    assert "@parker_2006" not in synthetic
-    assert "@mouridsen_2006" not in synthetic
-
     tikhonov = ru._build_dsc_boilerplate(
         {
             "aif_detection": {"aif_method": "auto"},
@@ -191,12 +182,11 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
 
 def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
     """Runtime outcomes override configured intent in DSC methods text."""
-    synthetic = ru._build_dsc_boilerplate(
+    partial = ru._build_dsc_boilerplate(
         {
             "config": {"aif_source": "auto"},
             "aif_detection": {
-                "detection_method": "synthetic",
-                "synthetic_fallback_reason": "gamma_r2_floor",
+                "detection_method": "unavailable",
             },
             "preload": {
                 "preload_correction_applied": False,
@@ -205,9 +195,9 @@ def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
             },
         }
     )
-    assert "dose- and field-strength-scaled synthetic gamma-variate DSC AIF" in synthetic
-    assert "automatically detected" not in synthetic
-    assert "eligible reference curve could not be constructed" in synthetic
+    assert "only AIF-independent maps were computed" in partial
+    assert "automatically detected" not in partial
+    assert "eligible reference curve could not be constructed" in partial
 
     disabled = ru._build_dsc_boilerplate(
         {

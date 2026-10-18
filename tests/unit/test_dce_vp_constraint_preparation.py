@@ -190,7 +190,7 @@ def test_patlak_vi_maps_use_qualified_dsc_prior(tmp_path: Path, model: str) -> N
         model=model, inference="vi", volume_tr=2.0, baseline_frames=15,
         aif_bat_alignment="off", n_procs=1,
         dsc_aif_qc={
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995, "mean_cnr": 10.0},
             "aif_peak_height": 0.4, "baseline_return_ratio": 0.15,
             "detection_method": "atlas_strict",
         },
@@ -278,7 +278,7 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
     assert captured["agent_standard_dose"] == 0.1
     assert captured["dsc_registration_qc"] == {"qc_status": "WARN"}
     assert captured["dce_registration_qc"] == {"qc_status": "PASS"}
-    assert captured["aif_qc_data"]["cnr_whole_brain"] == {
+    assert captured["dsc_qc_data"]["cnr_whole_brain"] == {
         "fraction_cnr_gt_4": 0.8,
         "mean_cnr": 6.0,
     }

@@ -410,7 +410,6 @@ class TestSingleBestProvenance:
         det = AIFDetection()
         det.inputs.concentration_file = str(conc_file)
         det.inputs.brain_mask_file = str(brain_file)
-        det.inputs.aif_method = "auto"
         det.inputs.tr = tr
         det.inputs.baseline_frames = baseline_frames
 
@@ -420,7 +419,7 @@ class TestSingleBestProvenance:
 
         # Single-best branch taken: a real detection tier (not synthetic) with a
         # genuinely multi-voxel pre-fallback union.
-        assert detection_level not in ("synthetic", "external")
+        assert detection_level in ("brain_relaxed", "brain_permissive", "atlas_strict", "atlas_relaxed", "atlas_permissive")
         assert qc["n_aif_voxels_available"] == 2
         # Provenance describes the single emitted voxel.
         assert sum(qc["aif_tier_provenance"].values()) == 1

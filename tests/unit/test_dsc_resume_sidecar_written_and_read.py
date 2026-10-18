@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-from pmriprep.utils.dsc_cbv_constraint import _normalize_aif_qc_keys
 from pmriprep.workflows.base import _find_previous_dsc_outputs
 from pmriprep.workflows.dsc.datasinks import _write_dsc_resume_checkpoint
 
@@ -24,10 +23,7 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
     aif_qc = {
         "detection_method": "atlas_strict",
         "n_aif_voxels_selected": 6,
-        "cbv_auc_denominator_is_synthetic": False,
-        "synthetic": False,
-        "gamma_fit_applied": True,
-        "gamma_fit_auto_metrics": {"peak_ratio": 1.05, "shape_score": 0.9},
+        "gamma_fit_diagnostics": {"peak_ratio": 1.05, "shape_score": 0.9},
         "hematocrit": 0.42,
         "quality_score": 0.81,
         "cnr_whole_brain": {"fraction_cnr_gt_4": 0.81, "mean_cnr": 5.4},
@@ -156,10 +152,7 @@ class TestRoundTripViaResumeHelper:
         assert recovered["aif_qc"] == aif_qc
         assert recovered["preload_qc"] == preload_qc
         assert recovered["preprocessing_stats"] == preprocessing_stats
-        normalized = _normalize_aif_qc_keys(dict(recovered["aif_qc"]))
-        assert normalized["aif_peak_height"] == pytest.approx(0.412)
-        assert normalized["baseline_return_ratio"] == pytest.approx(0.92)
-        assert normalized["gamma_peak_ratio"] == pytest.approx(1.05)
+
 
     def test_no_work_dir_returns_none(self, tmp_path: Path) -> None:
         recovered = _find_previous_dsc_outputs(
@@ -185,12 +178,12 @@ class TestRoundTripViaResumeHelper:
         wf_dir = tmp_path / "pmriprep_sub_X_ses_Y_wf"
         wf_dir.mkdir(parents=True)
         (wf_dir / "dsc_resume.json").write_text(
-            json.dumps({"aif_qc": {"detection_method": "synthetic"}}),
+            json.dumps({"aif_qc": {"detection_method": "unavailable"}}),
         )
         recovered = _find_previous_dsc_outputs(
             output_dir=tmp_path, subject_id="X", session_id="Y",
             work_dir=tmp_path,
         )
-        assert recovered["aif_qc"] == {"detection_method": "synthetic"}
+        assert recovered["aif_qc"] == {"detection_method": "unavailable"}
         assert recovered["preload_qc"] is None
         assert recovered["preprocessing_stats"] is None

@@ -85,7 +85,6 @@ def interface_for(files: dict[str, Any], **options: Any) -> ComputeDSCMaps:
         signal_file=files["signal_file"],
         brain_mask_file=files["mask_file"],
         aif_file=files["aif_file"],
-        measured_aif_file=files["aif_file"],
         method="cpi",
         te=0.03,
         tr=3.0,

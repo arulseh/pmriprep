@@ -1,7 +1,6 @@
 """Unit tests for DSC CBV to vp constraint utilities."""
 
 from typing import Any
-import json
 
 import numpy as np
 import pytest
@@ -13,9 +12,7 @@ from pmriprep.utils.dce_constants import (
 )
 from pmriprep.utils.dsc_cbv_constraint import (
     CBVQualityAssessment,
-    CNR_COVERAGE_MODERATE,
     ConstraintMode,
-    _normalize_aif_qc_keys,
     assess_dsc_cbv_quality,
     determine_constraint_mode,
     ncbv_to_vp_prior,
@@ -28,245 +25,6 @@ from pmriprep.utils.dsc_cbv_constraint import (
 # =============================================================================
 
 
-class TestAssessDSCCBVQuality:
-    """Tests for assess_dsc_cbv_quality."""
-
-    @pytest.mark.parametrize("metric, normalized, label", [
-        ("ph", "aif_peak_height", "PH"),
-        ("brr", "baseline_return_ratio", "BRR"),
-    ])
-    @pytest.mark.parametrize("value", [None, np.nan, np.inf, -np.inf])
-    def test_unavailable_required_metric_withholds_prior(
-        self, metric: str, normalized: str, label: str, value: Any,
-    ) -> None:
-        """Unavailable signal metrics withhold the prior in either QC schema."""
-        for nested in (True, False):
-            qc: dict[str, Any] = {
-                "cnr_whole_brain": {"fraction_cnr_gt_4": 0.99},
-            }
-            if nested:
-                qc["aif_metrics"] = {"ph": 40.0, "brr": 15.0, metric: value}
-            else:
-                qc.update(aif_peak_height=0.4, baseline_return_ratio=0.15)
-                qc[normalized] = value
-            result = assess_dsc_cbv_quality(qc)
-            config = determine_constraint_mode(
-                result, k2_metrics={"k2_reference_available": True},
-            )
-            assert config.mode == ConstraintMode.SKIP
-            assert f"({label}) unavailable" in config.reason
-
-    def test_high_quality(self) -> None:
-        """Excellent AIF metrics produce high confidence and use_constraint=True."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "high"
-        assert result.use_constraint is True
-
-    def test_moderate_quality(self) -> None:
-        """CNR coverage between moderate and high thresholds gives moderate confidence."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.90},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "moderate"
-
-    def test_low_quality(self) -> None:
-        """Poor CNR coverage and low AIF peak produce low confidence."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.5},
-            "aif_peak_height": 0.1,
-            "baseline_return_ratio": 0.5,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
-        assert result.use_constraint is False
-
-    def test_cbv_checks_downgrade(self) -> None:
-        """Good AIF metrics but high negative CBV fraction downgrades to low."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        # 10% negative values, well above CBV_NEGATIVE_FRACTION_MAX=0.01
-        cbv_data = np.ones((10, 10, 10), dtype=np.float64) * 3.0
-        cbv_data[:1, :, :] = -5.0  # 10% negative
-
-        result = assess_dsc_cbv_quality(aif_qc_data, cbv_data=cbv_data)
-        assert result.confidence == "low"
-        assert len(result.reasons) > 0
-        assert any("negative" in r.lower() for r in result.reasons)
-
-    def test_synthetic_aif_downgrades_to_low(self) -> None:
-        """Synthetic AIF should downgrade to low even with good shape metrics."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_method": "synthetic",
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
-        assert result.use_constraint is False
-
-    def test_atlas_permissive_downgrades_to_moderate(self) -> None:
-        """atlas_permissive AIF should downgrade to moderate (FWHM up to 18 frames)."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_method": "atlas_permissive",
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "moderate"
-
-    def test_atlas_strict_no_downgrade(self) -> None:
-        """atlas_strict AIF should not downgrade from detection level alone."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_method": "atlas_strict",
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "high"
-
-    def test_single_candidate_downgrades_to_low(self) -> None:
-        """1 AIF voxel (no averaging) should downgrade to low."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_method": "atlas_strict",
-            "n_aif_voxels_selected": 1,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
-
-    def test_two_candidates_downgrades_to_moderate(self) -> None:
-        """2 AIF voxels should downgrade to moderate."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_method": "atlas_strict",
-            "n_aif_voxels_selected": 2,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "moderate"
-
-    def test_detection_level_in_output(self) -> None:
-        """detection_level and n_aif_voxels should appear in output."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "detection_method": "atlas_relaxed",
-            "n_aif_voxels_selected": 5,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.detection_level == "atlas_relaxed"
-        assert result.n_aif_voxels == 5
-
-    def test_missing_detection_keys_no_crash(self) -> None:
-        """Missing detection_level and n_aif_voxels should not crash or downgrade."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        # No downgrade from detection level (empty string) or candidates (default 3)
-        assert result.confidence == "high"
-
-    def test_bad_gamma_peak_ratio_downgrades_to_moderate(self) -> None:
-        """Peak ratio 0.843 (outside [0.90, 1.10]) downgrades to moderate."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "gamma_fit_auto_metrics": {"peak_ratio": 0.843},
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "moderate"
-        assert result.gamma_peak_ratio == pytest.approx(0.843)
-        assert any("peak ratio" in r.lower() for r in result.reasons)
-
-    def test_severe_gamma_peak_ratio_downgrades_to_low(self) -> None:
-        """Peak ratio 0.75 (outside [0.80, 1.20]) downgrades to low."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "gamma_fit_auto_metrics": {"peak_ratio": 0.75},
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
-        assert result.use_constraint is False
-
-    def test_good_gamma_peak_ratio_no_downgrade(self) -> None:
-        """Peak ratio 0.95 (within [0.90, 1.10]) does not downgrade."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "gamma_fit_auto_metrics": {"peak_ratio": 0.95},
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "high"
-        assert result.gamma_peak_ratio == pytest.approx(0.95)
-
-    def test_missing_gamma_peak_ratio_no_downgrade(self) -> None:
-        """Missing gamma_fit_auto_metrics does not downgrade confidence."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "high"
-        assert result.gamma_peak_ratio is None
-
-    def test_gamma_peak_ratio_high_side_downgrade(self) -> None:
-        """Peak ratio 1.15 (above 1.10) downgrades to moderate."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-            "gamma_fit_auto_metrics": {"peak_ratio": 1.15},
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "moderate"
-        assert any("peak ratio" in r.lower() for r in result.reasons)
-
-    def test_mean_cnr_below_minimum_downgrades_to_low(self) -> None:
-        """Mean CNR below Rose criterion (3.0) triggers low confidence."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.95, "mean_cnr": 2.5},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
-        assert any("inadequate contrast" in r for r in result.reasons)
-
-    def test_cnr_coverage_below_skip_downgrades_to_low(self) -> None:
-        """Sub-threshold CNR coverage lowers confidence without an AIF-tier override."""
-        aif_qc_data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.65, "mean_cnr": 25.0},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-        assert result.confidence == "low"
-        assert any("CNR coverage 65.0% < 70.0%" in r for r in result.reasons)
 
 
 # =============================================================================
@@ -337,101 +95,6 @@ class TestDetermineConstraintMode:
 # =============================================================================
 
 
-class TestNormalizeAifQcKeys:
-    """Tests for _normalize_aif_qc_keys."""
-
-    def test_pmriprep_format_translates(self) -> None:
-        """Producer signal drop and concentration tail ratio become fractions."""
-        data = {"aif_metrics": {"ph": 41.2, "psr": 94.6, "brr": 7.17}}
-        result = _normalize_aif_qc_keys(data)
-
-        assert result["aif_peak_height"] == pytest.approx(0.412, rel=1e-6)
-        assert result["baseline_return_ratio"] == pytest.approx(0.0717, rel=1e-6)
-        assert "cnr_whole_brain" in result
-        # Missing CNR uses MODERATE confidence
-        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
-
-    @pytest.mark.parametrize("normalized_key", ["aif_peak_height", "baseline_return_ratio"])
-    def test_partially_normalized_fields(self, normalized_key: str) -> None:
-        """Each normalized field takes precedence while the other is converted."""
-        values = {"aif_peak_height": 0.4, "baseline_return_ratio": 0.15}
-        data = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_metrics": {"ph": 40.0, "brr": 15.0},
-            normalized_key: values[normalized_key],
-        }
-        data["aif_metrics"]["ph" if normalized_key == "aif_peak_height" else "brr"] = 99.0
-        result = _normalize_aif_qc_keys(data)
-
-        assert result["aif_peak_height"] == 0.4
-        assert result["baseline_return_ratio"] == 0.15
-        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == 0.995
-
-    def test_missing_keys_safe_defaults(self) -> None:
-        """Missing keys get conservative defaults (MODERATE, not HIGH)."""
-        data = {}
-        result = _normalize_aif_qc_keys(data)
-
-        # CNR defaults to MODERATE (conservative) when not wired from preprocessing
-        assert "cnr_whole_brain" in result
-        assert result["cnr_whole_brain"]["fraction_cnr_gt_4"] == CNR_COVERAGE_MODERATE
-        quality = assess_dsc_cbv_quality(result)
-        assert quality.use_constraint is False
-        assert quality.aif_peak_height is None
-        assert quality.aif_baseline_return is None
-        assert any("(PH) unavailable" in reason for reason in quality.reasons)
-        assert any("(BRR) unavailable" in reason for reason in quality.reasons)
-
-    def test_aif_metrics_nested_ph_only(self) -> None:
-        """Nested PH translates independently of BRR availability."""
-        data = {"aif_metrics": {"ph": 35.0}}
-        result = _normalize_aif_qc_keys(data)
-
-        assert result["aif_peak_height"] == pytest.approx(0.35, rel=1e-6)
-        assert "baseline_return_ratio" not in result
-
-    def test_aif_metrics_nested_brr_only(self) -> None:
-        """Nested BRR translates independently of PH availability."""
-        data = {"aif_metrics": {"brr": 12.0}}
-        result = _normalize_aif_qc_keys(data)
-
-        assert result["baseline_return_ratio"] == pytest.approx(0.12, rel=1e-6)
-        assert "aif_peak_height" not in result
-
-    def test_good_aif_with_cnr_high_confidence(self) -> None:
-        """Good AIF metrics with CNR coverage produces high confidence."""
-        aif_qc_data = {
-            "aif_metrics": {"ph": 41.2, "psr": 94.6, "brr": 7.17},
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.95, "mean_cnr": 25.0},
-        }
-        result = assess_dsc_cbv_quality(aif_qc_data)
-
-        assert result.confidence == "high"
-        assert result.use_constraint is True
-        assert result.aif_peak_height == pytest.approx(0.412, rel=1e-3)
-        assert result.aif_baseline_return == pytest.approx(0.0717, rel=1e-3)
-
-    def test_unknown_keys_preserved(self) -> None:
-        """Unknown keys pass through unchanged (non-AIF fixture)."""
-        data = {"extra_field": 42, "another_extra": "string"}
-        result = _normalize_aif_qc_keys(data)
-
-        assert result["extra_field"] == 42
-        assert result["another_extra"] == "string"
-
-    def test_normalize_extracts_gamma_peak_ratio(self) -> None:
-        """gamma_fit_auto_metrics.peak_ratio is promoted to top-level key."""
-        data = {"gamma_fit_auto_metrics": {"peak_ratio": 0.843}}
-        result = _normalize_aif_qc_keys(data)
-
-        assert result["gamma_peak_ratio"] == pytest.approx(0.843)
-
-    def test_normalize_no_gamma_metrics_no_key(self) -> None:
-        """Missing gamma_fit_auto_metrics does not create gamma_peak_ratio."""
-        data = {"aif_metrics": {"ph": 41.2}}
-        result = _normalize_aif_qc_keys(data)
-
-        assert "gamma_peak_ratio" not in result
 
 
 # =============================================================================
@@ -439,56 +102,6 @@ class TestNormalizeAifQcKeys:
 # =============================================================================
 
 
-class TestQcReportSchema:
-    """Prior eligibility and metric availability reach the QC report."""
-
-    @pytest.mark.parametrize("metric, value, expected_mode", [
-        ("aif_peak_height", 0.4, "soft"),
-        ("aif_peak_height", np.nan, "skip"),
-        ("baseline_return_ratio", None, "skip"),
-    ])
-    def test_required_metrics_reach_qc(
-        self, tmp_path: Any, metric: str, value: Any, expected_mode: str,
-    ) -> None:
-        """Finite metrics enable the prior; unavailable metrics serialize as null."""
-        import nibabel as nib
-
-        # nCBV ≈ 1 gives vp ≈ 0.010, inside the configured median interval.
-        ncbv_data = np.ones((5, 5, 5), dtype=np.float64)
-        mask_data = np.ones((5, 5, 5), dtype=np.uint8)
-        affine = np.eye(4)
-
-        ncbv_file = tmp_path / "ncbv.nii.gz"
-        mask_file = tmp_path / "mask.nii.gz"
-        nib.Nifti1Image(ncbv_data, affine).to_filename(str(ncbv_file))
-        nib.Nifti1Image(mask_data, affine).to_filename(str(mask_file))
-
-        aif_qc = {
-            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-        aif_qc[metric] = value
-
-        result = prepare_vp_constraint_from_data(
-            ncbv_file=str(ncbv_file),
-            aif_qc_data=aif_qc,
-            brain_mask_file=str(mask_file),
-            k2_metrics={"k2_reference_available": True},
-            dsc_registration_qc={"qc_status": "PASS"},
-            dce_registration_qc={"qc_status": "PASS"},
-        )
-
-        qc = result.qc_report
-        assert qc["mode"] == expected_mode
-        assert (result.vp_map is None) == (expected_mode == "skip")
-        serialized = json.loads(json.dumps(qc, allow_nan=False))
-        if expected_mode == "skip":
-            output_metric = (
-                "aif_peak_height" if metric == "aif_peak_height" else "aif_baseline_return"
-            )
-            assert serialized[output_metric] is None
-            assert "unavailable" in qc["reason"]
 
 
 # =============================================================================
@@ -549,11 +162,9 @@ def _write_nifti(path: Any, data: np.ndarray) -> str:
     return str(path)
 
 
-def _synth_aif_qc() -> dict[str, Any]:
+def _tissue_qc() -> dict[str, Any]:
     return {
-        "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
-        "aif_peak_height": 0.4,
-        "baseline_return_ratio": 0.15,
+        "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995, "mean_cnr": 10.0},
     }
 
 
@@ -578,7 +189,7 @@ class TestVpMagnitudeGate:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=ncbv_file,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             k2_metrics={"k2_reference_available": True},
             **_accepted_registration_qc(),
@@ -599,7 +210,7 @@ class TestVpMagnitudeGate:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=ncbv_file,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             k2_metrics={"k2_reference_available": True},
             **_accepted_registration_qc(),
@@ -619,7 +230,7 @@ class TestVpMagnitudeGate:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=ncbv_file,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             k2_metrics={"k2_reference_available": True},
             **_accepted_registration_qc(),
@@ -639,7 +250,7 @@ class TestVpMagnitudeGate:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=ncbv_file,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             k2_metrics={
                 "k2_signed": True,
@@ -673,7 +284,7 @@ class TestNcbvIntegration:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=ncbv_file,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             k2_metrics={"k2_reference_available": True},
             **_accepted_registration_qc(),
@@ -700,7 +311,7 @@ class TestNcbvIntegration:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=ncbv_file,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             dsc_registration_qc={"qc_status": dsc_status},
             dce_registration_qc=(
@@ -718,7 +329,7 @@ class TestNcbvIntegration:
         mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((6, 6, 6)))
         common = {
             "ncbv_file": ncbv_file,
-            "aif_qc_data": _synth_aif_qc(),
+            "dsc_qc_data": _tissue_qc(),
             "brain_mask_file": mask_file,
             "k2_metrics": {"k2_reference_available": True},
         }
@@ -744,7 +355,7 @@ class TestNcbvIntegration:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=None,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
         )
 
@@ -761,7 +372,7 @@ class TestNcbvIntegration:
 
         result = prepare_vp_constraint_from_data(
             ncbv_file=None,
-            aif_qc_data=_synth_aif_qc(),
+            dsc_qc_data=_tissue_qc(),
             brain_mask_file=mask_file,
             nawm_exclusion_reason=reason,
         )
@@ -777,82 +388,6 @@ class TestNcbvIntegration:
 # =============================================================================
 
 
-class TestDoseAwareCnrGate:
-    """Dose-scaled CNR coverage thresholds + AIF-tier bypass."""
-
-    @staticmethod
-    def _qc(cnr_coverage: float, detection: str, peak: float = 0.4) -> dict[str, Any]:
-        return {
-            "cnr_whole_brain": {
-                "fraction_cnr_gt_4": cnr_coverage,
-                "mean_cnr": 10.0,  # above Rose minimum
-            },
-            "detection_method": detection,
-            "aif_peak_height": peak,
-            "baseline_return_ratio": 0.15,
-        }
-
-    def test_full_dose_thresholds_unchanged(self) -> None:
-        """dose=1.0 × agent=0.1 (Gd-DOTA) → full-dose thresholds."""
-        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
-
-        assert _bolus_gd_fraction(1.0, 0.1) == pytest.approx(1.0)
-
-    def test_half_dose_gddota_half_thresholds(self) -> None:
-        """dose=0.5 × agent=0.1 → eff=0.5; coverage 0.55 clears the SKIP threshold."""
-        # Full-dose thresholds: SKIP=0.70, MODERATE=0.84, HIGH=0.95
-        # At eff=0.5, SKIP becomes 0.35. Coverage=0.55 clears it.
-        result = assess_dsc_cbv_quality(
-            aif_qc_data=self._qc(0.55, "atlas_permissive"),
-            dose=0.5,
-            agent_standard_dose=0.1,
-        )
-        # No low-confidence downgrade from CNR (above scaled SKIP=0.35).
-        assert result.confidence != "low" or all(
-            "CNR coverage" not in r for r in result.reasons
-        )
-
-    def test_half_dose_vueway_scaled(self) -> None:
-        """dose=0.5 × agent=0.05 (Vueway half-dose) → eff=0.25."""
-        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
-
-        assert _bolus_gd_fraction(0.5, 0.05) == pytest.approx(0.25)
-
-    def test_atlas_strict_bypasses_skip_at_low_cnr(self) -> None:
-        """atlas_strict + CNR 0.60 → moderate (not low), even at full dose."""
-        result = assess_dsc_cbv_quality(
-            aif_qc_data=self._qc(0.60, "atlas_strict"),
-            dose=1.0,
-            agent_standard_dose=0.1,
-        )
-        # CNR 0.60 < SKIP 0.70 at full dose, but atlas_strict bypass
-        # keeps confidence at moderate instead of low.
-        assert result.confidence == "moderate"
-
-    def test_atlas_permissive_still_skips_at_low_cnr(self) -> None:
-        """atlas_permissive + CNR 0.60 at full dose → low (no bypass)."""
-        result = assess_dsc_cbv_quality(
-            aif_qc_data=self._qc(0.60, "atlas_permissive"),
-            dose=1.0,
-            agent_standard_dose=0.1,
-        )
-        assert result.confidence == "low"
-
-    def test_double_dose_tightens_thresholds(self) -> None:
-        """dose=2.0 → eff=2.0; coverage 0.80 (passes at full dose) triggers SKIP."""
-        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
-
-        # Double dose bumps SKIP threshold from 0.70 → 1.4 (clamped implicit at 1.0).
-        # Coverage 0.80 triggers SKIP at double dose but passes at full dose.
-        assert _bolus_gd_fraction(2.0, 0.1) == pytest.approx(2.0)
-
-    def test_very_low_effective_dose_clamp(self) -> None:
-        """dose=0.25 × agent=0.04 (gadoquatrane quarter) → eff=0.1."""
-        from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
-
-        # SKIP threshold becomes 0.07 — gate essentially disabled for
-        # very-low-dose protocols. Documents behavior; subjects pass trivially.
-        assert _bolus_gd_fraction(0.25, 0.04) == pytest.approx(0.1)
 
 
 class TestDetermineConstraintReferenceGate:
@@ -902,41 +437,6 @@ class TestBolusGdFractionValidation:
             _bolus_gd_fraction(1.0, 0.0)
 
 
-class TestCnrBypassFallThrough:
-    """atlas_strict bypass only overrides SKIP; MODERATE/HIGH tiers still apply."""
-
-    @staticmethod
-    def _qc(cnr_coverage: float, detection: str) -> dict[str, Any]:
-        return {
-            "cnr_whole_brain": {
-                "fraction_cnr_gt_4": cnr_coverage,
-                "mean_cnr": 10.0,
-            },
-            "detection_method": detection,
-            "aif_peak_height": 0.4,
-            "baseline_return_ratio": 0.15,
-        }
-
-    def test_atlas_strict_in_moderate_band_still_moderate(self) -> None:
-        """CNR coverage between SKIP and MODERATE thresholds with atlas_strict
-        → moderate (same outcome as the bypass, correctly falls through)."""
-        # At full dose SKIP=0.70, MODERATE=0.84, HIGH=0.95.
-        # CNR=0.80 is between SKIP and MODERATE, atlas_strict → moderate.
-        result = assess_dsc_cbv_quality(
-            aif_qc_data=self._qc(0.80, "atlas_strict"),
-            dose=1.0,
-            agent_standard_dose=0.1,
-        )
-        assert result.confidence == "moderate"
-
-    def test_atlas_strict_in_high_band_still_high(self) -> None:
-        """CNR coverage above HIGH with atlas_strict → high confidence preserved."""
-        result = assess_dsc_cbv_quality(
-            aif_qc_data=self._qc(0.97, "atlas_strict"),
-            dose=1.0,
-            agent_standard_dose=0.1,
-        )
-        assert result.confidence == "high"
 
 
 class TestFixedPriorWidth:
@@ -1020,25 +520,6 @@ class TestNAWMVpReferenceAnchor:
         assert VP_MEDIAN_MIN < NAWM_VP_REFERENCE < VP_MEDIAN_MAX
 
 
-class TestSkipReasonConstants:
-    """Shared constants prevent skip_reason drift across modules."""
-
-    def test_constants_expose_expected_values(self) -> None:
-        from pmriprep.utils.dsc_cbv_constraint import (
-            NO_DSC_RUN_REASON_STRING,
-            SKIP_REASON_NO_DSC_RUN,
-            SKIP_REASON_NO_NAWM_MASK,
-            SKIP_REASON_REGISTRATION_QC,
-            SKIP_REASON_SYNTHETIC_AIF,
-            SYNTHETIC_AIF_REASON_STRING,
-        )
-
-        assert SKIP_REASON_NO_DSC_RUN == "no_dsc_run"
-        assert SKIP_REASON_NO_NAWM_MASK == "no_nawm_mask"
-        assert SKIP_REASON_REGISTRATION_QC == "cross_modal_registration_qc"
-        assert SKIP_REASON_SYNTHETIC_AIF == "synthetic_aif"
-        assert NO_DSC_RUN_REASON_STRING == "No DSC data were available for a vp prior."
-        assert "AIF-source quality gate" in SYNTHETIC_AIF_REASON_STRING
 
 
 # =============================================================================
@@ -1046,97 +527,58 @@ class TestSkipReasonConstants:
 # =============================================================================
 
 
-class TestPrepareVpConstraintSyntheticAif:
-    """`prepare_vp_constraint_from_data` early-SKIPs on synthetic AIF."""
-
-    def test_skip_on_detection_level_synthetic(self, tmp_path) -> None:
-        from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data,
-            SKIP_REASON_SYNTHETIC_AIF,
-        )
-
-        # Brain mask file required by signature; synthetic branch
-        # short-circuits before it's loaded, so a placeholder suffices.
-        mask_path = tmp_path / "brain_mask.nii.gz"
-        mask_path.write_text("")
-        # ncbv_file=None would also hit the no-NAWM SKIP, but synthetic
-        # SKIP must fire FIRST — that's the precedence being tested.
-        result = prepare_vp_constraint_from_data(
-            ncbv_file=None,
-            aif_qc_data={"detection_method": "synthetic"},
-            brain_mask_file=str(mask_path),
-        )
-        assert result.config.mode == ConstraintMode.SKIP
-        assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
-
-    def test_skip_on_cbv_auc_denominator_is_synthetic(self, tmp_path) -> None:
-        """The cbv_auc_denominator_is_synthetic flag causes the prior to be skipped."""
-        from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data,
-            SKIP_REASON_SYNTHETIC_AIF,
-        )
-
-        mask_path = tmp_path / "brain_mask.nii.gz"
-        mask_path.write_text("")
-        result = prepare_vp_constraint_from_data(
-            ncbv_file=None,
-            aif_qc_data={"cbv_auc_denominator_is_synthetic": True},
-            brain_mask_file=str(mask_path),
-        )
-        assert result.config.mode == ConstraintMode.SKIP
-        assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
-
-    def test_synthetic_short_circuits_before_missing_ncbv(self, tmp_path) -> None:
-        """Synthetic-AIF SKIP precedes the no-NAWM-mask SKIP — the reason
-        in QC must be ``synthetic_aif``, not ``no_nawm_mask``."""
-        from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data,
-            SKIP_REASON_SYNTHETIC_AIF,
-            SKIP_REASON_NO_NAWM_MASK,
-        )
-
-        mask_path = tmp_path / "brain_mask.nii.gz"
-        mask_path.write_text("")
-        result = prepare_vp_constraint_from_data(
-            ncbv_file=None,  # would fire NO_NAWM_MASK if synthetic missed
-            aif_qc_data={"detection_method": "synthetic"},
-            brain_mask_file=str(mask_path),
-        )
-        assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
-        assert result.qc_report["skip_reason"] != SKIP_REASON_NO_NAWM_MASK
-
-    def test_measured_aif_does_not_short_circuit(self, tmp_path) -> None:
-        """Measured AIF + missing ncbv → normal NO_NAWM_MASK SKIP, not synthetic."""
-        from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data,
-            SKIP_REASON_NO_NAWM_MASK,
-        )
-
-        mask_path = tmp_path / "brain_mask.nii.gz"
-        mask_path.write_text("")
-        result = prepare_vp_constraint_from_data(
-            ncbv_file=None,
-            aif_qc_data={"detection_method": "atlas_relaxed"},
-            brain_mask_file=str(mask_path),
-        )
-        assert result.qc_report["skip_reason"] == SKIP_REASON_NO_NAWM_MASK
 
 
-class TestDetermineConstraintModeSyntheticOverride:
-    """`determine_constraint_mode` forces SKIP when AIF is synthetic."""
 
-    def _make_quality(self, detection_level: str = "measured") -> CBVQualityAssessment:
-        return CBVQualityAssessment(
-            cbv_median=1.0,
-            confidence="high",
-            use_constraint=True,
-            detection_level=detection_level,
-        )
 
-    def test_synthetic_auto_still_skips(self) -> None:
-        quality = self._make_quality(detection_level="synthetic")
-        config = determine_constraint_mode(
-            dsc_quality=quality,
-            user_override="auto",
-        )
-        assert config.mode == ConstraintMode.SKIP
+@pytest.mark.parametrize("coverage, mean, dose, expected", [
+    (0.99, 10.0, 1.0, "high"),
+    (0.90, 10.0, 1.0, "moderate"),
+    (0.80, 10.0, 1.0, "low"),
+    (0.45, 10.0, 0.5, "moderate"),
+    (0.99, 2.9, 1.0, "low"),
+    (None, 10.0, 1.0, "low"),
+    (0.99, np.nan, 1.0, "low"),
+    (np.inf, 10.0, 1.0, "low"),
+])
+def test_tissue_cnr_gate(coverage, mean, dose, expected) -> None:
+    qc = {"cnr_whole_brain": {"fraction_cnr_gt_4": coverage, "mean_cnr": mean}}
+    result = assess_dsc_cbv_quality(qc, dose=dose)
+    assert result.confidence == expected
+    assert result.use_constraint == (expected != "low")
+
+
+@pytest.mark.parametrize("source", ["atlas_strict", "external", "unavailable"])
+def test_prior_uses_tissue_quality_with_available_spatial_support(tmp_path, source) -> None:
+    import json
+
+    ncbv = np.ones((3, 3, 3))
+    ncbv[0] = np.nan
+    qc = _tissue_qc()
+    qc["detection_method"] = source
+    result = prepare_vp_constraint_from_data(
+        _write_nifti(tmp_path / "ncbv.nii.gz", ncbv), qc,
+        _write_nifti(tmp_path / "mask.nii.gz", np.ones_like(ncbv)),
+        k2_metrics={"k2_reference_available": True},
+        **_accepted_registration_qc(),
+    )
+    assert result.config.mode == ConstraintMode.SOFT
+    assert np.isnan(result.vp_map[0]).all()
+    np.testing.assert_allclose(result.vp_map[1:], 0.010)
+    json.dumps(result.qc_report, allow_nan=False)
+
+
+def test_empty_transferred_prior_support_is_unavailable(tmp_path) -> None:
+    import json
+
+    result = prepare_vp_constraint_from_data(
+        _write_nifti(tmp_path / "ncbv.nii.gz", np.full((3, 3, 3), np.nan)),
+        _tissue_qc(),
+        _write_nifti(tmp_path / "mask.nii.gz", np.ones((3, 3, 3))),
+        k2_metrics={"k2_reference_available": True},
+        **_accepted_registration_qc(),
+    )
+    assert result.config.mode == ConstraintMode.SKIP
+    assert result.vp_map is None
+    assert result.qc_report["skip_reason"] == "empty_prior_support"
+    json.dumps(result.qc_report, allow_nan=False)

@@ -20,7 +20,7 @@ DSCDetectionLevel = Literal[
     "brain_relaxed",
     "brain_permissive",
     "single_best",
-    "synthetic",
+    "unavailable",
     "external",
 ]
 
@@ -98,35 +98,14 @@ GD_DOTA_STANDARD_DOSE: Final[float] = 0.1
 
 
 # =============================================================================
-# Synthetic AIF Calibration
+# Arterial candidate peak bounds
 # =============================================================================
 
-#: Population-median arterial peak ΔR2* (s⁻¹) at 3T for standard single-dose
-#: Gd dose (0.1 mmol Gd/kg).
-SYNTH_AIF_BASE_PEAK_3T: Final[float] = 35.0
+#: Minimum candidate ΔR2* peak (s⁻¹), used as the absolute noise floor.
+AIF_MIN_PEAK: Final[float] = 3.0
 
-#: Upper cap on the effective-dose multiplier.
-SYNTH_AIF_DOSE_CAP: Final[float] = 2.5
-
-#: Minimum synthetic AIF peak amplitude (s⁻¹). At 3T with SNR≈20, TE≈30 ms,
-#: per-voxel ΔR2* noise ≈ 1/(TE×SNR) ≈ 1.7 s⁻¹; 3.0 is ~2 sigma guard.
-SYNTH_AIF_MIN_PEAK: Final[float] = 3.0
-
-#: Synthetic-AIF recirculation (second-pass) lobe. A dispersed ΔR2* second pass
-#: is small relative to the first pass, and flatter/broader than it.
-#: Second-pass peak amplitude as a fraction of the first-pass peak.
-SYNTH_AIF_RECIRC_FRACTION: Final[float] = 0.12
-#: Recirculation gamma-variate shape parameter; flatter than the first pass.
-SYNTH_AIF_RECIRC_ALPHA: Final[float] = 3.0
-#: Seconds from the first-pass peak to the onset of the recirculation lobe.
-SYNTH_AIF_RECIRC_DELAY_S: Final[float] = 20.0
-#: Recirculation gamma-variate time-to-peak (s); broader than the first pass.
-SYNTH_AIF_RECIRC_DISPERSION_S: Final[float] = 8.0
-
-#: Peak-ΔR2* candidate rejection bounds at 3T / full dose (s⁻¹). Both bounds
-#: are B0·dose-scaled at the use site, tracking the same law as the synthetic AIF
-#: peak. Floor separates artery (~35 s⁻¹ median) from tissue first-pass and is
-#: clamped to ``SYNTH_AIF_MIN_PEAK``; ceiling rejects susceptibility artifact.
+#: Peak-ΔR2* rejection bounds at 3T / full dose (s⁻¹). Both bounds scale with
+#: field strength and dose; the lower bound is clamped to ``AIF_MIN_PEAK``.
 AIF_PEAK_FLOOR_3T: Final[float] = 5.0
 AIF_PEAK_CEILING_3T: Final[float] = 120.0
 

@@ -20,12 +20,6 @@
     ],
     [
       "aif_detect",
-      "gamma_fit_applied",
-      "aif_qc_plot",
-      "gamma_fit_applied"
-    ],
-    [
-      "aif_detect",
       "out_aif_curve",
       "aif_qc_plot",
       "aif_curve_file"
@@ -56,15 +50,21 @@
     ],
     [
       "aif_detect",
-      "out_measured_aif_curve",
-      "compute_maps",
-      "measured_aif_file"
+      "out_gamma_aif_curve",
+      "aif_qc_plot",
+      "gamma_aif_curve_file"
     ],
     [
       "aif_detect",
-      "out_raw_aif_curve",
+      "out_rejected_aif_curve",
       "aif_qc_plot",
-      "raw_aif_curve_file"
+      "rejected_aif_curve_file"
+    ],
+    [
+      "aif_detect",
+      "out_rejected_aif_mask",
+      "aif_qc_plot",
+      "rejected_aif_mask_file"
     ],
     [
       "aif_detect",
@@ -381,12 +381,6 @@
     [
       "compute_maps",
       "out_rel_cbv_auc",
-      "normalize",
-      "cbv_file"
-    ],
-    [
-      "compute_maps",
-      "out_rel_cbv_auc",
       "outputnode",
       "rel_cbv_auc_map"
     ],
@@ -401,6 +395,12 @@
       "out_rel_cbv_auc",
       "user_lesion_stats",
       "cbv_auc_map"
+    ],
+    [
+      "compute_maps",
+      "out_tissue_auc",
+      "normalize",
+      "cbv_file"
     ],
     [
       "compute_maps",
@@ -975,6 +975,12 @@
     [
       "normalize",
       "ncbv_file",
+      "dsc_param_maps_qc",
+      "ncbv_file"
+    ],
+    [
+      "normalize",
+      "ncbv_file",
       "lesion_stats",
       "ncbv_map"
     ],
@@ -1437,6 +1443,7 @@
       "input_names": [
         "brain_mask_file",
         "mtt_file",
+        "ncbv_file",
         "psr_file",
         "rel_cbf_file",
         "rel_cbv_file",
@@ -1678,14 +1685,14 @@
     "dsc_brain_mask_qc": "c28321cd48efbb941cd617a0ffd203a6ef31a2fe99eb69262bb04219a55cd11f",
     "dsc_fit_qc": "f0e491b7d657b39e8fa35b1dfbe8ae7b545f8020619f46c21e4e578b59acb7d8",
     "dsc_leakage_qc": "a735a82e0da32621735f4ce517d26d0f627a3dbec1155e48851950d61f07274b",
-    "dsc_param_maps_qc": "9d6b5571281a07ea32a26f28f9ca15ff1d059a709ebe4e2ce7ded24581d9657f",
+    "dsc_param_maps_qc": "5950f852e687a8cbaf3ddced7fc8813094393d7c2a6fb4a7b1a8babec132e635",
     "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
     "leakage_correct": "bbcee6f1a192033f94fd0b345327f0a410919cea4feeb26cc19b40cff9a36896",
-    "merge_qc": "2a6d0d31114fd1e4d7788c2be338599de031f10f1f5768190a7061eb6c198747",
+    "merge_qc": "6f45ad2fe8cc0229d2fb75aebfcc55c4ac87468404f761f0955114dc010d6932",
     "motion_qc_plot": "c51bb7f0da9a494256c19c097824adf784a100aa3747678cd1a11a5de8ed286b",
     "normalize": "37aaf8725edc82929bfa3f86ce667aa6f29352b6a4c3702a2623509854a63000",
-    "normalize_cbf": "535be16491a25cc4fb0197b9601480b6fa0c815b2ac4148c3485baacf55d7199",
+    "normalize_cbf": "320623856353fd27c744a885b680708b08301d1bca56c87a78c872eeb1f80682",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "reorient_mean": "2119dc2418fc164e60000986438a4f8e227f0fb4a886b7e3deb6e6f8dda08b5d",
@@ -1868,10 +1875,8 @@
   "node_params": {
     "aif_detect": {
       "agent_standard_dose": 0.1,
-      "aif_method": "auto",
       "baseline_frames": 5,
       "criteria": "strict",
-      "disable_fallback": false,
       "dose": 1.0,
       "field_strength": 3.0,
       "gd_multiplicity": 1,
@@ -1881,8 +1886,6 @@
       "tr": 0.0
     },
     "aif_qc_plot": {
-      "gamma_fit_applied": false,
-      "raw_aif_curve_file": "",
       "session_id": "0001",
       "subject_id": "0001",
       "tr": 1.5
@@ -1926,7 +1929,7 @@
       "subject_id": "0001"
     },
     "dsc_param_maps_qc": {
-      "function_str": "def _generate_dsc_param_maps_qc(\n    rel_cbf_file: str,\n    rel_cbv_file: str,\n    mtt_file: str,\n    tmax_file: str,\n    psr_file: str,\n    ttp_file: str,\n    brain_mask_file: str,\n    timing_label: str = \"Tmax\",\n    subject_id: str = \"\",\n    session_id: str = \"\",\n) -> str:\n    \"\"\"Generate DSC parameter maps QC plot.\n\n    Parameters\n    ----------\n    rel_cbf_file : str\n        Path to relative CBF map NIfTI.\n    rel_cbv_file : str\n        Path to relative CBV map NIfTI.\n    mtt_file : str\n        Path to MTT map NIfTI.\n    tmax_file : str\n        Path to the method-specific timing map NIfTI.\n    psr_file : str\n        Path to PSR map NIfTI.\n    ttp_file : str\n        Path to TTP map NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    timing_label : str, optional\n        Display label for the timing map: Tmax or CPI arrival delay.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    str\n        Path to the generated QC plot PNG.\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_parameter_maps_qc_plot\n\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    param_maps = {}\n    for name, filepath in [\n        (\"rCBF\", rel_cbf_file),\n        (\"rCBV\", rel_cbv_file),\n        (\"MTT\", mtt_file),\n        (timing_label, tmax_file),\n        (\"PSR\", psr_file),\n        (\"TTP\", ttp_file),\n    ]:\n        if filepath:\n            from pathlib import Path as _P\n            if _P(filepath).is_file():\n                param_maps[name] = nib.load(filepath).get_fdata()  # type: ignore[attr-defined]\n\n    plot_path = generate_dsc_parameter_maps_qc_plot(\n        param_maps=param_maps,\n        brain_mask=mask_data,\n        subject_id=subject_id,\n        session_id=session_id,\n    )\n    return plot_path\n",
+      "function_str": "def _generate_dsc_param_maps_qc(\n    rel_cbf_file: str = \"\",\n    rel_cbv_file: str = \"\",\n    mtt_file: str = \"\",\n    tmax_file: str = \"\",\n    psr_file: str = \"\",\n    ttp_file: str = \"\",\n    brain_mask_file: str = \"\",\n    timing_label: str = \"Tmax\",\n    subject_id: str = \"\",\n    session_id: str = \"\",\n    ncbv_file: str = \"\",\n) -> str:\n    \"\"\"Generate DSC parameter maps QC plot.\n\n    Parameters\n    ----------\n    rel_cbf_file : str\n        Path to relative CBF map NIfTI.\n    rel_cbv_file : str\n        Path to relative CBV map NIfTI.\n    mtt_file : str\n        Path to MTT map NIfTI.\n    tmax_file : str\n        Path to the method-specific timing map NIfTI.\n    psr_file : str\n        Path to PSR map NIfTI.\n    ttp_file : str\n        Path to TTP map NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    timing_label : str, optional\n        Display label for the timing map: Tmax or CPI arrival delay.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    str\n        Path to the generated QC plot PNG.\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_parameter_maps_qc_plot\n\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    param_maps = {}\n    for name, filepath in [\n        (\"rCBF\", rel_cbf_file),\n        (\"rCBV\", rel_cbv_file),\n        (\"nCBV\", ncbv_file),\n        (\"MTT\", mtt_file),\n        (timing_label, tmax_file),\n        (\"PSR\", psr_file),\n        (\"TTP\", ttp_file),\n    ]:\n        if filepath:\n            from pathlib import Path as _P\n            if _P(filepath).is_file():\n                param_maps[name] = nib.load(filepath).get_fdata()  # type: ignore[attr-defined]\n\n    plot_path = generate_dsc_parameter_maps_qc_plot(\n        param_maps=param_maps,\n        brain_mask=mask_data,\n        subject_id=subject_id,\n        session_id=session_id,\n    )\n    return plot_path\n",
       "session_id": "0001",
       "subject_id": "0001",
       "timing_label": "Tmax"
@@ -1973,7 +1976,7 @@
     },
     "merge_qc": {
       "aif_source": "auto",
-      "function_str": "def _merge_qc_metrics(\n    motion_qc: dict[str, object] | None,\n    preload_qc: dict[str, object] | None,\n    aif_qc: dict[str, object] | None,\n    deconv_qc: dict[str, object] | None,\n    registration_qc: dict[str, object] | None,\n    brain_extraction_qc: dict[str, object] | None,\n    normalization_factor: float | None,\n    cbf_normalization_factor: float | None = None,\n    motion_summary: dict[str, object] | None = None,\n    aif_metrics: dict[str, object] | None = None,\n    preprocessing_stats: dict[str, object] | None = None,\n    aif_source: str = \"auto\",\n    auc_raw_file: str | None = None,\n    auc_corr_file: str | None = None,\n    nawm_mask_file: str | None = None,\n    nawm_exclusion_reason: str | None = None,\n) -> dict[str, object]:\n    \"\"\"Merge all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    motion_qc : dict\n        Motion correction QC metrics.\n    preload_qc : dict\n        Leakage QC metrics and administered-preload provenance.\n    aif_qc : dict\n        AIF detection QC metrics.\n    deconv_qc : dict\n        Deconvolution QC metrics.\n    registration_qc : dict\n        Registration QC metrics.\n    brain_extraction_qc : dict\n        Native DSC brain-extraction method and execution settings.\n    normalization_factor : float\n        CBV normalization factor.\n    cbf_normalization_factor : float\n        CBF normalization factor.\n    motion_summary : dict, optional\n        Motion summary dict from plot_motion_qc.\n    aif_metrics : dict, optional\n        AIF metrics dict from AIFQCPlot.\n    preprocessing_stats : dict, optional\n        Preprocessing stats dict.\n    aif_source : str, optional\n        AIF source type (\"auto\", \"synthetic\", or \"external\").\n    auc_raw_file, auc_corr_file : str, optional\n        Raw and BSW-corrected tissue AUC maps used to measure the correction's\n        effect in NAWM.\n    nawm_mask_file : str, optional\n        NAWM mask in native DSC space. When absent, NAWM effect accounting is\n        omitted rather than approximated from whole brain.\n    nawm_exclusion_reason : str, optional\n        Reason an automatically generated NAWM mask was retained for QC but\n        excluded from quantitative normalization.\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n\n    Raises\n    ------\n    ValueError\n        If raw and corrected AUC maps and the NAWM mask have inconsistent shapes\n        or affines when computing NAWM AUC medians.\n    \"\"\"\n    from pathlib import Path\n\n    import numpy as np\n\n    motion_data = motion_qc if motion_qc else {}\n    if motion_summary:\n        motion_data = dict(motion_data) if motion_data else {}\n        motion_data[\"motion_summary\"] = motion_summary\n        # Surface a flat motion_applied alongside the (strippable) motion_summary\n        # so it survives filter_pipeline_qc into the sidecar PipelineQC \u2014 the\n        # report boilerplate reads it from there. Mirrors DCE's flat placement.\n        motion_data[\"motion_applied\"] = bool(\n            motion_summary.get(\"motion_applied\", True)\n        )\n\n    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}\n    if motion_data:\n        preprocessing.update(motion_data)\n\n    aif_data = aif_qc if aif_qc else {}\n    if aif_metrics:\n        aif_data = dict(aif_data) if aif_data else {}\n        aif_data[\"aif_metrics\"] = aif_metrics\n\n    preload_data = dict(preload_qc) if preload_qc else {}\n    raw_path: Path | None = None\n    corr_path: Path | None = None\n    nawm_path: Path | None = None\n    path_inputs = (auc_raw_file, auc_corr_file, nawm_mask_file)\n    if all(isinstance(value, (str, Path)) and str(value) for value in path_inputs):\n        raw_path = Path(auc_raw_file)  # type: ignore[arg-type]\n        corr_path = Path(auc_corr_file)  # type: ignore[arg-type]\n        nawm_path = Path(nawm_mask_file)  # type: ignore[arg-type]\n    if (\n        raw_path is not None\n        and raw_path.is_file()\n        and corr_path is not None\n        and corr_path.is_file()\n        and nawm_path is not None\n        and nawm_path.is_file()\n    ):\n        import nibabel as nib  # type: ignore[import-untyped]\n\n        raw_img = nib.load(raw_path)\n        corrected_img = nib.load(corr_path)\n        nawm_img = nib.load(nawm_path)\n        raw = np.asarray(raw_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]\n        corrected = np.asarray(corrected_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]\n        nawm = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]\n        affines_match = np.allclose(\n            raw_img.affine, corrected_img.affine  # type: ignore[attr-defined]\n        ) and np.allclose(\n            raw_img.affine, nawm_img.affine  # type: ignore[attr-defined]\n        )\n        if raw.shape != corrected.shape or raw.shape != nawm.shape or not affines_match:\n            raise ValueError(\n                \"Raw AUC, corrected AUC, and NAWM mask geometry must match\"\n            )\n        valid = nawm & np.isfinite(raw) & np.isfinite(corrected)\n        if np.any(valid):\n            preload_data[\"nawm_auc_raw_median\"] = float(np.median(raw[valid]))\n            preload_data[\"nawm_auc_corrected_median\"] = float(\n                np.median(corrected[valid])\n            )\n\n    merged: dict[str, object] = {\n        \"preprocessing\": preprocessing,\n        \"preload\": preload_data,\n        \"aif_detection\": aif_data,\n        \"deconvolution\": deconv_qc if deconv_qc else {},\n        \"registration\": registration_qc if registration_qc else {},\n        \"normalization_factor\": normalization_factor,\n        \"cbf_normalization_factor\": cbf_normalization_factor,\n        \"config\": {\n            \"aif_source\": aif_source,\n        },\n    }\n    if brain_extraction_qc:\n        merged[\"brain_extraction\"] = brain_extraction_qc\n    if nawm_exclusion_reason:\n        merged[\"nawm_reference\"] = {\n            \"eligible_for_quantification\": False,\n            \"exclusion_reason\": nawm_exclusion_reason,\n        }\n    return merged\n"
+      "function_str": "def _merge_qc_metrics(\n    motion_qc: dict[str, object] | None,\n    preload_qc: dict[str, object] | None,\n    aif_qc: dict[str, object] | None,\n    deconv_qc: dict[str, object] | None,\n    registration_qc: dict[str, object] | None,\n    brain_extraction_qc: dict[str, object] | None,\n    normalization_factor: float | None,\n    cbf_normalization_factor: float | None = None,\n    motion_summary: dict[str, object] | None = None,\n    aif_metrics: dict[str, object] | None = None,\n    preprocessing_stats: dict[str, object] | None = None,\n    aif_source: str = \"auto\",\n    auc_raw_file: str | None = None,\n    auc_corr_file: str | None = None,\n    nawm_mask_file: str | None = None,\n    nawm_exclusion_reason: str | None = None,\n) -> dict[str, object]:\n    \"\"\"Merge all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    motion_qc : dict\n        Motion correction QC metrics.\n    preload_qc : dict\n        Leakage QC metrics and administered-preload provenance.\n    aif_qc : dict\n        AIF detection QC metrics.\n    deconv_qc : dict\n        Deconvolution QC metrics.\n    registration_qc : dict\n        Registration QC metrics.\n    brain_extraction_qc : dict\n        Native DSC brain-extraction method and execution settings.\n    normalization_factor : float\n        CBV normalization factor.\n    cbf_normalization_factor : float\n        CBF normalization factor.\n    motion_summary : dict, optional\n        Motion summary dict from plot_motion_qc.\n    aif_metrics : dict, optional\n        AIF metrics dict from AIFQCPlot.\n    preprocessing_stats : dict, optional\n        Preprocessing stats dict.\n    aif_source : str, optional\n        AIF source type (\"auto\" or \"external\").\n    auc_raw_file, auc_corr_file : str, optional\n        Raw and BSW-corrected tissue AUC maps used to measure the correction's\n        effect in NAWM.\n    nawm_mask_file : str, optional\n        NAWM mask in native DSC space. When absent, NAWM effect accounting is\n        omitted rather than approximated from whole brain.\n    nawm_exclusion_reason : str, optional\n        Reason an automatically generated NAWM mask was retained for QC but\n        excluded from quantitative normalization.\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n\n    Raises\n    ------\n    ValueError\n        If raw and corrected AUC maps and the NAWM mask have inconsistent shapes\n        or affines when computing NAWM AUC medians.\n    \"\"\"\n    from pathlib import Path\n\n    import numpy as np\n\n    motion_data = motion_qc if motion_qc else {}\n    if motion_summary:\n        motion_data = dict(motion_data) if motion_data else {}\n        motion_data[\"motion_summary\"] = motion_summary\n        # Surface a flat motion_applied alongside the (strippable) motion_summary\n        # so it survives filter_pipeline_qc into the sidecar PipelineQC \u2014 the\n        # report boilerplate reads it from there. Mirrors DCE's flat placement.\n        motion_data[\"motion_applied\"] = bool(\n            motion_summary.get(\"motion_applied\", True)\n        )\n\n    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}\n    if motion_data:\n        preprocessing.update(motion_data)\n\n    aif_data = aif_qc if aif_qc else {}\n    if aif_metrics:\n        aif_data = dict(aif_data) if aif_data else {}\n        aif_data[\"aif_metrics\"] = aif_metrics\n\n    preload_data = dict(preload_qc) if preload_qc else {}\n    raw_path: Path | None = None\n    corr_path: Path | None = None\n    nawm_path: Path | None = None\n    path_inputs = (auc_raw_file, auc_corr_file, nawm_mask_file)\n    if all(isinstance(value, (str, Path)) and str(value) for value in path_inputs):\n        raw_path = Path(auc_raw_file)  # type: ignore[arg-type]\n        corr_path = Path(auc_corr_file)  # type: ignore[arg-type]\n        nawm_path = Path(nawm_mask_file)  # type: ignore[arg-type]\n    if (\n        raw_path is not None\n        and raw_path.is_file()\n        and corr_path is not None\n        and corr_path.is_file()\n        and nawm_path is not None\n        and nawm_path.is_file()\n    ):\n        import nibabel as nib  # type: ignore[import-untyped]\n\n        raw_img = nib.load(raw_path)\n        corrected_img = nib.load(corr_path)\n        nawm_img = nib.load(nawm_path)\n        raw = np.asarray(raw_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]\n        corrected = np.asarray(corrected_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]\n        nawm = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]\n        affines_match = np.allclose(\n            raw_img.affine, corrected_img.affine  # type: ignore[attr-defined]\n        ) and np.allclose(\n            raw_img.affine, nawm_img.affine  # type: ignore[attr-defined]\n        )\n        if raw.shape != corrected.shape or raw.shape != nawm.shape or not affines_match:\n            raise ValueError(\n                \"Raw AUC, corrected AUC, and NAWM mask geometry must match\"\n            )\n        valid = nawm & np.isfinite(raw) & np.isfinite(corrected)\n        if np.any(valid):\n            preload_data[\"nawm_auc_raw_median\"] = float(np.median(raw[valid]))\n            preload_data[\"nawm_auc_corrected_median\"] = float(\n                np.median(corrected[valid])\n            )\n\n    merged: dict[str, object] = {\n        \"preprocessing\": preprocessing,\n        \"preload\": preload_data,\n        \"aif_detection\": aif_data,\n        \"deconvolution\": deconv_qc if deconv_qc else {},\n        \"registration\": registration_qc if registration_qc else {},\n        \"normalization_factor\": normalization_factor,\n        \"cbf_normalization_factor\": cbf_normalization_factor,\n        \"config\": {\n            \"aif_source\": aif_source,\n        },\n    }\n    if brain_extraction_qc:\n        merged[\"brain_extraction\"] = brain_extraction_qc\n    if nawm_exclusion_reason:\n        merged[\"nawm_reference\"] = {\n            \"eligible_for_quantification\": False,\n            \"exclusion_reason\": nawm_exclusion_reason,\n        }\n    return merged\n"
     },
     "motion_correct": {
       "baseline_frames": 5,

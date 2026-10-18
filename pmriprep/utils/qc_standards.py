@@ -562,13 +562,15 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     parts_set = set(parts)
     _SENTINEL_TIERS = {"none", "unknown"}
     _unknown_parts = parts_set - set(DSC_DETECTION_LEVELS) - _SENTINEL_TIERS
-    if parts_set & {"synthetic", "none", "unknown"} or _unknown_parts:
-        # Unknown parts are treated as ``unknown`` semantically — no way
-        # to vouch for an AIF tier we don't recognise.
+    if parts_set == {"unavailable"}:
         aif_rec = QCRecommendation(
-            QCAction.EXCLUDE,
-            "A subject-specific AIF was not detected; a template AIF was used",
-            3,
+            QCAction.REVIEW,
+            "No acceptable AIF; only AIF-independent maps are available",
+            2,
+        )
+    elif parts_set & {"none", "unknown"} or _unknown_parts:
+        aif_rec = QCRecommendation(
+            QCAction.EXCLUDE, "AIF detection provenance is unavailable or unrecognized", 3,
         )
     elif "external" in parts_set:
         aif_rec = QCRecommendation(
@@ -596,17 +598,6 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
             "Measured AIF requires review", 1,
         )
     recommendations.append(aif_rec)
-
-    # A real AIF retained below the gamma-fit floor (synthetic fallback disabled)
-    # is an additive concern on top of the detection-tier verdict above.
-    if aif_qc.get("aif_gamma_fit_below_floor_retained"):
-        recommendations.append(QCRecommendation(
-            QCAction.REVIEW,
-            "AIF retained despite a poor gamma-variate fit (R²<0) because "
-            "synthetic fallback is disabled; CBF, nCBF, MTT and deconvolution "
-            "timing depend on this curve. Review the AIF and baseline QC",
-            2,
-        ))
 
     # Motion via composite status
     preprocessing = qc_metrics.get("preprocessing", {})

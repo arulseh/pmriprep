@@ -101,8 +101,7 @@ def test_leakage_policy_executes_through_correction_and_deconvolution(
     leakage.inputs.inputnode.tr = 1.5
     leakage.inputs.inputnode.baseline_frames = 5
     deconvolution.inputs.inputnode.aif_file = aif
-    deconvolution.inputs.inputnode.measured_aif_file = aif
-    deconvolution.inputs.inputnode.aif_detection_level = "synthetic"
+    deconvolution.inputs.inputnode.aif_detection_level = "external"
     deconvolution.inputs.inputnode.baseline_frames = 5
     deconvolution.inputs.inputnode.brain_mask_file = mask
     deconvolution.inputs.inputnode.tr = 1.5

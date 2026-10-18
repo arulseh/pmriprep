@@ -98,7 +98,7 @@ class _DSCComputeInputs(NamedTuple):
     header: Any
     mask: npt.NDArray[Any]
     mask_bool: npt.NDArray[np.bool_]
-    aif: npt.NDArray[Any]
+    aif: Optional[npt.NDArray[Any]]
     signal: Optional[npt.NDArray[Any]]
     method: str
     dt: float
@@ -123,7 +123,7 @@ class _DSCBaselinePreparation(NamedTuple):
     """Finalized baseline-adjusted DSC state."""
 
     concentration: npt.NDArray[Any]
-    aif: npt.NDArray[Any]
+    aif: Optional[npt.NDArray[Any]]
     detected_frames: int
     n_baseline: int
     detection_info: dict[str, Any]
@@ -138,7 +138,7 @@ class _DSCSignalMetrics(NamedTuple):
 
 
 class _DSCTimingMaps(NamedTuple):
-    """AIF-arrival-referenced DSC tissue time-to-peak map."""
+    """DSC tissue time to peak relative to the finalized baseline reference."""
 
     ttp: npt.NDArray[Any]
     aif_bat_seconds: float
@@ -150,7 +150,8 @@ class _DSCAUCMaps(NamedTuple):
     raw: npt.NDArray[Any]
     corrected: npt.NDArray[Any]
     difference: npt.NDArray[Any]
-    cbv: npt.NDArray[Any]
+    cbv: Optional[npt.NDArray[Any]]
+    tissue: npt.NDArray[Any]
     qc: dict[str, Any]
 
 
@@ -164,11 +165,11 @@ class _DSCQualityMaps(NamedTuple):
 class _DSCFinalMaps(NamedTuple):
     """Unit-scaled and brain-masked DSC output maps."""
 
-    rel_cbf: npt.NDArray[Any]
-    rel_cbv: npt.NDArray[Any]
-    rel_cbv_auc: npt.NDArray[Any]
-    mtt: npt.NDArray[Any]
-    tmax: npt.NDArray[Any]
+    rel_cbf: Optional[npt.NDArray[Any]]
+    rel_cbv: Optional[npt.NDArray[Any]]
+    rel_cbv_auc: Optional[npt.NDArray[Any]]
+    mtt: Optional[npt.NDArray[Any]]
+    tmax: Optional[npt.NDArray[Any]]
     ttp: npt.NDArray[Any]
     auc_raw: npt.NDArray[Any]
     auc_corrected: npt.NDArray[Any]
@@ -177,6 +178,7 @@ class _DSCFinalMaps(NamedTuple):
     tsnr: npt.NDArray[Any]
     psr: npt.NDArray[Any]
     cbf_std: Optional[npt.NDArray[Any]]
+    tissue_auc: npt.NDArray[Any]
 
 
 class _DSCDeconvolutionMaps(NamedTuple):
@@ -212,14 +214,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     )
     aif_file = File(
         exists=True,
-        mandatory=True,
-        desc="1D text file with AIF concentration curve",
-    )
-    measured_aif_file = File(
-        exists=True,
-        mandatory=True,
-        desc="Measured AIF curve (pre-gamma) for full-bolus AUC CBV denominator. "
-             "Required — wiring must connect AIFDetection.out_measured_aif_curve.",
+        desc="Accepted AIF curve; absent when only tissue-derived maps are available",
     )
     brain_mask_file = File(
         exists=True,
@@ -239,7 +234,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     aif_detection_level = traits.Str(
         "atlas",
         usedefault=True,
-        desc="AIF detection level: 'atlas_strict', 'atlas_relaxed', 'brain_*', or 'synthetic'",
+        desc="Accepted detection tier, external input, or unavailable AIF",
     )
     # Deconvolution method
     method = traits.Enum(
@@ -370,7 +365,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
 class ComputeDSCMapsOutputSpec(TraitedSpec):
     """Output specification for ComputeDSCMaps interface."""
 
-    # Quantification-independent (always produced)
+    # Deconvolution-dependent maps are available only with an accepted AIF.
     out_mtt = File(exists=True, desc="MTT map (mean transit time)")
     out_tmax = File(exists=True, desc="Method-specific deconvolution timing map")
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
@@ -385,7 +380,9 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_auc_corr = File(exists=True, desc="AUC corrected (post-K2) map")
     out_auc_diff = File(exists=True, desc="AUC diff (leakage contribution) map")
 
-    # Relative maps (always produced)
+    out_tissue_auc = File(exists=True, desc="Post-baseline tissue AUC for nCBV normalization")
+
+    # Relative maps require an accepted AIF.
     out_rel_cbf = File(exists=True, desc="Relative CBF map")
     out_rel_cbv = File(exists=True, desc="Relative CBV map (deconvolution)")
     out_rel_cbv_auc = File(exists=True, desc="AUC-based relative CBV map")
@@ -541,7 +538,11 @@ class ComputeDSCMaps(BaseInterface):
             header=header,
             mask=mask,
             mask_bool=mask > 0,
-            aif=np.loadtxt(self.inputs.aif_file),
+            aif=(
+                np.loadtxt(self.inputs.aif_file)
+                if isdefined(self.inputs.aif_file) and self.inputs.aif_file
+                else None
+            ),
             signal=signal,
             method=str(self.inputs.method),
             dt=float(self.inputs.tr),
@@ -599,13 +600,14 @@ class ComputeDSCMaps(BaseInterface):
             k2_map_path = str(self.inputs.k2_map_input_file)
 
         n_baseline = max(detected_frames, 4)
-        aif_baseline_offset = float(np.mean(aif[:n_baseline]))
-        aif = aif - aif_baseline_offset
+        if aif is not None:
+            aif_baseline_offset = float(np.mean(aif[:n_baseline]))
+            aif = aif - aif_baseline_offset
+            detection_info["aif_baseline_offset"] = round(aif_baseline_offset, 4)
         concentration_offset = np.mean(
             concentration[..., :n_baseline], axis=-1, keepdims=True
         )
         concentration = concentration - concentration_offset
-        detection_info["aif_baseline_offset"] = round(aif_baseline_offset, 4)
         detection_info["conc_median_baseline_offset"] = round(
             float(np.median(concentration_offset[inputs.mask_bool]))
             if np.any(inputs.mask_bool) else float("nan"), 4
@@ -786,14 +788,14 @@ class ComputeDSCMaps(BaseInterface):
         detected_baseline : int
             Detected pre-bolus frame count.
         detection_info : dict
-            Baseline diagnostics containing the AIF arrival index when known.
+            Baseline diagnostics containing the finalized arrival index.
         dt : float
             Frame interval in seconds.
 
         Returns
         -------
         _DSCTimingMaps
-            AIF-arrival-referenced tissue TTP and the AIF arrival time in seconds.
+            Tissue TTP and its baseline reference time in seconds.
 
         """
         ttp_raw = compute_ttp(raw_concentration, detected_baseline, dt)
@@ -805,8 +807,8 @@ class ComputeDSCMaps(BaseInterface):
         n_mask = int(np.sum(mask_bool))
         if n_mask > 0 and n_negative / n_mask > 0.05:
             logger.warning(
-                "%.1f%% of brain voxels have negative TTP (ttp < aif_bat=%.1fs). "
-                "Check AIF QC.",
+                "%.1f%% of brain voxels peak before the baseline reference "
+                "at %.1fs. Check baseline timing QC.",
                 100.0 * n_negative / n_mask,
                 aif_bat_seconds,
             )
@@ -867,20 +869,24 @@ class ComputeDSCMaps(BaseInterface):
         n_timepoints = corrected_concentration.shape[-1]
         bat = int(detection_info.get("arrival_index", detected_baseline))
         bolus_slice = slice(bat, n_timepoints)
-        qc: dict[str, Any] = {}
+        tissue_auc_bolus = np.trapezoid(
+            corrected_concentration[..., bolus_slice], dx=dt, axis=-1
+        )
+        qc: dict[str, Any] = {
+            "cbv_auc_bat_frame": bat,
+            "cbv_auc_end_frame": n_timepoints,
+            "ncbv_integration_rule": "post_baseline_trapezoid",
+        }
+        cbv = None
 
         if (
-            isdefined(self.inputs.measured_aif_file)
-            and self.inputs.measured_aif_file
-            and Path(str(self.inputs.measured_aif_file)).is_file()
+            isdefined(self.inputs.aif_file)
+            and self.inputs.aif_file
         ):
-            measured_aif = np.loadtxt(self.inputs.measured_aif_file)
+            measured_aif = np.loadtxt(self.inputs.aif_file)
             aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_baseline]))
             aif_auc = float(np.trapezoid(aif_for_auc[bolus_slice], dx=dt))
-            tissue_auc_bolus = np.trapezoid(
-                corrected_concentration[..., bolus_slice], dx=dt, axis=-1
-            )
-            if aif_auc < EPSILON_SIGNAL:
+            if not np.isfinite(aif_auc) or aif_auc < EPSILON_SIGNAL:
                 logger.warning(
                     "AIF AUC %.6f is below %.6f; AUC-CBV unavailable",
                     aif_auc, EPSILON_SIGNAL,
@@ -889,20 +895,18 @@ class ComputeDSCMaps(BaseInterface):
             else:
                 cbv = tissue_auc_bolus / aif_auc
             qc.update(
-                cbv_auc_bat_frame=bat,
-                cbv_auc_end_frame=n_timepoints,
-                cbv_auc_aif_integral=round(aif_auc, 6),
+                cbv_auc_aif_integral=round(aif_auc, 6) if np.isfinite(aif_auc) else None,
             )
         else:
-            logger.warning("AIF curve for AUC integration unavailable; AUC-CBV set to NaN")
-            cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
-            qc["cbv_auc_measured_aif_missing"] = True
+            qc["cbv_auc_unavailable_reason"] = "aif_unavailable"
+        qc["cbv_auc_available"] = cbv is not None and bool(np.any(np.isfinite(cbv)))
 
         return _DSCAUCMaps(
             raw=auc_raw,
             corrected=auc_corrected,
             difference=auc_difference,
             cbv=cbv,
+            tissue=tissue_auc_bolus,
             qc=qc,
         )
 
@@ -1073,7 +1077,7 @@ class ComputeDSCMaps(BaseInterface):
             )
         qc.update(baseline_info)
         qc["aif_bat_seconds"] = aif_bat_seconds
-        qc["cbv_literature_range_applicable"] = aif_level != "synthetic"
+        qc["cbv_literature_range_applicable"] = True
         return qc
 
     @staticmethod
@@ -1087,11 +1091,11 @@ class ComputeDSCMaps(BaseInterface):
     def _finalize_dsc_maps(
         cls,
         *,
-        cbf: npt.NDArray[Any],
-        cbv: npt.NDArray[Any],
-        cbv_auc: npt.NDArray[Any],
-        mtt: npt.NDArray[Any],
-        tmax: npt.NDArray[Any],
+        cbf: Optional[npt.NDArray[Any]],
+        cbv: Optional[npt.NDArray[Any]],
+        cbv_auc: Optional[npt.NDArray[Any]],
+        mtt: Optional[npt.NDArray[Any]],
+        tmax: Optional[npt.NDArray[Any]],
         ttp: npt.NDArray[Any],
         auc_raw: npt.NDArray[Any],
         auc_corrected: npt.NDArray[Any],
@@ -1101,22 +1105,25 @@ class ComputeDSCMaps(BaseInterface):
         psr: npt.NDArray[Any],
         cbf_std: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
+        tissue_auc: npt.NDArray[Any],
     ) -> _DSCFinalMaps:
         """Apply CBF units and brain masking without post-fit clipping."""
-        rel_cbf = np.where(np.isfinite(cbf) & (cbf >= 0.0), cbf * 60.0, np.nan)
-        rel_cbv = np.where(np.isfinite(cbv) & (cbv >= 0.0), cbv, np.nan)
-        rel_cbv_auc = np.where(
-            np.isfinite(cbv_auc) & (cbv_auc >= 0.0), cbv_auc, np.nan
-        )
-        mtt = np.where(np.isfinite(mtt) & (mtt >= 0.0), mtt, np.nan)
+        def valid_area(
+            data: Optional[npt.NDArray[Any]], scale: float = 1.0,
+        ) -> Optional[npt.NDArray[Any]]:
+            if data is None:
+                return None
+            valid = np.where(np.isfinite(data) & (data >= 0.0), data * scale, np.nan)
+            return np.where(mask_bool, valid, 0.0)
+
         cbf_std = cls._scale_cbf_uncertainty(cbf_std)
 
         return _DSCFinalMaps(
-            rel_cbf=np.where(mask_bool, rel_cbf, 0.0),
-            rel_cbv=np.where(mask_bool, rel_cbv, 0.0),
-            rel_cbv_auc=np.where(mask_bool, rel_cbv_auc, 0.0),
-            mtt=np.where(mask_bool, mtt, 0.0),
-            tmax=np.where(mask_bool, tmax, 0.0),
+            rel_cbf=valid_area(cbf, 60.0),
+            rel_cbv=valid_area(cbv),
+            rel_cbv_auc=valid_area(cbv_auc),
+            mtt=valid_area(mtt),
+            tmax=np.where(mask_bool, tmax, 0.0) if tmax is not None else None,
             ttp=np.where(mask_bool, ttp, 0.0),
             auc_raw=np.where(mask_bool, auc_raw, 0.0),
             auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
@@ -1125,6 +1132,11 @@ class ComputeDSCMaps(BaseInterface):
             tsnr=np.where(mask_bool, tsnr, 0.0),
             psr=np.where(mask_bool, psr, 0.0),
             cbf_std=cbf_std,
+            tissue_auc=np.where(
+                mask_bool,
+                np.where(np.isfinite(tissue_auc) & (tissue_auc >= 0.0), tissue_auc, np.nan),
+                0.0,
+            ),
         )
 
     def _save_map(
@@ -1149,7 +1161,7 @@ class ComputeDSCMaps(BaseInterface):
     def _prepare_final_outputs(
         self,
         *,
-        deconvolution: _DSCDeconvolutionMaps,
+        deconvolution: Optional[_DSCDeconvolutionMaps],
         concentration: npt.NDArray[Any],
         signal: Optional[npt.NDArray[Any]],
         spatial_shape: tuple[int, ...],
@@ -1163,7 +1175,18 @@ class ComputeDSCMaps(BaseInterface):
         aif_level: str,
     ) -> _DSCPostprocessing:
         """Compose model-free maps, final masking, and DSC QC reduction."""
-        qc = deconvolution.qc
+        qc: dict[str, Any] = deconvolution.qc if deconvolution is not None else {}
+        qc.update(
+            configured_method=method,
+            deconvolution_performed=deconvolution is not None,
+            processing_status="complete" if deconvolution is not None else "partial",
+        )
+        if deconvolution is None:
+            qc["deconvolution_unavailable_reason"] = "aif_unavailable"
+            qc["unavailable_maps"] = {
+                name: "aif_unavailable"
+                for name in ("cbf", "ncbf", "mtt", "arrival_delay" if method == "cpi" else "tmax", "residue_cbv", "auc_cbv")
+            }
         signal_metrics = self._compute_signal_metrics(
             signal, spatial_shape, detected_baseline, tail_frames, mask_bool
         )
@@ -1189,18 +1212,18 @@ class ComputeDSCMaps(BaseInterface):
         quality = self._compute_quality_maps(
             signal, detected_baseline, spatial_shape, mask_bool
         )
-        mtt = self._finalize_mtt(
-            method,
-            deconvolution.mtt,
-            deconvolution.cbf,
-            auc.cbv,
-        )
+        mtt = None
+        if deconvolution is not None:
+            assert auc.cbv is not None
+            mtt = self._finalize_mtt(
+                method, deconvolution.mtt, deconvolution.cbf, auc.cbv,
+            )
         maps = self._finalize_dsc_maps(
-            cbf=deconvolution.cbf,
-            cbv=deconvolution.cbv,
+            cbf=deconvolution.cbf if deconvolution is not None else None,
+            cbv=deconvolution.cbv if deconvolution is not None else None,
             cbv_auc=auc.cbv,
             mtt=mtt,
-            tmax=deconvolution.tmax,
+            tmax=deconvolution.tmax if deconvolution is not None else None,
             ttp=timing.ttp,
             auc_raw=auc.raw,
             auc_corrected=auc.corrected,
@@ -1208,11 +1231,14 @@ class ComputeDSCMaps(BaseInterface):
             cnr=quality.cnr,
             tsnr=quality.tsnr,
             psr=signal_metrics.psr,
-            cbf_std=deconvolution.cbf_std,
+            cbf_std=deconvolution.cbf_std if deconvolution is not None else None,
             mask_bool=mask_bool,
+            tissue_auc=auc.tissue,
         )
-        qc.update(
-            self._summarize_dsc_maps(
+        if deconvolution is not None:
+            assert maps.rel_cbf is not None and maps.rel_cbv is not None
+            assert maps.rel_cbv_auc is not None and maps.mtt is not None and maps.tmax is not None
+            qc.update(self._summarize_dsc_maps(
                 maps.rel_cbf,
                 maps.rel_cbv,
                 maps.rel_cbv_auc,
@@ -1224,8 +1250,17 @@ class ComputeDSCMaps(BaseInterface):
                 timing.aif_bat_seconds,
                 auc.cbv,
                 method,
-            )
+            ))
+        qc.update(baseline_info)
+        finite_area = mask_bool & np.isfinite(auc.tissue)
+        n_finite_area = int(np.sum(finite_area))
+        qc["tissue_auc_finite_voxels"] = n_finite_area
+        qc["tissue_auc_negative_voxels"] = int(np.sum(finite_area & (auc.tissue < 0)))
+        qc["tissue_auc_negative_fraction"] = (
+            float(np.sum(finite_area & (auc.tissue < 0))) / n_finite_area
+            if n_finite_area else None
         )
+        qc["n_voxels"] = int(np.sum(mask_bool))
         return _DSCPostprocessing(raw_concentration, maps, qc)
 
     def _save_base_maps(
@@ -1235,7 +1270,7 @@ class ComputeDSCMaps(BaseInterface):
         header: Any,
         qc_metrics: dict[str, Any],
     ) -> dict[str, Any]:
-        """Serialize the unconditional DSC maps and assemble interface results."""
+        """Serialize available DSC maps and assemble interface results."""
         outputs = {
             "out_mtt": (maps.mtt, "_mtt"),
             "out_tmax": (maps.tmax, "_tmax"),
@@ -1249,10 +1284,12 @@ class ComputeDSCMaps(BaseInterface):
             "out_rel_cbv": (maps.rel_cbv, "_rel_cbv"),
             "out_rel_cbv_auc": (maps.rel_cbv_auc, "_rel_cbv_auc"),
             "out_tsnr": (maps.tsnr, "_tsnr"),
+            "out_tissue_auc": (maps.tissue_auc, "_tissue_auc"),
         }
         results: dict[str, Any] = {
             name: self._save_map(data, suffix, affine, header)
             for name, (data, suffix) in outputs.items()
+            if data is not None
         }
         results["qc_metrics"] = qc_metrics
         return results
@@ -1377,6 +1414,7 @@ class ComputeDSCMaps(BaseInterface):
                                          shape=inputs.signal.shape, tr=inputs.dt)
         options = CPIOptions(inputs.cpi_control_points, inputs.cpi_infer_delay,
                               self.inputs.cpi_dispersion, self.inputs.cpi_fallback)
+        assert baseline.aif is not None
         acquisition = prepare_cpi_acquisition(inputs.signal, baseline.aif,
             np.arange(inputs.signal.shape[-1], dtype=float)*inputs.dt, float(self.inputs.te), guidance,
             options=options, inference_method=inputs.inference, temporal_weights=motion.weights,
@@ -1521,7 +1559,7 @@ class ComputeDSCMaps(BaseInterface):
         *,
         inputs: _DSCComputeInputs,
         baseline: _DSCBaselinePreparation,
-        deconvolution: _DSCDeconvolutionMaps,
+        deconvolution: Optional[_DSCDeconvolutionMaps],
         postprocessing: _DSCPostprocessing,
     ) -> dict[str, Any]:
         """Serialize all required and optional DSC interface outputs."""
@@ -1539,6 +1577,9 @@ class ComputeDSCMaps(BaseInterface):
                 header=inputs.header,
             )
         )
+        if deconvolution is None:
+            return results
+        assert maps.rel_cbf is not None and maps.rel_cbv is not None and baseline.aif is not None
         self._save_fit_qc_data(
             rel_cbf=maps.rel_cbf,
             concentration=baseline.concentration,
@@ -1888,7 +1929,9 @@ class ComputeDSCMaps(BaseInterface):
         motion_weighting = self._prepare_motion_weighting(
             method, header, conc_data.shape[3], dt, detected_baseline
         )
-        if method == "cpi":
+        if aif is None:
+            deconvolution = None
+        elif method == "cpi":
             deconvolution = self._deconvolve_signal_cpi(inputs, baseline, motion_weighting)
         else:
             deconvolution = self._run_deconvolution(

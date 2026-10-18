@@ -1347,6 +1347,17 @@ class PoolGateOutcome:
 
 
 @dataclass(frozen=True)
+class RejectedAIF:
+    """Diagnostic curve and its matching candidate pool, in plasma mM."""
+
+    curve: npt.NDArray[Any]
+    candidates: list[tuple[int, int, int]]
+    scores: list[float]
+    reason: str
+    scale_factor: float
+
+
+@dataclass(frozen=True)
 class TierEvaluation:
     """Outcome of one tier's gate-and-trim evaluation.
 
@@ -1358,6 +1369,7 @@ class TierEvaluation:
 
     result: TierResult | None
     gate_decisions: list[GateDecision] = field(default_factory=list)
+    rejected: RejectedAIF | None = None
 
 
 @dataclass(frozen=True)
@@ -1379,6 +1391,7 @@ class CascadeResult:
     atlas_search_outcome: Literal["selected", "exhausted", "unavailable_or_empty"]
     atlas_search_support_voxels: int
     tier_gate_decisions: list[dict[str, Any]] = field(default_factory=list)
+    rejected: RejectedAIF | None = None
 
 
 @dataclass(frozen=True)
@@ -1435,6 +1448,7 @@ class DetectionState:
     whole_brain_symmetry_overlap: float | None
     n_filtered_out: int
     tumor_relative_laterality: dict[str, str | int]
+    rejected: RejectedAIF | None = None
 
     @classmethod
     def population_default(cls) -> "DetectionState":
@@ -1632,6 +1646,8 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
     """Output specification for DCE AIFDetection interface."""
 
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
+    out_rejected_aif_curve = File(exists=True, desc="Rejected diagnostic curve in plasma mM")
+    out_rejected_aif_mask = File(exists=True, desc="Spatial support of the rejected diagnostic curve")
     out_aif_mask = File(desc="AIF voxel mask NIfTI (all zeros for population or external AIF)")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values (mM)")
     detection_method = traits.Str(
@@ -3290,6 +3306,7 @@ class AIFDetection(BaseInterface):
         """
         pool_idx = list(range(len(candidates)))
         gate_decisions: list[GateDecision] = []
+        rejected: RejectedAIF | None = None
 
         while len(pool_idx) >= DCE_AIF_MIN_TRIM_POOL:
             sub_cands = [candidates[i] for i in pool_idx]
@@ -3324,16 +3341,20 @@ class AIFDetection(BaseInterface):
                 )
 
             failing_gate = outcome.decision.get("failing_gate") or ""
+            rejected = RejectedAIF(
+                outcome.curve_scaled.copy(), sub_cands, sub_scores,
+                failing_gate or "quality_checks_failed", outcome.scale_factor,
+            )
 
             if failing_gate in ("G6_f", "G6_g"):
-                return TierEvaluation(result=None, gate_decisions=gate_decisions)
+                return TierEvaluation(result=None, gate_decisions=gate_decisions, rejected=rejected)
 
             worst_local = _select_worst_for_trim(
                 sub_metrics, sub_scores, failing_gate,
             )
             pool_idx.pop(worst_local)
 
-        return TierEvaluation(result=None, gate_decisions=gate_decisions)
+        return TierEvaluation(result=None, gate_decisions=gate_decisions, rejected=rejected)
 
     def _run_two_pass_cascade(
         self,
@@ -3440,6 +3461,7 @@ class AIFDetection(BaseInterface):
         anchor_outcomes: list[dict[str, Any]] = []
         tier_gate_decisions: list[dict[str, Any]] = []
         tier_result: TierResult | None = None
+        rejected: RejectedAIF | None = None
 
         atlas_search_support_voxels = 0
         if atlas_masks:
@@ -3473,6 +3495,7 @@ class AIFDetection(BaseInterface):
             has_anchor: bool,
             earliest_post_arr_s: float,
         ) -> None:
+            nonlocal rejected
             anchor_outcomes.append({
                 "tier": label,
                 "n_candidates": len(cands),
@@ -3480,6 +3503,15 @@ class AIFDetection(BaseInterface):
                 "earliest_post_arr_s": earliest_post_arr_s,
                 "has_anchor": has_anchor,
             })
+
+            if cands and brain_mask is not None and hct is not None and (
+                not has_anchor or self._quorum_count(scs) < _MIN_CANDIDATES_FOR_DETECTED
+            ):
+                curve, _ = self._compute_weighted_roi_aif(cands, scs, conc_data, brain_mask)
+                rejected = RejectedAIF(
+                    curve / (1.0 - hct), list(cands), list(scs),
+                    "arterial_timing" if not has_anchor else "candidate_quorum", 1.0,
+                )
 
         def _record_tier_gate_outcome(
             label: str,
@@ -3571,6 +3603,8 @@ class AIFDetection(BaseInterface):
                                 target_peak,  # type: ignore[arg-type]
                                 label,
                             )
+                            if evaluation.rejected is not None:
+                                rejected = evaluation.rejected
                             tier_result = evaluation.result
                             if tier_result is None:
                                 # Trim exhausted this tier — record the
@@ -3631,6 +3665,8 @@ class AIFDetection(BaseInterface):
                         target_peak,  # type: ignore[arg-type]
                         "wb_relaxed",
                     )
+                    if evaluation.rejected is not None:
+                        rejected = evaluation.rejected
                     tier_result = evaluation.result
                     if tier_result is None:
                         _record_tier_gate_outcome(
@@ -3693,6 +3729,7 @@ class AIFDetection(BaseInterface):
             atlas_search_outcome=atlas_search_outcome,
             atlas_search_support_voxels=atlas_search_support_voxels,
             tier_gate_decisions=tier_gate_decisions,
+            rejected=rejected,
         )
 
     def _find_candidates_in_mask(
@@ -4228,6 +4265,7 @@ class AIFDetection(BaseInterface):
             "baseline_frames": baseline_frames,
             "n_aif_voxels_selected": 0,
             "aif_status": QCStatus.PASS,
+            "detection_status": "not_attempted",
             # User-supplied AIF is trusted (already PASS); mark confidence
             # "standard" so the provenance flag and QC recommendation agree
             # rather than falling through to the report-only quality_score.
@@ -4509,6 +4547,7 @@ class AIFDetection(BaseInterface):
             hct=float(self.inputs.hematocrit),
             target_peak=target_peak,
         )
+        rejected = cascade_result.rejected
         candidates = cascade_result.candidates
         scores = cascade_result.scores
         metrics_list = cascade_result.metrics_list
@@ -4612,11 +4651,19 @@ class AIFDetection(BaseInterface):
                     n_before, _MIN_CANDIDATE_SCORE, best_score,
                     cascade_tiers_attempted,
                 )
+                curve, _ = self._compute_weighted_roi_aif(
+                    candidates, scores, conc_data, brain_mask,
+                )
+                rejected = RejectedAIF(
+                    curve / (1.0 - float(self.inputs.hematocrit)),
+                    list(candidates), list(scores), "candidate_scores_below_threshold", 1.0,
+                )
                 candidates = []
                 scores = []
                 metrics_list = []
 
         return DetectionState(
+            rejected=rejected,
             detection_method=detection_method,
             candidates=candidates,
             scores=scores,
@@ -5188,6 +5235,33 @@ class AIFDetection(BaseInterface):
             )
         )
 
+        qc_metrics["detection_status"] = (
+            "failed" if detection_method == "population" and state.detection_attempt
+            else "not_attempted" if detection_method == "population"
+            else "accepted"
+        )
+        diagnostic_outputs: dict[str, str] = {}
+        if qc_metrics["detection_status"] == "failed" and state.rejected is not None:
+            rejected = state.rejected
+            _, rejected_mask = self._compute_weighted_roi_aif(
+                rejected.candidates, rejected.scores, loaded.conc_data, loaded.brain_mask,
+            )
+            rejected_curve_file = self._gen_outfilename("_dce_rejected_aif_curve.txt")
+            rejected_mask_file = self._gen_outfilename("_dce_rejected_aif_mask.nii.gz")
+            np.savetxt(rejected_curve_file, rejected.curve)
+            nib.save(nib.Nifti1Image(rejected_mask, affine), rejected_mask_file)
+            diagnostic_outputs = {
+                "out_rejected_aif_curve": rejected_curve_file,
+                "out_rejected_aif_mask": rejected_mask_file,
+            }
+            qc_metrics["rejected_candidate"] = {
+                "candidate_coords": [list(c) for c in rejected.candidates],
+                "candidate_scores": [float(v) for v in rejected.scores],
+                "reason": rejected.reason,
+                "scaling_factor": rejected.scale_factor,
+                "units": "mM plasma",
+            }
+
         # Save outputs
         out_aif_curve = self._gen_outfilename("_dce_aif_curve.txt")
         np.savetxt(out_aif_curve, aif_curve)
@@ -5199,6 +5273,7 @@ class AIFDetection(BaseInterface):
 
         # Store results for _list_outputs
         self._results = {
+            **diagnostic_outputs,
             "out_aif_curve": out_aif_curve,
             "out_aif_mask": out_aif_mask,  # Zeros for population AIF
             "aif_curve": [float(x) for x in aif_curve],

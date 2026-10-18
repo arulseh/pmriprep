@@ -954,10 +954,10 @@ def _normalize_cbv(
 
 
 def _normalize_cbf(
-    cbf_file: str,
-    derivatives_dir: str,
-    subject_id: str,
-    session_id: str,
+    cbf_file: str | None = None,
+    derivatives_dir: str = "",
+    subject_id: str = "",
+    session_id: str = "",
     nawm_mask_file: str | None = None,
 ) -> tuple[str, float | None]:
     """Normalize CBF to NAWM median (same method as CBV normalization).
@@ -986,6 +986,9 @@ def _normalize_cbf(
     """
     import math
     from pathlib import Path
+
+    if not cbf_file or not Path(cbf_file).is_file():
+        return "", None
 
     # Skip normalization if no NAWM mask available
     if nawm_mask_file is None:
@@ -1197,16 +1200,17 @@ def _generate_dsc_preprocessing_qc(
 
 
 def _generate_dsc_param_maps_qc(
-    rel_cbf_file: str,
-    rel_cbv_file: str,
-    mtt_file: str,
-    tmax_file: str,
-    psr_file: str,
-    ttp_file: str,
-    brain_mask_file: str,
+    rel_cbf_file: str = "",
+    rel_cbv_file: str = "",
+    mtt_file: str = "",
+    tmax_file: str = "",
+    psr_file: str = "",
+    ttp_file: str = "",
+    brain_mask_file: str = "",
     timing_label: str = "Tmax",
     subject_id: str = "",
     session_id: str = "",
+    ncbv_file: str = "",
 ) -> str:
     """Generate DSC parameter maps QC plot.
 
@@ -1247,6 +1251,7 @@ def _generate_dsc_param_maps_qc(
     for name, filepath in [
         ("rCBF", rel_cbf_file),
         ("rCBV", rel_cbv_file),
+        ("nCBV", ncbv_file),
         ("MTT", mtt_file),
         (timing_label, tmax_file),
         ("PSR", psr_file),
@@ -1520,7 +1525,7 @@ def _merge_qc_metrics(
     preprocessing_stats : dict, optional
         Preprocessing stats dict.
     aif_source : str, optional
-        AIF source type ("auto", "synthetic", or "external").
+        AIF source type ("auto" or "external").
     auc_raw_file, auc_corr_file : str, optional
         Raw and BSW-corrected tissue AUC maps used to measure the correction's
         effect in NAWM.
@@ -1630,15 +1635,16 @@ def _merge_qc_metrics(
 
 
 def _build_hemodynamic_dict(
-    mtt: str,
-    rel_cbf: str,
-    rel_cbv: str,
-    ncbf: str,
-    ncbv: str,
+    mtt: str = "",
+    rel_cbf: str = "",
+    rel_cbv: str = "",
+    ncbf: str = "",
+    ncbv: str = "",
 ) -> dict[str, str]:
     from pathlib import Path as _P
-    d = {"mtt": mtt, "rel_cbf": rel_cbf, "rel_cbv": rel_cbv}
+    d = {}
     for name, val in [
+        ("mtt", mtt), ("rel_cbf", rel_cbf), ("rel_cbv", rel_cbv),
         ("ncbf", ncbf), ("ncbv", ncbv),
     ]:
         if isinstance(val, str) and val not in ("", "None") and _P(val).is_file():

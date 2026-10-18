@@ -2092,7 +2092,7 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
     dsc_aif_qc = traits.Dict(
         mandatory=False,
-        desc="DSC AIF QC metrics dict for CBV quality assessment (optional)",
+        desc="DSC detection QC containing whole-brain tissue CNR (optional)",
     )
     dsc_preload_qc = traits.Dict(
         mandatory=False,
@@ -2917,7 +2917,7 @@ class ComputeDCEMaps(BaseInterface):
                 )
                 vp_result = prepare_vp_constraint_from_data(
                     ncbv_file=self.inputs.dsc_ncbv_file if ncbv_available else None,
-                    aif_qc_data=aif_qc_data,
+                    dsc_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),
                     k2_metrics=k2_metrics,

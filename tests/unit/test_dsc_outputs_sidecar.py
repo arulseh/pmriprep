@@ -207,11 +207,11 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
 
 @pytest.mark.parametrize("method,detection,source", [
     ("sSVD", "atlas_strict", "measured"),
-    ("oSVD", "synthetic", "synthetic"),
+    ("oSVD", "external", "external"),
     ("tikhonov", "atlas_strict", "measured"),
 ])
 def test_svd_mtt_label_and_aif_source(method: str, detection: str, source: str) -> None:
-    """The AUC formula applies to both measured and synthetic AIF sources."""
+    """The AUC formula applies to measured and supplied AIF sources."""
     sidecar = build_dsc_map_sidecar(
         base={}, description="Mean transit time", map_key="mtt", units="s",
         qc_metrics={
@@ -509,16 +509,7 @@ class TestBuildAifProvenanceBlock:
         assert block["Source"] == "measured"
         assert block["DetectionLevel"] == "atlas_strict"
         assert block["QualityFlag"] == "pass"
-        assert block["GammaFitApplied"] is False
 
-    def test_synthetic_template(self) -> None:
-        block = build_aif_provenance_block({
-            "aif_detection": {"detection_method": "synthetic", "quality_score": 0.2},
-            "synthetic_fallback_reason": "no_candidates",
-        })
-        assert block["Source"] == "synthetic"
-        assert block["QualityFlag"] == "poor"
-        assert block["SyntheticFallbackReason"] == "no_candidates"
 
     def test_external_aif(self) -> None:
         block = build_aif_provenance_block(
@@ -527,13 +518,6 @@ class TestBuildAifProvenanceBlock:
         assert block["Source"] == "external"
         assert block["ExternalAIFVerified"] is False
 
-    def test_gamma_fit_applied(self) -> None:
-        block = build_aif_provenance_block(
-            {"aif_detection": {"detection_method": "atlas_relaxed",
-                                "quality_score": 0.72, "gamma_fit_applied": True}}
-        )
-        assert block["Source"] == "gamma_fit_measured"
-        assert block["GammaFitApplied"] is True
 
     def test_quality_warn_for_permissive_tier(self) -> None:
         block = build_aif_provenance_block(
@@ -580,19 +564,6 @@ class TestBuildAifProvenanceBlock:
         })
         assert block == {}
 
-    def test_compound_with_synthetic_part_accepted(self) -> None:
-        """The cascade shouldn't produce ``"...+synthetic"`` (synthetic
-        is a terminal fallback, not a contributing tier), but the
-        validator should accept syntactically valid compounds defensively
-        rather than skipping the whole provenance block."""
-        block = build_aif_provenance_block({
-            "aif_detection": {
-                "detection_method": "atlas_relaxed+synthetic",
-                "quality_score": 0.4,
-            },
-        })
-        assert block != {}
-        assert block["DetectionLevel"] == "atlas_relaxed+synthetic"
 
 
 class TestApplyAifSidecar:
@@ -619,7 +590,7 @@ class TestApplyAifSidecar:
         apply_aif_sidecar(
             sidecar,
             map_key,
-            {"aif_detection": {"detection_method": "synthetic"}},
+            {"aif_detection": {"detection_method": "external"}},
         )
         assert sidecar["AIFDependent"] is True
 
@@ -686,6 +657,9 @@ class TestWriterAifBlockPresentOnAllMaps:
             "cbf_normalization_factor": 42.0,
             "deconvolution": {
                 "method": "oSVD",
+                "tissue_auc_finite_voxels": 100,
+                "tissue_auc_negative_voxels": 7,
+                "tissue_auc_negative_fraction": 0.07,
                 "cbv_auc_finite_voxels": 100,
                 "cbv_auc_negative_voxels": 7,
                 "cbv_auc_negative_fraction": 0.07,
@@ -699,7 +673,7 @@ class TestWriterAifBlockPresentOnAllMaps:
             "dscRelCbf": (60.0, "1/min", True),
             "dscRelCbv": (2.0, "arbitrary", True),
             "dscRelAUCCbv": (3.0, "arbitrary", True),
-            "dscNawmNormCbv": (1.0, "1", True),
+            "dscNawmNormCbv": (1.0, "1", False),
             "dscNawmNormCbf": (0.75, "1", True),
             "dscK2": (-0.03125, "1/s", False),
             "dscCnr": (5.0, "1", False),
@@ -741,7 +715,7 @@ class TestWriterAifBlockPresentOnAllMaps:
 
         cbv_ref = ncbv["PerfusionProcessing"]["NormalizationReference"]
         cbf_ref = ncbf["PerfusionProcessing"]["NormalizationReference"]
-        assert cbv_ref["parameter"] == "CBV"
+        assert cbv_ref["parameter"] == "TissueAUC"
         assert cbv_ref["factor"] == pytest.approx(0.023)
         assert cbf_ref["parameter"] == "CBF"
         assert cbf_ref["factor"] == pytest.approx(42.0)
@@ -770,7 +744,8 @@ class TestWriterAifBlockPresentOnAllMaps:
                 == "finite_pre_sanitization_in_brain_voxels"
             )
             assert signed["NegativeFractionSource"] == (
-                "pre_sanitization_AUC_CBV_estimator"
+                "pre_sanitization_tissue_AUC" if signed is ncbv_signed
+                else "pre_sanitization_AUC_CBV_estimator"
             )
 
     def test_k2_sink_is_conditional(self, minimal_inputs) -> None:
@@ -786,16 +761,18 @@ class TestWriterAifBlockPresentOnAllMaps:
 
         assert "k2_map_sink" not in workflow.list_node_names()
 
-    def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
+    def test_supplied_aif_and_smoothed_map_provenance(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs["smooth_fwhm"] = 3.0
         minimal_inputs["smooth_hemodynamic"] = {
             "rel_cbv": _write_dummy_nifti(tmp_path / "rcbv_sm.nii.gz", 2.5),
             "ncbv": _write_dummy_nifti(tmp_path / "ncbv_sm.nii.gz", 1.25),
         }
         qc = {
-            "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},
-            "synthetic_fallback_reason": "no_candidates",
+            "aif_detection": {"detection_method": "external", "quality_score": 0.3},
             "deconvolution": {
+                "tissue_auc_finite_voxels": 100,
+                "tissue_auc_negative_voxels": 7,
+                "tissue_auc_negative_fraction": 0.07,
                 "cbv_auc_finite_voxels": 100,
                 "cbv_auc_negative_voxels": 7,
                 "cbv_auc_negative_fraction": 0.07,
@@ -803,19 +780,18 @@ class TestWriterAifBlockPresentOnAllMaps:
         }
         derivatives = _run_writer(minimal_inputs, qc, tmp_path)
         cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
-        assert _aif_block(cbv)["Source"] == "synthetic"
-        assert _aif_block(cbv)["SyntheticFallbackReason"] == "no_candidates"
+        assert _aif_block(cbv)["Source"] == "external"
         assert cbv["AIFDependent"] is True
 
         for suffix in ("dscMtt_stat", "dscNawmNormCbf_stat"):
             sidecar = _load_sidecar(derivatives, suffix)
             assert sidecar["AIFDependent"] is True
-            assert _aif_block(sidecar)["Source"] == "synthetic"
+            assert _aif_block(sidecar)["Source"] == "external"
 
         assert cbv["SignedEstimator"]["NegativeInBrainVoxelFraction"] == pytest.approx(0.07)
         for desc, value in (("dscRelAUCSm3Cbv", 2.5), ("dscNawmNormSm3Cbv", 1.25)):
             sidecar = _load_sidecar(derivatives, f"{desc}_stat")
-            assert _aif_block(sidecar)["Source"] == "synthetic"
+            assert _aif_block(sidecar)["Source"] == "external"
             assert sidecar["SmoothingSupport"] == "finite source voxels within the brain mask"
             assert sidecar["InvalidSupportPreserved"] is True
             signed = sidecar["SignedEstimator"]
@@ -825,16 +801,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
             np.testing.assert_array_equal(nib.load(image).get_fdata(), value)
 
-    def test_gamma_fit_measured_source(self, minimal_inputs, tmp_path) -> None:
-        qc = {"aif_detection": {
-            "detection_method": "atlas_relaxed",
-            "quality_score": 0.72,
-            "gamma_fit_applied": True,
-        }}
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        cbv = _load_sidecar(derivatives, "dscRelAUCCbv_stat")
-        assert _aif_block(cbv)["Source"] == "gamma_fit_measured"
-        assert _aif_block(cbv)["GammaFitApplied"] is True
 
 
 class TestMissingAifQc:

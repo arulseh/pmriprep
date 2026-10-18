@@ -2,7 +2,7 @@
 
 This module implements Nipype interfaces for AIF detection in DSC perfusion
 processing, with multi-level detection strategies (atlas-based, relaxed
-criteria, synthetic fallback) and comprehensive quality metrics.
+criteria) and comprehensive quality metrics.
 
 Implements search-mask preparation, adaptive-percentile candidate pre-filtering,
 physical brain-edge and posterior-midline exclusions, tissue-TTP
@@ -35,6 +35,7 @@ from pmriprep.utils.aif_laterality import describe_tumor_relative_aif_candidates
 from pmriprep.utils.dsc_constants import (
     AIF_PEAK_CEILING_3T,
     AIF_PEAK_FLOOR_3T,
+    AIF_MIN_PEAK,
     AIF_PEAK_SPREAD_MAX_SECONDS,
     AIF_TAIL_FRACTION_MAX,
     AIF_TAIL_WINDOW_S,
@@ -45,13 +46,6 @@ from pmriprep.utils.dsc_constants import (
     GD_DOTA_STANDARD_DOSE,
     LESION_EXCLUSION_DISTANCE_MM,
     LESION_EXCLUSION_FLOOR_MM,
-    SYNTH_AIF_BASE_PEAK_3T,
-    SYNTH_AIF_DOSE_CAP,
-    SYNTH_AIF_MIN_PEAK,
-    SYNTH_AIF_RECIRC_ALPHA,
-    SYNTH_AIF_RECIRC_DELAY_S,
-    SYNTH_AIF_RECIRC_DISPERSION_S,
-    SYNTH_AIF_RECIRC_FRACTION,
 )
 
 # Seconds after baseline end before first-pass window begins.
@@ -79,10 +73,6 @@ MIN_AIF_CANDIDATES_ACCEPT: int = 3
 #: to the next tier (keeping the current result as fallback).
 GAMMA_PEAK_RATIO_CASCADE_MIN: float = 0.88
 GAMMA_PEAK_RATIO_CASCADE_MAX: float = 1.12
-
-#: Gamma R² floor for synthetic fallback.
-#: Reject gamma fits that explain less variance than a constant prediction.
-GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 
 #: Minimum baseline-return ratio (%) for an accepted averaged AIF.
 #: BRR = mean(tail) / peak × 100. True arterial washout produces +5 to +30%;
@@ -189,6 +179,7 @@ class _CascadeDetectionResult(NamedTuple):
     tier_provenance: dict[str, int]
     postfilter_diagnostics: dict[str, dict[str, Any]]
     spatial_filter_diagnostics: dict[str, dict[str, Any]]
+    rejected: Optional["_RejectedAIF"] = None
 
 
 class _FinalizedDetectedAIF(NamedTuple):
@@ -201,18 +192,31 @@ class _FinalizedDetectedAIF(NamedTuple):
     baseline_frames: int
 
 
-class _FinalAIFState(NamedTuple):
-    """Final DSC AIF arrays and metadata ready for serialization."""
+class _RejectedAIF(NamedTuple):
+    """Measured curve and matching spatial support retained for failure QC."""
 
     curve: npt.NDArray[Any]
     mask: npt.NDArray[Any]
-    measured_curve: npt.NDArray[Any]
-    raw_curve: Optional[npt.NDArray[Any]]
+    qc: dict[str, Any]
+
+
+class _TissueBaseline(NamedTuple):
+    """Whole-brain timing estimate and its own detector diagnostics."""
+
+    frames: int
+    diagnostics: dict[str, Any]
+
+
+class _FinalAIFState(NamedTuple):
+    """Available analysis input and separate diagnostic curves for serialization."""
+
+    curve: Optional[npt.NDArray[Any]]
+    mask: Optional[npt.NDArray[Any]]
     gamma_curve: Optional[npt.NDArray[Any]]
+    rejected: Optional[_RejectedAIF]
     affine: npt.NDArray[Any]
     detection_level: str
-    quality_score: float
-    gamma_fit_applied: bool
+    quality_score: Optional[float]
     baseline_frames: int
     candidate_count: int
     qc_metrics: dict[str, Any]
@@ -230,16 +234,11 @@ class _DSCAIFDetectionContext(NamedTuple):
     lesion_mask: Optional[npt.NDArray[Any]]
     enhancing_mask: Optional[npt.NDArray[Any]]
     signal: Optional[npt.NDArray[Any]]
-    aif_method: str
     initial_criteria: str
     n_candidates: int
     baseline_frames: int
-    gamma_fit_mode: str
-    disable_fallback: bool
     lesion_distance: float
     n_timepoints: int
-    field_strength: float
-    synthetic_effective_dose: float
     voxel_sizes: tuple[float, float, float]
     tr: float
 
@@ -250,100 +249,6 @@ _CascadeAttempt = tuple[str, Optional[npt.NDArray[Any]], str, bool]
 # ---------------------------------------------------------------------------
 # Top-level AIF quality helpers
 # ---------------------------------------------------------------------------
-
-
-#: QC fields populated from a real-AIF candidate that become stale when
-#: the cascade falls back to synthetic (either at no-candidates or
-#: gamma-R² rejection). Cleared by :func:`_clear_stale_real_aif_keys`
-#: so ``detection_method=='synthetic'`` cannot coexist with stale
-#: spatial data (e.g. ``n_aif_voxels_selected=0`` alongside a real
-#: ``aif_voxel_coord`` from a since-rejected candidate).
-_STALE_REAL_AIF_KEYS: Final[tuple[str, ...]] = (
-    "aif_voxel_coord", "aif_centroid_mm", "aif_hemisphere",
-    "candidate_coords", "candidate_scores",
-    "n_left_candidates", "n_right_candidates",
-    "hemisphere_coverage", "is_bilateral",
-    "tumor_laterality", "laterality_mask_source",
-    "n_contralateral", "n_ipsilateral",
-    "aif_slice", "aif_edge_slice_warning",
-    "best_cost", "mean_cost",
-    "cascade_accepted_roi_size",
-    "aif_metrics",
-    "aif_tier_provenance",
-)
-
-
-def _clear_stale_real_aif_keys(qc_metrics: dict[str, Any]) -> None:
-    """Pop real-AIF QC fields that would be stale under synthetic fallback."""
-    for k in _STALE_REAL_AIF_KEYS:
-        qc_metrics.pop(k, None)
-
-
-def _stamp_synthetic_fallback_common(
-    qc_metrics: dict[str, Any],
-    *,
-    reason: str,
-    tiers_attempted: Sequence[str],
-) -> None:
-    """Set core synthetic-fallback QC fields consistently across all paths.
-
-    Parameters
-    ----------
-    qc_metrics : dict
-        Mutable QC dict to stamp (fresh or prepopulated).
-    reason : str
-        Selection reason: ``"user_selected"``, ``"no_candidates"`` or
-        ``"gamma_r2_floor"``.
-    tiers_attempted : Sequence[str]
-        Cascade tiers tried before fallback.  Only written when the
-        key is absent, preserving any recorded detection attempts.
-
-    Notes
-    -----
-    Callers set ``detection_method`` from the final ``detection_level``.
-    The common finalization block supplies ``synthetic_aif_warnings`` and
-    ``cbv_auc_denominator_is_synthetic`` for every synthetic selection.
-    """
-    qc_metrics["synthetic"] = True
-    qc_metrics["n_aif_voxels_selected"] = 0
-    qc_metrics["n_aif_voxels_available"] = 0
-    qc_metrics["synthetic_fallback_reason"] = reason
-    qc_metrics["aif_quality"] = "degraded"
-    if "cascade_tiers_attempted" not in qc_metrics:
-        qc_metrics["cascade_tiers_attempted"] = list(tiers_attempted)
-
-
-def _flag_retained_below_floor(
-    qc_metrics: dict[str, Any],
-    *,
-    disable_fallback: bool,
-    detection_level: str,
-    gamma_fit_applied: bool,
-    floor: float = GAMMA_R2_SYNTHETIC_FALLBACK,
-) -> None:
-    """Flag a real AIF retained below the gamma-fit floor when fallback is disabled.
-
-    Adds QC fields when fallback is disabled, a non-synthetic AIF was detected,
-    the gamma fit converged but was not applied, and ``gamma_fit_r_squared`` is
-    present and below the floor. The detected curve is retained unchanged.
-    """
-    if gamma_fit_applied or not disable_fallback or detection_level == "synthetic":
-        return
-    if qc_metrics.get("gamma_fit_converged") is not True:
-        return
-    gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
-    if gamma_r2 is None or gamma_r2 >= floor:
-        return
-    import logging
-
-    qc_metrics["aif_gamma_fit_below_floor_retained"] = True
-    qc_metrics["gamma_r2_retained"] = gamma_r2
-    logging.getLogger(__name__).warning(
-        "Gamma fit R²=%.3f < %.1f but synthetic AIF fallback is disabled; retaining "
-        "the detected AIF. CBF, nCBF, MTT and deconvolution timing depend on "
-        "this curve. Review the AIF and baseline QC before interpreting these maps.",
-        gamma_r2, floor,
-    )
 
 
 def _costs_to_scores(costs: list[float]) -> list[float]:
@@ -563,12 +468,6 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     )
 
     # Detection parameters
-    aif_method = traits.Enum(
-        "auto",
-        "synthetic",
-        usedefault=True,
-        desc="AIF detection method: 'auto' (multi-level) or 'synthetic' (gamma-variate)",
-    )
     criteria = traits.Enum(
         "strict",
         "relaxed",
@@ -584,11 +483,6 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         LESION_EXCLUSION_DISTANCE_MM,
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
-    )
-    disable_fallback = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Disable synthetic AIF fallback when detection fails",
     )
     strict_roi_constraint = traits.Bool(
         False,
@@ -626,7 +520,7 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         3.0,
         usedefault=True,
         desc="Magnetic field strength in Tesla (from BIDS MagneticFieldStrength). "
-             "Used for B0 scaling of synthetic AIF peak amplitude.",
+             "Used for field-dependent arterial candidate thresholds.",
     )
 
     # Output file
@@ -645,28 +539,17 @@ class AIFDetectionOutputSpec(TraitedSpec):
 
     out_aif_curve = File(exists=True, desc="AIF curve as 1D text file")
     out_aif_mask = File(exists=True, desc="AIF voxel mask NIfTI")
-    out_raw_aif_curve = traits.Str(
-        desc="QC comparison curve: original AIF after an applied gamma fit, "
-             "or the rejected converged fit in auto mode; empty when unavailable",
-    )
-    out_gamma_aif_curve = File(
-        desc="Converged gamma-fit curve, or the emitted AIF when no fitted "
-             "curve is available (always produced)",
-    )
-    out_measured_aif_curve = File(
-        desc="Measured AIF curve text file (pre-gamma; always produced). "
-             "Consumed by AUC CBV denominator. For external/synthetic "
-             "AIF paths, contains the external/synthetic curve itself.",
-    )
+    out_gamma_aif_curve = File(exists=True, desc="Converged gamma model for QC")
+    out_rejected_aif_curve = File(exists=True, desc="Rejected measured curve for QC")
+    out_rejected_aif_mask = File(exists=True, desc="Voxels contributing to the rejected QC curve")
     out_aif_coord = traits.List(traits.Int, desc="Best AIF voxel coordinate [x, y, z]")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values")
     detection_level = traits.Str(
         desc="Accepted atlas/brain tier or '+'-joined contributing tiers; "
-             "'synthetic' or 'external' for generated or supplied curves"
+             "'unavailable' or 'external' for absent or supplied curves"
     )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     candidate_count = traits.Int(desc="Number of retained candidate records at finalization")
-    gamma_fit_applied = traits.Bool(desc="Whether gamma-variate fitting was applied")
     aif_baseline_frames = traits.Int(
         desc="Detected pre-bolus baseline frames for downstream use",
     )
@@ -683,7 +566,7 @@ class AIFDetection(BaseInterface):
     - Tissue TTP cross-validation
     - Cost-function scoring (lower = better) with S0-dominant weighting
     - 3x3x3 ROI averaging with Savitzky-Golay smoothing
-    - Multi-level fallback: atlas strict/relaxed/permissive -> brain relaxed/permissive -> synthetic
+    - Multi-level fallback: atlas strict/relaxed/permissive -> brain relaxed/permissive
     """
 
     input_spec = AIFDetectionInputSpec
@@ -1232,7 +1115,7 @@ class AIFDetection(BaseInterface):
         }
 
     # -----------------------------------------------------------------
-    # Effective dose helper (shared by candidate scoring + synthetic AIF)
+    # Effective dose helper (used by candidate scoring)
     # -----------------------------------------------------------------
 
     def _effective_dose(
@@ -1383,16 +1266,11 @@ class AIFDetection(BaseInterface):
         if not np.isnan(ph) and ph < ph_min.get(criteria, 12):
             return float("inf")
 
-        # 8b. Peak concentration bounds — B0- and dose-scaled artifact rejection.
-        # Arterial peak ΔR2* scales ∝ B0·dose, so both floor and ceiling ride the
-        # same law as the synthetic AIF peak (a fixed floor would only be valid at
-        # its 3T/full-dose calibration point). Floor is clamped to the ΔR2* noise
-        # guard; ceiling scales up for super-doses but never below its 3T value.
+        # Peak bounds scale with field strength and effective dose, with an
+        # absolute noise floor and a ceiling for susceptibility artifacts.
         effective_dose = 1.0  # default, overwritten below if peak_conc available
         peak_conc = metrics.get("peak_conc", float("nan"))
         if not np.isnan(peak_conc):
-            # Cap 3.0 (vs 2.5 for synthetic AIF): artifact rejection tolerates
-            # slight nonlinearity; synthetic AIF amplitude must stay linear.
             effective_dose = float(np.clip(
                 self._effective_dose(dose, agent_standard_dose),
                 0.2, 3.0,
@@ -1405,7 +1283,7 @@ class AIFDetection(BaseInterface):
 
             peak_floor = max(
                 AIF_PEAK_FLOOR_3T * b0_scale * effective_dose,
-                SYNTH_AIF_MIN_PEAK,
+                AIF_MIN_PEAK,
             )
             peak_ceiling = AIF_PEAK_CEILING_3T * b0_scale * max(effective_dose, 1.0)
 
@@ -1986,151 +1864,6 @@ class AIFDetection(BaseInterface):
         return None
 
     # -----------------------------------------------------------------
-    # Synthetic AIF (calibrated gamma-variate)
-    # -----------------------------------------------------------------
-
-    def _compute_tissue_max_for_synthetic(
-        self,
-        conc_data: npt.NDArray[Any],
-        brain_mask: npt.NDArray[Any],
-    ) -> Optional[float]:
-        """Compute tissue max ΔR2* for synthetic AIF amplitude scaling.
-
-        Parameters
-        ----------
-        conc_data : ndarray
-            4D concentration data (x, y, z, t).
-        brain_mask : ndarray
-            3D brain mask.
-
-        Returns
-        -------
-        float or None
-            95th percentile of max ΔR2* across brain voxels, or None if
-            no brain voxels available.
-        """
-        brain_conc = conc_data[brain_mask > 0.5]
-        if brain_conc.size == 0:
-            return None
-        max_per_voxel = (
-            brain_conc.max(axis=-1)
-            if brain_conc.ndim > 1
-            else float(brain_conc.max())
-        )
-        return float(np.percentile(max_per_voxel, 95))
-
-    def _generate_synthetic_aif(
-        self,
-        n_timepoints: int,
-        tr: float = 1.5,
-        baseline_frames: int = 5,
-        tissue_max_delta_r2star: Optional[float] = None,
-        field_strength: float = 3.0,
-        effective_dose: float = 1.0,
-    ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
-        """Generate synthetic AIF using physiologically calibrated gamma-variate.
-
-        Peak amplitude is dose- and B0-scaled from population-median arterial
-        ΔR2* at 3T.
-
-        Parameters
-        ----------
-        n_timepoints : int
-            Number of time frames.
-        tr : float, optional
-            Repetition time in seconds.
-        baseline_frames : int, optional
-            Number of pre-bolus baseline frames.
-        tissue_max_delta_r2star : float or None, optional
-            95th percentile of max ΔR2* across brain
-            voxels. QC diagnostic only — does not drive peak amplitude.
-        field_strength : float, optional
-            Magnetic field strength in Tesla.
-        effective_dose : float, optional
-            ``(agent_std * dose) / 0.1``, clamped.
-
-        Returns
-        -------
-        tuple
-            Tuple of (aif_curve, qc_metrics_dict).
-        """
-        # --- First-pass gamma-variate parameters ---
-        alpha = 4.0
-        time_to_peak = 4.5  # seconds after arrival
-        arrival_frame = baseline_frames + 2
-        t0 = arrival_frame * tr  # bolus arrival time (seconds)
-
-        # Peak amplitude: population-median arterial ΔR2* scaled by B0 and dose
-        peak = max(
-            SYNTH_AIF_BASE_PEAK_3T * (field_strength / 3.0) * effective_dose,
-            SYNTH_AIF_MIN_PEAK,
-        )
-        amplitude_source = "population_calibrated"
-
-        # Recirculation (second-pass) parameters — dispersed, so a smaller,
-        # flatter lobe than the first pass (its own alpha, not the first-pass 4.0)
-        recirc_fraction = SYNTH_AIF_RECIRC_FRACTION
-        recirc_alpha = SYNTH_AIF_RECIRC_ALPHA
-        recirc_delay = SYNTH_AIF_RECIRC_DELAY_S  # seconds after first-pass peak
-        recirc_dispersion = SYNTH_AIF_RECIRC_DISPERSION_S  # seconds (broadening)
-
-        # --- Build time axis ---
-        t = np.arange(n_timepoints) * tr
-        aif: npt.NDArray[np.float64] = np.zeros(
-            n_timepoints, dtype=np.float64,
-        )
-
-        # --- First-pass component ---
-        post_arrival = t > t0
-        if np.any(post_arrival):
-            t_shifted = t[post_arrival] - t0
-            ratio = t_shifted / time_to_peak
-            # Gamma-variate: C(t) = C_peak * (ratio)^alpha * exp(alpha*(1-ratio))
-            aif[post_arrival] = peak * (ratio ** alpha) * np.exp(
-                alpha * (1.0 - ratio)
-            )
-
-        # --- Recirculation component ---
-        recirc_t0 = t0 + time_to_peak + recirc_delay
-        post_recirc = t > recirc_t0
-        if np.any(post_recirc):
-            t_recirc = t[post_recirc] - recirc_t0
-            ratio_r = t_recirc / recirc_dispersion
-            recirc_peak = peak * recirc_fraction
-            aif[post_recirc] += recirc_peak * (ratio_r ** recirc_alpha) * np.exp(
-                recirc_alpha * (1.0 - ratio_r)
-            )
-
-        # Clip negative values (numerical safety)
-        aif = np.clip(aif, 0.0, None)
-
-        # --- QC metrics ---
-        metrics: dict[str, Any] = {
-            "synthetic_aif_peak_delta_r2star": float(np.max(aif)),
-            "synthetic_aif_target_peak": peak,
-            "synthetic_aif_amplitude_source": amplitude_source,
-            "synthetic_aif_peak_formula": "population_median_b0_scaled",
-            "synthetic_aif_effective_dose": effective_dose,
-            "synthetic_aif_field_strength": field_strength,
-            "synthetic_aif_alpha": alpha,
-            "synthetic_aif_time_to_peak_s": time_to_peak,
-            "synthetic_aif_arrival_frame": arrival_frame,
-            "synthetic_aif_recirc_fraction": recirc_fraction,
-            "synthetic_aif_recirc_alpha": recirc_alpha,
-            "synthetic_aif_recirc_delay_s": recirc_delay,
-        }
-        if tissue_max_delta_r2star is not None:
-            metrics["synthetic_aif_tissue_p95_delta_r2star"] = float(
-                tissue_max_delta_r2star
-            )
-            if peak > 0 and tissue_max_delta_r2star > 0:
-                metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
-                    peak / tissue_max_delta_r2star, 2
-                )
-
-        return aif, metrics
-
-    # -----------------------------------------------------------------
     # Step 9b: Finalize AIF metrics
     # -----------------------------------------------------------------
 
@@ -2497,27 +2230,18 @@ class AIFDetection(BaseInterface):
             ext_path.name, peak, cnr, quality_score,
         )
 
-        # No gamma fit for external AIF. Save external curve as both gamma
-        # and measured outputs so downstream consumers always find a file.
-        out_gamma_aif = self._gen_outfilename("_gamma_aif_curve.txt")
-        np.savetxt(out_gamma_aif, aif_curve)
-        out_measured_aif = self._gen_outfilename("_measured_aif_curve.txt")
-        np.savetxt(out_measured_aif, aif_curve)
-        qc_metrics["gamma_aif_fallback_to_raw"] = True
-        qc_metrics["cbv_auc_denominator_is_synthetic"] = False
+        qc_metrics["detection_status"] = "not_attempted"
+        qc_metrics["aif_source"] = "external"
+        qc_metrics["cbv_auc_denominator_available"] = True
 
         self._results = {
             "out_aif_curve": out_aif_curve,
             "out_aif_mask": out_aif_mask,
-            "out_gamma_aif_curve": out_gamma_aif,
-            "out_measured_aif_curve": out_measured_aif,
-            "out_raw_aif_curve": "",
             "out_aif_coord": [0, 0, 0],
             "aif_curve": [float(x) for x in aif_curve],
             "detection_level": "external",
             "quality_score": quality_score,
             "candidate_count": 0,
-            "gamma_fit_applied": False,
             "aif_baseline_frames": baseline_frames,
             "qc_metrics": qc_metrics,
         }
@@ -2643,15 +2367,6 @@ class AIFDetection(BaseInterface):
             else:
                 tr = 1.5
 
-        field_strength = (
-            float(self.inputs.field_strength)
-            if isdefined(self.inputs.field_strength)
-            else 3.0
-        )
-        synthetic_effective_dose = float(
-            np.clip(self._effective_dose(), 0.2, SYNTH_AIF_DOSE_CAP)
-        )
-
         return _DSCAIFDetectionContext(
             concentration=concentration,
             affine=affine,
@@ -2662,16 +2377,11 @@ class AIFDetection(BaseInterface):
             lesion_mask=lesion_mask,
             enhancing_mask=enhancing_mask,
             signal=signal,
-            aif_method=str(self.inputs.aif_method),
             initial_criteria=str(self.inputs.criteria),
             n_candidates=int(self.inputs.n_candidates),
             baseline_frames=int(self.inputs.baseline_frames),
-            gamma_fit_mode="auto",
-            disable_fallback=bool(self.inputs.disable_fallback),
             lesion_distance=lesion_distance,
             n_timepoints=concentration.shape[3],
-            field_strength=field_strength,
-            synthetic_effective_dose=synthetic_effective_dose,
             voxel_sizes=(float(zooms[0]), float(zooms[1]), float(zooms[2])),
             tr=tr,
         )
@@ -2837,70 +2547,38 @@ class AIFDetection(BaseInterface):
         )
 
     def _try_single_best_fallback(
-        self,
-        candidates: Sequence[_AIFCandidate],
-        concentration: npt.NDArray[Any],
-        brain_mask: npt.NDArray[Any],
-        tr: float,
-        baseline_frames: int,
-        logger: Any,
-    ) -> Optional[_SingleBestAIFResult]:
-        """Try the lowest-cost candidate when multi-candidate pools fail."""
+        self, candidates: Sequence[_AIFCandidate],
+        concentration: npt.NDArray[Any], brain_mask: npt.NDArray[Any],
+        tr: float, baseline_frames: int, logger: Any,
+    ) -> tuple[Optional[_SingleBestAIFResult], Optional[_RejectedAIF]]:
+        """Evaluate the lowest-cost candidate and retain its rejected spatial QC."""
         if not candidates:
-            return None
-
+            return None, None
         best_candidate = min(candidates, key=lambda candidate: candidate[0])
+        rejected = None
         for roi_size in (1, 3):
             curve, mask = self._compute_roi_averaged_aif(
-                [best_candidate],
-                concentration,
-                brain_mask,
-                tr,
-                roi_size=roi_size,
+                [best_candidate], concentration, brain_mask, tr, roi_size=roi_size,
             )
-            if not self._aif_global_max_in_fp(curve, baseline_frames, tr):
-                continue
-
+            peak_ok = self._aif_global_max_in_fp(curve, baseline_frames, tr)
             brr = self._compute_aif_brr(curve, baseline_frames, tr)
-            if not np.isnan(brr) and brr < AIF_AVG_BRR_MIN:
-                logger.warning(
-                    "AIF cascade: single-best candidate rejected "
-                    "(BRR=%.1f%% < %.1f%%); falling through to synthetic AIF",
-                    brr,
-                    AIF_AVG_BRR_MIN,
-                )
-                continue
+            if peak_ok and (np.isnan(brr) or brr >= AIF_AVG_BRR_MIN):
+                return _SingleBestAIFResult(curve, mask, roi_size, best_candidate), None
+            reason = "peak_outside_first_pass" if not peak_ok else "negative_tail"
+            rejected = _RejectedAIF(curve, mask, {
+                "reason": reason,
+                "roi_size": roi_size,
+                "baseline_frames_used": baseline_frames,
+                "aif_voxel_coord": list(best_candidate[1]),
+                "candidate_coords": [list(best_candidate[1])],
+                "candidate_scores": _costs_to_scores([best_candidate[0]]),
+                "baseline_return_ratio": float(brr) if np.isfinite(brr) else None,
+            })
+            logger.debug("Single-best AIF rejected: %s (ROI %d)", reason, roi_size)
+        return None, rejected
 
-            return _SingleBestAIFResult(curve, mask, roi_size, best_candidate)
 
-        return None
 
-    def _prepare_cached_synthetic_fallback(
-        self,
-        concentration: npt.NDArray[Any],
-        brain_mask: npt.NDArray[Any],
-    ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
-        """Copy the cached synthetic AIF and add tissue-relative QC metrics."""
-        curve = self._cached_synth_aif.copy()
-        metrics = dict(self._cached_synth_metrics)
-        tissue_max = self._compute_tissue_max_for_synthetic(
-            concentration,
-            brain_mask,
-        )
-        if tissue_max is None:
-            return curve, metrics
-
-        metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-            float(tissue_max),
-            2,
-        )
-        peak = metrics.get("synthetic_aif_target_peak", 0.0)
-        if tissue_max > 0 and peak > 0:
-            metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
-                peak / tissue_max,
-                2,
-            )
-        return curve, metrics
 
     @staticmethod
     def _add_candidates_to_union(
@@ -2966,7 +2644,7 @@ class AIFDetection(BaseInterface):
             if tier_provenance.get(level_name, 0) > 0
         ]
         detection_level = (
-            "+".join(contributing_levels) if contributing_levels else "synthetic"
+            "+".join(contributing_levels) if contributing_levels else "measured"
         )
         result = acceptance.result
         return _UnionAcceptanceResult(
@@ -3177,46 +2855,27 @@ class AIFDetection(BaseInterface):
         return int(final), diagnostics
 
     def _prepare_detection_baseline(
-        self,
-        context: _DSCAIFDetectionContext,
-        logger: Any,
-    ) -> int:
-        """Detect arterial baseline timing and initialize synthetic fallback."""
+        self, context: _DSCAIFDetectionContext, logger: Any,
+    ) -> _TissueBaseline:
+        """Estimate whole-brain baseline timing and retain its confidence."""
         brain_concentration = context.concentration[context.brain_mask > 0.5]
+        diagnostics: dict[str, Any] = {"confidence": "unknown", "method": "configured"}
         if brain_concentration.ndim > 1 and brain_concentration.shape[0] > 100:
             from pmriprep.utils.baseline_detection import detect_baseline_ensemble
 
-            p90_curve, p99_curve = np.percentile(
-                brain_concentration,
-                [90, 99],
-                axis=0,
-            )
+            p90_curve, p99_curve = np.percentile(brain_concentration, [90, 99], axis=0)
             mean_curve = np.mean(brain_concentration, axis=0)
             baseline_frames, diagnostics = detect_baseline_ensemble(
-                p99_curve,
-                tr=context.tr,
+                p99_curve, tr=context.tr,
                 min_baseline=max(5, int(10.0 / max(context.tr, 0.1))),
                 additional_signals=[p90_curve, mean_curve],
             )
-            logger.debug(
-                "Ensemble baseline detection: arrival=%d, conf=%s, method=%s",
-                baseline_frames,
-                diagnostics.get("confidence", "unknown"),
-                diagnostics.get("method", "unknown"),
-            )
+            logger.debug("Tissue baseline: arrival=%d, confidence=%s",
+                         baseline_frames, diagnostics.get("confidence", "unknown"))
         else:
             baseline_frames = context.baseline_frames
+        return _TissueBaseline(baseline_frames, diagnostics)
 
-        self._cached_synth_aif, self._cached_synth_metrics = (
-            self._generate_synthetic_aif(
-                context.n_timepoints,
-                context.tr,
-                baseline_frames,
-                field_strength=context.field_strength,
-                effective_dose=context.synthetic_effective_dose,
-            )
-        )
-        return baseline_frames
 
     def _run_candidate_cascade(
         self,
@@ -3230,12 +2889,11 @@ class AIFDetection(BaseInterface):
         atlas_mask = context.atlas_mask
         atlas_is_mra = context.atlas_is_mra
         full_atlas_mask = context.full_atlas_mask
-        aif_method = context.aif_method
         initial_criteria = context.initial_criteria
         n_candidates = context.n_candidates
         tr = context.tr
         # Initialize
-        detection_level = "synthetic"
+        detection_level = "unavailable"
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
         n_available = 0
         filter_meta: dict[str, Any] = {}
@@ -3249,199 +2907,189 @@ class AIFDetection(BaseInterface):
         union_state = _CascadeUnionState([], set(), {}, {}, {})
         # Per-tier post-filter diagnostics (n_filtered_* counts, pool
         # spread, max tail). Recorded even on tiers the union does not
-        # accept from, so the synthetic-fallback branch can surface why
+        # accept from, so the unavailable-AIF result can report why
         # each tier failed.
         postfilter_diags_per_tier: dict[str, dict[str, Any]] = {}
         spatial_filter_diags_per_tier: dict[str, dict[str, Any]] = {}
-        if aif_method == "synthetic":
-            pass  # Go directly to synthetic
-        else:
-            attempts = self._build_cascade_attempts(
-                initial_criteria,
-                atlas_mask,
-                atlas_is_mra,
-                full_atlas_mask,
-                bool(self.inputs.strict_roi_constraint),
-            )
+        rejected: Optional[_RejectedAIF] = None
+        attempts = self._build_cascade_attempts(
+            initial_criteria,
+            atlas_mask,
+            atlas_is_mra,
+            full_atlas_mask,
+            bool(self.inputs.strict_roi_constraint),
+        )
 
-            # Compute tissue-TTP reference once — independent of tier
-            # because it operates on the whole brain mask. Used by the
-            # per-tier scorer and post-score kinetic/anchor filter.
-            tissue_ttp = self._calculate_tissue_ttp_reference(
-                conc_data, brain_mask, aif_baseline_frames
-            )
-            posterior_midline_zone: Optional[npt.NDArray[Any]] = None
-            symmetry_angle = float("nan")
-            symmetry_overlap = float("nan")
-            symmetry_computed = False
+        # Compute tissue-TTP reference once — independent of tier
+        # because it operates on the whole brain mask. Used by the
+        # per-tier scorer and post-score kinetic/anchor filter.
+        tissue_ttp = self._calculate_tissue_ttp_reference(
+            conc_data, brain_mask, aif_baseline_frames
+        )
+        posterior_midline_zone: Optional[npt.NDArray[Any]] = None
+        symmetry_angle = float("nan")
+        symmetry_overlap = float("nan")
+        symmetry_computed = False
 
-            for crit, roi, level_name, is_atlas in attempts:
-                if not is_atlas and not symmetry_computed:
-                    (
-                        posterior_midline_zone,
-                        symmetry_angle,
-                        symmetry_overlap,
-                    ) = self._brain_symmetry_midline_zone(
-                        brain_mask,
-                        context.affine,
-                    )
-                    symmetry_computed = True
-                tiers_attempted.append(level_name)
-                frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
-                level_n_candidates = max(
-                    MIN_AIF_CANDIDATES_ACCEPT,
-                    math.ceil(frac * n_candidates),
-                )
-
-                tier_candidates = self._prepare_tier_candidates(
-                    context,
-                    crit,
-                    roi,
-                    is_atlas,
+        for crit, roi, level_name, is_atlas in attempts:
+            if not is_atlas and not symmetry_computed:
+                (
                     posterior_midline_zone,
                     symmetry_angle,
                     symmetry_overlap,
-                    level_n_candidates,
-                    aif_baseline_frames,
-                    tissue_ttp,
-                )
-                scored = tier_candidates.candidates
-                f_meta = tier_candidates.filter_metadata
-                if "n_distance_excluded" in f_meta:
-                    spatial_filter_diags_per_tier[level_name] = dict(f_meta)
-                if tier_candidates.postfilter_diagnostics is not None:
-                    postfilter_diags_per_tier[level_name] = (
-                        tier_candidates.postfilter_diagnostics
-                    )
-                if not scored:
-                    continue
-
-                if cascade_initial_level is None:
-                    cascade_initial_level = level_name
-                # Sort survivors by cost (lowest first).
-                scored.sort(key=lambda x: x[0])
-
-                # Accumulate this tier's survivors into the global
-                # union (capped at n_candidates total across all tiers
-                # — broader than the per-tier ``level_n_candidates``
-                # used by the per-tier gate below). The union is the
-                # POST-CASCADE fallback pool only and does NOT gate
-                # the cascade. Looser tiers always run if the current
-                # tier's averaged-pool gate fails, so the cascade
-                # is fully exhausted before any fallback.  Synthetic
-                # AIF is the LAST RESORT — reachable only after every
-                # tier's per-tier gate AND the union/single-best
-                # fallbacks have failed.
-                self._add_candidates_to_union(
-                    union_state,
-                    scored,
-                    level_name,
-                    n_candidates,
-                    f_meta,
-                )
-
-                # Per-tier averaged-pool gate with progressive worst-BRR
-                # trim.  Asks "do this tier's voxels behave as a
-                # coherent arterial pool together?" — if not, drop the
-                # candidate with the most-negative BRR (worst tail
-                # contaminator) and retry, down to
-                # MIN_AIF_CANDIDATES_ACCEPT.  If the tier can't reach
-                # an acceptable pool, the cascade falls through to the
-                # next (looser) tier.
-                tier_acceptance = self._try_trimmed_pool_acceptance(
-                    scored[:level_n_candidates],
-                    conc_data,
+                ) = self._brain_symmetry_midline_zone(
                     brain_mask,
-                    tr,
-                    aif_baseline_frames,
+                    context.affine,
                 )
-                if tier_acceptance is not None:
-                    tier_result = tier_acceptance.result
-                    tier_pool = tier_acceptance.candidates
-                    accepted_aif = (
-                        tier_result.curve,
-                        tier_result.mask,
-                        tier_result.roi_size,
-                    )
-                    top_candidates = list(tier_pool)
-                    n_available = len(tier_pool)
-                    detection_level = level_name
-                    filter_meta = dict(f_meta)
-                    union_state.filter_metadata.clear()
-                    union_state.filter_metadata.update(f_meta)
-                    union_state.tier_provenance.clear()
-                    union_state.tier_provenance[level_name] = len(tier_pool)
+                symmetry_computed = True
+            tiers_attempted.append(level_name)
+            frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
+            level_n_candidates = max(
+                MIN_AIF_CANDIDATES_ACCEPT,
+                math.ceil(frac * n_candidates),
+            )
 
-                if accepted_aif is not None:
-                    break  # cascade complete — tier accepted
-
-            # Post-cascade fallback 1: union pool with progressive
-            # worst-BRR trim.
-            # Only runs if EVERY tier's averaged-pool gate failed
-            # above. Pools kinetic-filter survivors across tiers, then
-            # mirrors the per-tier trim semantics: drop the most-
-            # negative-BRR voxel one at a time until the averaged pool
-            # passes or the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
-            if accepted_aif is None:
-                union_acceptance = self._try_union_fallback(
-                    union_state,
-                    attempts,
-                    context,
-                    aif_baseline_frames,
+            tier_candidates = self._prepare_tier_candidates(
+                context,
+                crit,
+                roi,
+                is_atlas,
+                posterior_midline_zone,
+                symmetry_angle,
+                symmetry_overlap,
+                level_n_candidates,
+                aif_baseline_frames,
+                tissue_ttp,
+            )
+            scored = tier_candidates.candidates
+            f_meta = tier_candidates.filter_metadata
+            if "n_distance_excluded" in f_meta:
+                spatial_filter_diags_per_tier[level_name] = dict(f_meta)
+            if tier_candidates.postfilter_diagnostics is not None:
+                postfilter_diags_per_tier[level_name] = (
+                    tier_candidates.postfilter_diagnostics
                 )
-                if union_acceptance is not None:
-                    accepted_aif = union_acceptance.accepted_aif
-                    top_candidates = list(union_acceptance.candidates)
-                    n_available = len(union_acceptance.candidates)
-                    detection_level = union_acceptance.detection_level
-                    union_state.tier_provenance.clear()
-                    union_state.tier_provenance.update(
-                        union_acceptance.tier_provenance
-                    )
-                    filter_meta = dict(union_state.filter_metadata)
+            if not scored:
+                continue
 
-            # Single-best fallback: union has voxels but per-tier and
-            # union averaged-pool gates all rejected. Try the lowest-cost union
-            # voxel; the relaxed gate uses global_max_in_fp and
-            # AIF_AVG_BRR_MIN.
-            if accepted_aif is None and len(union_state.candidates) > 0:
-                single_best = self._try_single_best_fallback(
-                    union_state.candidates,
-                    conc_data,
-                    brain_mask,
-                    tr,
-                    aif_baseline_frames,
-                    logger,
+            if cascade_initial_level is None:
+                cascade_initial_level = level_name
+            # Sort survivors by cost (lowest first).
+            scored.sort(key=lambda x: x[0])
+
+            # Accumulate survivors across tiers, capped at n_candidates.
+            # Test the union and single-best candidate after all per-tier
+            # pools fail; if those also fail, report the AIF as unavailable.
+            self._add_candidates_to_union(
+                union_state,
+                scored,
+                level_name,
+                n_candidates,
+                f_meta,
+            )
+
+            # Per-tier averaged-pool gate with progressive worst-BRR
+            # trim.  Asks "do this tier's voxels behave as a
+            # coherent arterial pool together?" — if not, drop the
+            # candidate with the most-negative BRR (worst tail
+            # contaminator) and retry, down to
+            # MIN_AIF_CANDIDATES_ACCEPT.  If the tier can't reach
+            # an acceptable pool, the cascade falls through to the
+            # next (looser) tier.
+            tier_acceptance = self._try_trimmed_pool_acceptance(
+                scored[:level_n_candidates],
+                conc_data,
+                brain_mask,
+                tr,
+                aif_baseline_frames,
+            )
+            if tier_acceptance is not None:
+                tier_result = tier_acceptance.result
+                tier_pool = tier_acceptance.candidates
+                accepted_aif = (
+                    tier_result.curve,
+                    tier_result.mask,
+                    tier_result.roi_size,
                 )
-                if single_best is not None:
-                    accepted_aif = (
-                        single_best.curve,
-                        single_best.mask,
-                        single_best.roi_size,
-                    )
-                    best_only = [single_best.candidate]
-                    top_candidates = best_only
-                    n_available = len(union_state.candidates)
-                    # Use the chosen voxel's source tier (looked up
-                    # via the per-coord origin map) rather than the
-                    # last attempted tier, because the single-best
-                    # voxel typically came from a stricter tier than
-                    # the last one we tried.
-                    best_coord = best_only[0][1]
-                    detection_level = union_state.coordinate_origins.get(
-                        best_coord,
-                        tiers_attempted[-1] if tiers_attempted else "single_best",
-                    )
-                    # Provenance must describe the single emitted voxel, not the
-                    # full pre-fallback union pool the trim loop left in
-                    # union_tier_provenance.
-                    union_state.tier_provenance.clear()
-                    union_state.tier_provenance[detection_level] = 1
-                    filter_meta = dict(union_state.filter_metadata)
-                    logger.warning(
-                        "AIF cascade: using single-best candidate "
-                        "(union failed averaged-pool validation)"
-                    )
+                top_candidates = list(tier_pool)
+                n_available = len(tier_pool)
+                detection_level = level_name
+                filter_meta = dict(f_meta)
+                union_state.filter_metadata.clear()
+                union_state.filter_metadata.update(f_meta)
+                union_state.tier_provenance.clear()
+                union_state.tier_provenance[level_name] = len(tier_pool)
+
+            if accepted_aif is not None:
+                break  # cascade complete — tier accepted
+
+        # Post-cascade fallback 1: union pool with progressive
+        # worst-BRR trim.
+        # Only runs if EVERY tier's averaged-pool gate failed
+        # above. Pools kinetic-filter survivors across tiers, then
+        # mirrors the per-tier trim semantics: drop the most-
+        # negative-BRR voxel one at a time until the averaged pool
+        # passes or the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
+        if accepted_aif is None:
+            union_acceptance = self._try_union_fallback(
+                union_state,
+                attempts,
+                context,
+                aif_baseline_frames,
+            )
+            if union_acceptance is not None:
+                accepted_aif = union_acceptance.accepted_aif
+                top_candidates = list(union_acceptance.candidates)
+                n_available = len(union_acceptance.candidates)
+                detection_level = union_acceptance.detection_level
+                union_state.tier_provenance.clear()
+                union_state.tier_provenance.update(
+                    union_acceptance.tier_provenance
+                )
+                filter_meta = dict(union_state.filter_metadata)
+
+        # Single-best fallback: union has voxels but per-tier and
+        # union averaged-pool gates all rejected. Try the lowest-cost union
+        # voxel; the relaxed gate uses global_max_in_fp and
+        # AIF_AVG_BRR_MIN.
+        if accepted_aif is None and len(union_state.candidates) > 0:
+            single_best, rejected = self._try_single_best_fallback(
+                union_state.candidates,
+                conc_data,
+                brain_mask,
+                tr,
+                aif_baseline_frames,
+                logger,
+            )
+            if single_best is not None:
+                accepted_aif = (
+                    single_best.curve,
+                    single_best.mask,
+                    single_best.roi_size,
+                )
+                best_only = [single_best.candidate]
+                top_candidates = best_only
+                n_available = len(union_state.candidates)
+                # Use the chosen voxel's source tier (looked up
+                # via the per-coord origin map) rather than the
+                # last attempted tier, because the single-best
+                # voxel typically came from a stricter tier than
+                # the last one we tried.
+                best_coord = best_only[0][1]
+                detection_level = union_state.coordinate_origins.get(
+                    best_coord,
+                    tiers_attempted[-1] if tiers_attempted else "single_best",
+                )
+                # Provenance must describe the single emitted voxel, not the
+                # full pre-fallback union pool the trim loop left in
+                # union_tier_provenance.
+                union_state.tier_provenance.clear()
+                union_state.tier_provenance[detection_level] = 1
+                filter_meta = dict(union_state.filter_metadata)
+                logger.warning(
+                    "AIF cascade: using single-best candidate "
+                    "(union failed averaged-pool validation)"
+                )
 
         cascade = _CascadeDetectionResult(
             accepted_aif,
@@ -3454,298 +3102,114 @@ class AIFDetection(BaseInterface):
             dict(union_state.tier_provenance),
             postfilter_diags_per_tier,
             spatial_filter_diags_per_tier,
+            rejected,
         )
 
         return cascade
 
     def _serialize_detection_outputs(self, state: _FinalAIFState) -> None:
-        """Write final DSC AIF artifacts and populate Nipype results."""
-        import nibabel as nib  # type: ignore[import-untyped]
+        """Write available analysis and diagnostic artifacts independently."""
+        import nibabel as nib
 
-        out_curve = self._gen_outfilename("_aif_curve.txt")
-        np.savetxt(out_curve, state.curve)
-        out_raw = ""
-        if state.raw_curve is not None:
-            out_raw = self._gen_outfilename("_raw_aif_curve.txt")
-            np.savetxt(out_raw, state.raw_curve)
-
-        out_mask = self._gen_outfilename("_aif_mask.nii.gz")
-        nib.save(nib.Nifti1Image(state.mask, state.affine), out_mask)  # type: ignore[attr-defined]
-        out_measured = self._gen_outfilename("_measured_aif_curve.txt")
-        np.savetxt(out_measured, state.measured_curve)
-        out_gamma = self._gen_outfilename("_gamma_aif_curve.txt")
-        np.savetxt(
-            out_gamma,
-            state.gamma_curve if state.gamma_curve is not None else state.curve,
-        )
-        if state.gamma_curve is None:
-            state.qc_metrics["gamma_aif_fallback_to_raw"] = True
-
-        self._results = {
-            "out_aif_curve": out_curve,
-            "out_aif_mask": out_mask,
-            "out_gamma_aif_curve": out_gamma,
-            "out_measured_aif_curve": out_measured,
-            "out_raw_aif_curve": out_raw,
+        results: dict[str, Any] = {
             "out_aif_coord": state.qc_metrics.get("aif_voxel_coord", []),
-            "aif_curve": [float(value) for value in state.curve],
+            "aif_curve": state.curve.tolist() if state.curve is not None else [],
             "detection_level": state.detection_level,
-            "quality_score": state.quality_score,
             "candidate_count": state.candidate_count,
-            "gamma_fit_applied": state.gamma_fit_applied,
             "aif_baseline_frames": state.baseline_frames,
             "qc_metrics": state.qc_metrics,
         }
+        if state.quality_score is not None:
+            results["quality_score"] = state.quality_score
+        curves = {
+            "out_aif_curve": (state.curve, "_aif_curve.txt"),
+            "out_gamma_aif_curve": (state.gamma_curve, "_gamma_aif_curve.txt"),
+            "out_rejected_aif_curve": (
+                state.rejected.curve if state.rejected is not None else None,
+                "_rejected_aif_curve.txt",
+            ),
+        }
+        for name, (curve, suffix) in curves.items():
+            if curve is not None:
+                path = self._gen_outfilename(suffix)
+                np.savetxt(path, curve)
+                results[name] = path
+        masks = {
+            "out_aif_mask": (state.mask, "_aif_mask.nii.gz"),
+            "out_rejected_aif_mask": (
+                state.rejected.mask if state.rejected is not None else None,
+                "_rejected_aif_mask.nii.gz",
+            ),
+        }
+        for name, (mask, suffix) in masks.items():
+            if mask is not None:
+                path = self._gen_outfilename(suffix)
+                nib.save(nib.Nifti1Image(mask.astype(np.uint8), state.affine), path)
+                results[name] = path
+        self._results = results
+
 
     def _finalize_post_cascade(
-        self,
-        context: _DSCAIFDetectionContext,
-        cascade: _CascadeDetectionResult,
-        aif_baseline_frames: int,
-        logger: Any,
+        self, context: _DSCAIFDetectionContext, cascade: _CascadeDetectionResult,
+        baseline: _TissueBaseline, logger: Any,
     ) -> _FinalAIFState:
-        """Finalize gamma fitting, fallback, and QC after the candidate cascade."""
-        conc_data = context.concentration
-        bootstrap_baseline_frames = context.baseline_frames
-        baseline_frames = context.baseline_frames
-        candidate_baseline_frames: Optional[int] = None
-        detection_level = cascade.detection_level
-        top_candidates = cascade.candidates
-        aif_mask_arr = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-
-        if cascade.accepted_aif is not None and top_candidates:
-            finalized = self._finalize_detected_aif(
-                cascade,
-                context,
-                aif_baseline_frames,
-            )
-            aif_curve = finalized.curve
-            aif_mask_arr = finalized.mask
-            quality_score = finalized.quality_score
-            qc_metrics = finalized.qc_metrics
-            baseline_frames = finalized.baseline_frames
-            candidate_baseline_frames = finalized.baseline_frames
-        elif not context.disable_fallback:
-            if context.aif_method != "synthetic":
-                distance_excluded = sum(
-                    int(metrics.get("n_distance_excluded", 0))
-                    for metrics in cascade.spatial_filter_diagnostics.values()
-                )
-                distance_detail = (
-                    f" ({distance_excluded} candidates excluded by lesion distance)"
-                    if distance_excluded
-                    else ""
-                )
-                logger.warning(
-                    "DSC AIF detection exhausted all candidate tiers; "
-                    "using the synthetic AIF fallback%s",
-                    distance_detail,
-                )
-            aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
-                conc_data,
-                context.brain_mask,
-            )
-            detection_level = "synthetic"
-            quality_score = 0.3
-            qc_metrics = {}
-            _stamp_synthetic_fallback_common(
-                qc_metrics,
-                reason=(
-                    "user_selected"
-                    if context.aif_method == "synthetic"
-                    else "no_candidates"
-                ),
-                tiers_attempted=cascade.tiers_attempted,
-            )
-            qc_metrics.update(synth_metrics)
-            _clear_stale_real_aif_keys(qc_metrics)
-            baseline_frames = aif_baseline_frames
+        """Retain an accepted measured AIF or report unavailable arterial input."""
+        curve = None
+        mask = None
+        quality_score = None
+        baseline_frames = baseline.frames
+        qc: dict[str, Any] = {}
+        if cascade.accepted_aif is not None and cascade.candidates:
+            selected = self._finalize_detected_aif(cascade, context, baseline.frames)
+            curve, mask = selected.curve, selected.mask
+            baseline_frames, quality_score = selected.baseline_frames, selected.quality_score
+            qc.update(selected.qc_metrics)
+            qc.update(detection_status="accepted", aif_source="measured",
+                      quality_score=quality_score, cbv_auc_denominator_available=True)
         else:
-            logger.error(
-                "DSC AIF detection exhausted all candidate tiers and "
-                "synthetic fallback is disabled"
+            qc.update(
+                detection_status="failed", aif_source="unavailable",
+                failure_reason="quality_checks_failed" if cascade.rejected is not None else "no_candidates",
+                n_aif_voxels_selected=0, cbv_auc_denominator_available=False,
             )
-            raise RuntimeError(
-                "AIF detection failed at all levels and "
-                "synthetic fallback is disabled"
-            )
-
-        qc_metrics["detection_method"] = detection_level
-        if cascade.spatial_filter_diagnostics:
-            qc_metrics["cascade_spatial_filter_diags"] = dict(
-                cascade.spatial_filter_diagnostics
-            )
-        qc_metrics["quality_score"] = quality_score
-        if detection_level != "synthetic":
-            qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
-        qc_metrics["s0_rejection_available"] = context.signal is not None
-        qc_metrics["tr_used"] = context.tr
-        qc_metrics["baseline_frames_initial"] = baseline_frames
-        qc_metrics["aif_baseline_frames"] = aif_baseline_frames
-        qc_metrics["baseline_frames_used"] = baseline_frames
-        qc_metrics["baseline_detection_method"] = "auto_p99"
-        if context.aif_method != "synthetic":
-            qc_metrics["brain_edge_exclusion_target_mm"] = (
-                _BRAIN_EDGE_EXCLUSION_MM
-            )
-
-        if detection_level == "synthetic":
-            qc_metrics["synthetic_aif_warnings"] = [
-                (
-                    "Synthetic gamma-variate AIF selected by the user"
-                    if context.aif_method == "synthetic"
-                    else "Synthetic gamma-variate AIF used after automatic detection failed"
-                ),
-                "CBF, nCBF, MTT and deconvolution timing depend on the template AIF",
-                "TTP is the tissue peak time relative to the selected baseline reference",
-                "Review AIF, baseline and reference-tissue QC when interpreting maps",
-            ]
-
-        measured_aif = aif_curve.copy()
-        if detection_level == "synthetic":
-            qc_metrics["cbv_auc_denominator_is_synthetic"] = True
-
-        gamma_fit_applied = False
-        raw_aif_curve = None
-        gamma_fitted_curve = None
-        if context.gamma_fit_mode != "off" and detection_level != "synthetic":
-            gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve = (
-                self._apply_gamma_fit_if_appropriate(
-                    aif_curve,
-                    context.gamma_fit_mode,
-                    baseline_frames,
-                    context.tr,
-                    qc_metrics,
-                )
-            )
-        elif context.gamma_fit_mode != "off" and detection_level == "synthetic":
-            qc_metrics["gamma_fit_applied"] = False
-            qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
-
-        if (
-            not gamma_fit_applied
-            and not context.disable_fallback
-            and detection_level != "synthetic"
-        ):
-            gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
-            gamma_fit_converged = qc_metrics.get("gamma_fit_converged")
-            if (
-                gamma_fit_converged is True
-                and gamma_r2 is not None
-                and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK
-            ):
-                logger.warning(
-                    "Gamma fit R²=%.3f < %.1f; falling back to synthetic AIF",
-                    gamma_r2,
-                    GAMMA_R2_SYNTHETIC_FALLBACK,
-                )
-                rejected_measured_aif = {
-                    "detection_level": detection_level,
-                    "baseline_frames": candidate_baseline_frames,
-                    "arrival_time_seconds": qc_metrics.get("arrival_time_seconds"),
-                    "peak_frame": qc_metrics.get("averaged_aif_fp_peak_frame"),
-                    "gamma_fit_r_squared": gamma_r2,
-                    "gamma_fit_auc_ratio": qc_metrics.get("gamma_fit_auc_ratio"),
-                    "gamma_fit_rejected_reason": qc_metrics.get(
-                        "gamma_fit_rejected_reason"
-                    ),
-                }
-                aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
-                    conc_data,
-                    context.brain_mask,
-                )
-                baseline_frames = aif_baseline_frames
-                detection_level = "synthetic"
-                quality_score = 0.3
-                aif_mask_arr[:] = 0
-                _clear_stale_real_aif_keys(qc_metrics)
-                _stamp_synthetic_fallback_common(
-                    qc_metrics,
-                    reason="gamma_r2_floor",
-                    tiers_attempted=cascade.tiers_attempted,
-                )
-                qc_metrics["detection_method"] = detection_level
-                qc_metrics["quality_score"] = quality_score
-                qc_metrics["gamma_r2_at_fallback"] = gamma_r2
-                qc_metrics.update(synth_metrics)
-                qc_metrics["rejected_measured_aif"] = {
-                    key: value
-                    for key, value in rejected_measured_aif.items()
-                    if value is not None
-                }
-                qc_metrics["synthetic_aif_warnings"] = [
-                    "Synthetic gamma-variate AIF used after gamma fit R2 fell below threshold",
-                    "CBF, nCBF, MTT and deconvolution timing depend on the template AIF",
-                    "TTP is the tissue peak time relative to the selected baseline reference",
-                    "Review AIF, baseline and reference-tissue QC when interpreting maps",
-                ]
-                gamma_fitted_curve = None
-                raw_aif_curve = None
-                measured_aif = aif_curve.copy()
-                qc_metrics["cbv_auc_denominator_is_synthetic"] = True
-
-        _flag_retained_below_floor(
-            qc_metrics,
-            disable_fallback=context.disable_fallback,
-            detection_level=detection_level,
-            gamma_fit_applied=gamma_fit_applied,
+            logger.warning("DSC AIF detection failed; retaining independent tissue maps")
+        qc.update(
+            detection_method=cascade.detection_level,
+            n_aif_voxels_selected=len(cascade.candidates) if curve is not None else 0,
+            cascade_tiers_attempted=list(cascade.tiers_attempted),
+            cascade_postfilter_diags=cascade.postfilter_diagnostics,
+            cascade_spatial_filter_diags=cascade.spatial_filter_diagnostics,
+            s0_rejection_available=context.signal is not None,
+            tr_used=context.tr,
+            bootstrap_baseline_frames=context.baseline_frames,
+            baseline_frames_initial=context.baseline_frames,
+            preliminary_baseline_frames=baseline.frames,
+            tissue_baseline_confidence=baseline.diagnostics.get("confidence", "unknown"),
+            tissue_baseline_diagnostics=baseline.diagnostics,
+            aif_baseline_frames=baseline_frames,
+            baseline_frames_used=baseline_frames,
+            n_baseline_frames=baseline_frames,
+            baseline_detection_method="selected_aif_refined" if curve is not None else "whole_brain_ensemble",
+            brain_edge_exclusion_target_mm=_BRAIN_EDGE_EXCLUSION_MM,
         )
-
-        if (
-            (
-                qc_metrics.get("cascade_downgraded", False)
-                or detection_level == "synthetic"
+        gamma_curve = None
+        if curve is not None:
+            gamma_curve = self._fit_gamma_for_qc(curve, baseline_frames, context.tr, qc)
+            metrics = dict(qc.get("aif_metrics") or {})
+            metrics["peak_conc"] = float(np.max(curve))
+            qc["aif_metrics"] = metrics
+        elif cascade.rejected is not None:
+            diagnostic_qc = dict(cascade.rejected.qc)
+            gamma_curve = self._fit_gamma_for_qc(
+                cascade.rejected.curve, baseline.frames, context.tr, diagnostic_qc,
             )
-            and cascade.postfilter_diagnostics
-        ):
-            qc_metrics["cascade_postfilter_diags"] = dict(
-                cascade.postfilter_diagnostics
-            )
-
-        # Final analysis provenance must describe the curve that leaves this
-        # interface, not a measured candidate discarded during fallback.
-        qc_metrics["bootstrap_baseline_frames"] = bootstrap_baseline_frames
-        qc_metrics["baseline_frames_initial"] = bootstrap_baseline_frames
-        qc_metrics["aif_baseline_frames"] = baseline_frames
-        qc_metrics["baseline_frames_used"] = baseline_frames
-        qc_metrics["n_baseline_frames"] = baseline_frames
-        qc_metrics["baseline_detection_method"] = (
-            "selected_aif_refined"
-            if detection_level != "synthetic"
-            else "whole_brain_ensemble"
-        )
-        if candidate_baseline_frames is not None:
-            qc_metrics["candidate_baseline_frames"] = candidate_baseline_frames
-        if detection_level == "synthetic":
-            synthetic_arrival = qc_metrics.get("synthetic_aif_arrival_frame")
-            if synthetic_arrival is not None:
-                arrival_seconds = float(synthetic_arrival) * context.tr
-                qc_metrics["arrival_time_seconds"] = arrival_seconds
-                aif_metrics = dict(qc_metrics.get("aif_metrics") or {})
-                aif_metrics["arrival"] = arrival_seconds
-                qc_metrics["aif_metrics"] = aif_metrics
-
-        # Canonical AIF metrics describe the curve emitted by this interface.
-        # Gamma fitting can alter its peak after candidate-level metrics were
-        # assembled, so refresh the final amplitude at the state boundary.
-        aif_metrics = dict(qc_metrics.get("aif_metrics") or {})
-        aif_metrics["peak_conc"] = float(np.max(aif_curve))
-        qc_metrics["aif_metrics"] = aif_metrics
-
+            qc["rejected_candidate"] = diagnostic_qc
         return _FinalAIFState(
-            aif_curve,
-            aif_mask_arr,
-            measured_aif,
-            raw_aif_curve,
-            gamma_fitted_curve,
-            context.affine,
-            detection_level,
-            quality_score,
-            gamma_fit_applied,
-            baseline_frames,
-            len(top_candidates),
-            qc_metrics,
+            curve, mask, gamma_curve, cascade.rejected, context.affine,
+            cascade.detection_level, quality_score, baseline_frames,
+            len(cascade.candidates) if curve is not None else 0, qc,
         )
+
 
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
@@ -3755,9 +3219,8 @@ class AIFDetection(BaseInterface):
         """Execute the AIF detection pipeline.
 
         Prepare the baseline, run the candidate cascade, then finalize
-        gamma fitting and fallback before serializing curves and QC.
-        External input bypasses detection; explicit synthetic selection
-        enters finalization directly through the cascade result.
+        diagnostic gamma fitting before serializing curves and QC.
+        External input bypasses detection.
         """
         import logging
 
@@ -3768,15 +3231,15 @@ class AIFDetection(BaseInterface):
             return self._handle_external_aif(runtime)
 
         context = self._load_detection_context(_logger)
-        aif_baseline_frames = self._prepare_detection_baseline(context, _logger)
+        baseline = self._prepare_detection_baseline(context, _logger)
         cascade = self._run_candidate_cascade(
-            context, aif_baseline_frames, _logger,
+            context, baseline.frames, _logger,
         )
         self._serialize_detection_outputs(
             self._finalize_post_cascade(
                 context,
                 cascade,
-                aif_baseline_frames,
+                baseline,
                 _logger,
             )
         )
@@ -3784,118 +3247,29 @@ class AIFDetection(BaseInterface):
         return runtime
 
     @staticmethod
-    def _apply_gamma_fit_if_appropriate(
-        aif_curve: npt.NDArray[Any],
-        gamma_fit_mode: str,
-        baseline_frames: int,
-        tr: float,
-        qc_metrics: dict[str, Any],
-    ) -> tuple[bool, Optional[npt.NDArray[Any]], npt.NDArray[Any], Optional[npt.NDArray[Any]]]:
-        """Attempt gamma-variate fitting and decide whether to apply it.
+    def _fit_gamma_for_qc(
+        aif_curve: npt.NDArray[Any], baseline_frames: int,
+        tr: float, qc_metrics: dict[str, Any],
+    ) -> Optional[npt.NDArray[Any]]:
+        """Fit a diagnostic gamma model while preserving the measured input."""
+        from pmriprep.utils.dsc_aif import fit_gamma_variate, compute_gamma_diagnostics
 
-        Parameters
-        ----------
-        aif_curve : np.ndarray
-            Current AIF curve (may be modified if fit is applied).
-        gamma_fit_mode : str
-            ``"on"`` applies when the fit converges with R² > 0.5;
-            ``"auto"`` uses the rule-based policy.
-        baseline_frames : int
-            Number of pre-bolus baseline frames.
-        tr : float
-            Repetition time in seconds.
-        qc_metrics : dict
-            QC metrics dict (modified in place).
-
-        Returns
-        -------
-        tuple[bool, Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]
-            (gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve)
-            raw_aif_curve is the original AIF when a fit is applied, the
-            converged rejected fit in auto mode, or None otherwise.
-            gamma_fitted_curve contains the converged fit for diagnostics,
-            regardless of acceptance. AUC CBV uses the separately retained
-            measured AIF.
-        """
-        from pmriprep.utils.dsc_aif import (
-            fit_gamma_variate,
-            should_apply_gamma_fit,
+        fit = fit_gamma_variate(aif_curve, baseline_frames=baseline_frames,
+                               remove_recirculation=True, preserve_auc=True, tr=tr)
+        qc_metrics["gamma_fit_converged"] = fit.fit_converged
+        if fit.failure_reason is not None:
+            qc_metrics["gamma_fit_failure_reason"] = fit.failure_reason
+        if not fit.fit_converged:
+            return None
+        qc_metrics["gamma_fit_r_squared"] = float(fit.r_squared)
+        qc_metrics["gamma_fit_evaluation_start_frame"] = baseline_frames
+        qc_metrics["gamma_fit_evaluation_end_frame"] = baseline_frames + fit.first_pass_n
+        qc_metrics["gamma_fit_diagnostics"] = compute_gamma_diagnostics(
+            aif_curve, fit, baseline_frames,
         )
+        return fit.fitted_curve
 
-        try:
-            original_aif = aif_curve.copy()
-            fit_result = fit_gamma_variate(
-                aif_curve=aif_curve,
-                baseline_frames=baseline_frames,
-                remove_recirculation=True,
-                preserve_auc=True,
-                tr=tr,
-            )
-            qc_metrics["gamma_fit_converged"] = fit_result.fit_converged
-            if fit_result.failure_reason is not None:
-                qc_metrics["gamma_fit_failure_reason"] = fit_result.failure_reason
-            if fit_result.fit_converged:
-                qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
-                qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
-
-            if gamma_fit_mode == "on":
-                # ``on`` mode uses the convergence and R² gate.
-                if fit_result.fit_converged and fit_result.r_squared > 0.5:
-                    qc_metrics["gamma_fit_applied"] = True
-                    qc_metrics["gamma_fit_mode"] = "on"
-                    qc_metrics["gamma_recirculation_removed"] = (
-                        fit_result.recirculation_removed
-                    )
-                    return True, original_aif, fit_result.fitted_curve, fit_result.fitted_curve
-                else:
-                    qc_metrics["gamma_fit_applied"] = False
-                    qc_metrics["gamma_fit_mode"] = "on"
-                    qc_metrics["gamma_fit_rejected_reason"] = (
-                        fit_result.failure_reason or "optimizer_not_converged"
-                        if not fit_result.fit_converged
-                        else f"low_r_squared_{fit_result.r_squared:.3f}"
-                    )
-                    gamma_curve = fit_result.fitted_curve if fit_result.fit_converged else None
-                    return False, None, aif_curve, gamma_curve
-
-            # Auto mode
-            decision, detail_metrics = should_apply_gamma_fit(
-                original_aif=original_aif,
-                fit_result=fit_result,
-                baseline_frames=baseline_frames,
-            )
-            qc_metrics["gamma_fit_mode"] = "auto"
-            qc_metrics["gamma_fit_auto_metrics"] = detail_metrics
-
-            if decision.apply:
-                qc_metrics["gamma_fit_applied"] = True
-                qc_metrics["gamma_fit_auto_reason"] = decision.reason
-                qc_metrics["gamma_fit_auto_defect"] = decision.defect_detected
-                qc_metrics["gamma_recirculation_removed"] = (
-                    fit_result.recirculation_removed
-                )
-                return True, original_aif, fit_result.fitted_curve, fit_result.fitted_curve
-            else:
-                qc_metrics["gamma_fit_applied"] = False
-                qc_metrics["gamma_fit_rejected_reason"] = decision.reason
-                if not fit_result.fit_converged:
-                    return False, None, aif_curve, None
-                # Save fitted curve for QC overlay (rejected fit shown dashed)
-                qc_metrics["gamma_fit_rejection_curve_available"] = True
-                return False, fit_result.fitted_curve, aif_curve, fit_result.fitted_curve
-
-        except Exception:
-            qc_metrics["gamma_fit_applied"] = False
-            qc_metrics["gamma_fit_converged"] = False
-            qc_metrics["gamma_fit_failure_reason"] = "fit_exception"
-            qc_metrics["gamma_fit_rejected_reason"] = "exception"
-            return False, None, aif_curve, None
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List interface outputs."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
-
-        if hasattr(self, "_results"):
-            outputs.update(self._results)
-
-        return outputs
+        """Return only artifacts produced by this run."""
+        return dict(getattr(self, "_results", {}))

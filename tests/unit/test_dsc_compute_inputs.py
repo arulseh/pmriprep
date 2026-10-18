@@ -48,7 +48,7 @@ def test_compute_maps_keeps_nonfinite_tissue_local(tmp_path: Path, method: str) 
             concentration_file=concentration_file,
             raw_concentration_file=concentration_file,
             brain_mask_file=mask_file, aif_file=str(aif_file),
-            measured_aif_file=str(aif_file), method=method, tr=1.5, te=0.04,
+            method=method, tr=1.5, te=0.04,
             baseline_frames=6, leakage_method="none", aif_detection_level="external",
         ).run(cwd=str(destination))
         results.append(result.outputs)
@@ -276,7 +276,7 @@ def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
     dt = 1.5
     measured_file = tmp_path / "measured_aif.txt"
     np.savetxt(measured_file, measured_aif)
-    interface = ComputeDSCMaps(measured_aif_file=str(measured_file))
+    interface = ComputeDSCMaps(aif_file=str(measured_file))
 
     result = interface._compute_auc_maps(
         raw,
@@ -294,7 +294,7 @@ def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
     np.testing.assert_allclose(result.corrected, expected_corrected)
     np.testing.assert_allclose(result.difference, expected_raw - expected_corrected)
     np.testing.assert_allclose(result.cbv[:, 0, 0], [0.5, -0.5])
-    assert result.qc == {
+    assert {key: result.qc[key] for key in ("cbv_auc_bat_frame", "cbv_auc_end_frame", "cbv_auc_aif_integral")} == {
         "cbv_auc_bat_frame": 2,
         "cbv_auc_end_frame": len(pulse),
         "cbv_auc_aif_integral": round(float(expected_aif_auc), 6),
@@ -309,7 +309,7 @@ def test_compute_auc_maps_near_zero_measured_aif_returns_nan(
     np.savetxt(measured_file, np.ones(6))
     concentration = np.ones((2, 1, 1, 6), dtype=np.float64)
 
-    result = ComputeDSCMaps(measured_aif_file=str(measured_file))._compute_auc_maps(
+    result = ComputeDSCMaps(aif_file=str(measured_file))._compute_auc_maps(
         concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
     )
 
@@ -324,7 +324,7 @@ def test_compute_auc_maps_does_not_clip_large_finite_values(tmp_path: Path) -> N
     concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
     concentration[..., 2:] = 5000.0
 
-    result = ComputeDSCMaps(measured_aif_file=str(measured_file))._compute_auc_maps(
+    result = ComputeDSCMaps(aif_file=str(measured_file))._compute_auc_maps(
         concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
     )
 
@@ -340,8 +340,9 @@ def test_compute_auc_maps_missing_aif_reports_unavailable_cbv() -> None:
         concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
     )
 
-    assert np.all(np.isnan(result.cbv))
-    assert result.qc["cbv_auc_measured_aif_missing"] is True
+    assert result.cbv is None
+    assert result.qc["cbv_auc_unavailable_reason"] == "aif_unavailable"
+    np.testing.assert_allclose(result.tissue, 3.0)
 
 
 def test_compute_quality_maps_uses_signal_drop_and_baseline_tsnr() -> None:
@@ -442,30 +443,6 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
     assert qc["cbv_literature_range_applicable"] is True
 
 
-def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
-    """Empty masks retain undefined summaries and synthetic-CBV applicability."""
-    empty = np.zeros(2)
-    qc = ComputeDSCMaps._summarize_dsc_maps(
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        np.zeros(2, dtype=bool),
-        "synthetic",
-        {},
-        0.0,
-    )
-
-    assert qc["n_voxels"] == 0
-    assert np.isnan(qc["cbf_mean"])
-    assert np.isnan(qc["cbv_auc_median"])
-    assert qc["cbv_auc_finite_voxels"] == 0
-    assert qc["cbv_auc_negative_voxels"] == 0
-    assert np.isnan(qc["cbv_auc_negative_fraction"])
-    assert qc["cbv_literature_range_applicable"] is False
-
-
 @pytest.mark.parametrize("method", ["cpi"])
 def test_parametric_timing_summary_is_arrival_delay(method: str) -> None:
     """Fitted parametric timing is not summarized as conventional Tmax."""
@@ -552,6 +529,7 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         mtt=np.array([-1.0, 40.0, 5.0]),
         tmax=np.array([-1.0, 70.0, 5.0]),
         ttp=np.array([np.nan, 3.0, 4.0]),
+        tissue_auc=values,
         auc_raw=values,
         auc_corrected=values + 1.0,
         auc_difference=values + 2.0,
@@ -587,6 +565,7 @@ def test_finalize_dsc_maps_preserves_optional_uncertainty() -> None:
         mtt=data,
         tmax=data,
         ttp=data,
+        tissue_auc=data,
         auc_raw=data,
         auc_corrected=data,
         auc_difference=data,
@@ -644,6 +623,7 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         mtt=data,
         tmax=data,
         ttp=data,
+        tissue_auc=data,
         auc_raw=data,
         auc_corrected=data,
         auc_difference=data,
@@ -666,6 +646,7 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
     results = interface._save_base_maps(maps, np.eye(4), object(), qc)
 
     expected = {
+        "out_tissue_auc": "_tissue_auc",
         "out_mtt": "_mtt",
         "out_tmax": "_tmax",
         "out_psr": "_psr",
@@ -679,7 +660,7 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         "out_rel_cbv_auc": "_rel_cbv_auc",
         "out_tsnr": "_tsnr",
     }
-    assert suffixes == list(expected.values())
+    assert set(suffixes) == set(expected.values())
     assert {key: results[key] for key in expected} == {
         key: f"{suffix}.nii.gz" for key, suffix in expected.items()
     }
@@ -1012,6 +993,7 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
             corrected=data * 12.0,
             difference=data,
             cbv=data * 13.0,
+            tissue=data * 13.0,
             qc={"auc": True},
         ),
     )
@@ -1056,7 +1038,8 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
     assert result.raw_concentration is raw
     assert result.maps is final_maps
     assert result.qc is qc
-    assert qc == {"solver": True, "signal": True, "auc": True, "summary": True}
+    assert all(qc[key] is True for key in ("solver", "signal", "auc", "summary"))
+    assert qc["processing_status"] == "complete"
 
 
 def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
@@ -1140,3 +1123,64 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
     assert interface._results is results
     assert results["out_k2"] == "k2.nii.gz"
     assert results["out_cbf_std"] == "std.nii.gz"
+
+
+def test_partial_maps_keep_same_window_ncbv_and_optional_sinks(tmp_path, monkeypatch) -> None:
+    """A missing AIF preserves tissue nCBV and flows through optional map sinks."""
+    from nipype.interfaces.base import isdefined
+    from nipype.interfaces.utility import Function
+    from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+    from pmriprep.workflows.dsc._helpers import _normalize_cbv, _normalize_cbf
+    from pmriprep.workflows.dsc.datasinks import _copy_perf_map
+
+    time = np.arange(40) * 1.5
+    u = np.maximum(time - 9, 0)
+    aif = u**3 * np.exp(-u / 2)
+    tissue = build_volterra_matrix(aif, 1.5) @ (0.01 * np.exp(-time / 5))
+    concentration = np.stack([tissue, 2 * tissue]).reshape(2, 1, 1, -1)
+    signal = 1000 * np.exp(-0.04 * concentration)
+    signal[..., :6] += np.array([-2, 1, 2, -1, 1, -1])
+    image = _write_image(tmp_path / "concentration.nii.gz", concentration)
+    raw = _write_image(tmp_path / "signal.nii.gz", signal)
+    mask = _write_image(tmp_path / "mask.nii.gz", np.ones((2, 1, 1)))
+    nawm = _write_image(tmp_path / "nawm.nii.gz", np.array([1., 0.]).reshape(2, 1, 1))
+    aif_path = tmp_path / "aif.txt"
+    np.savetxt(aif_path, aif)
+    ncbv_maps = []
+    for name in ("complete", "partial"):
+        cwd = tmp_path / name
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        kwargs = {"aif_file": str(aif_path)} if name == "complete" else {}
+        outputs = ComputeDSCMaps(
+            concentration_file=image, raw_concentration_file=image,
+            signal_file=raw, brain_mask_file=mask, baseline_frames=6,
+            method="oSVD", tr=1.5, te=0.04, leakage_method="none", **kwargs,
+        ).run(cwd=str(cwd)).outputs
+        ncbv_path, factor = _normalize_cbv(outputs.out_tissue_auc, "", "01", "", nawm)
+        ncbv_maps.append(nib.load(ncbv_path).get_fdata())
+        assert factor > 0
+        for attr in ("out_psr", "out_ttp", "out_cnr", "out_tsnr", "out_auc_raw", "out_auc_corr"):
+            assert np.isfinite(nib.load(getattr(outputs, attr)).get_fdata()).all()
+        if name == "partial":
+            assert outputs.qc_metrics["processing_status"] == "partial"
+            assert not isdefined(outputs.out_rel_cbf)
+            json.dumps(outputs.qc_metrics, allow_nan=False)
+            normalizer = Function(input_names=["cbf_file"], output_names=["path", "factor"], function=_normalize_cbf)
+            assert normalizer.run().outputs.path == ""
+            sink = Function(
+                input_names=["in_file", "output_dir", "subject", "session", "desc", "suffix", "meta_dict"],
+                output_names=["path"], function=_copy_perf_map,
+            )
+            assert sink.run().outputs.path == ""
+            sink.inputs.in_file = ncbv_path
+            sink.inputs.output_dir = str(cwd / "derivatives")
+            sink.inputs.subject = "01"
+            sink.inputs.desc = "dscNawmNorm"
+            sink.inputs.suffix = "cbv"
+            sink.inputs.meta_dict = {}
+            assert Path(sink.run().outputs.path).is_file()
+        else:
+            auc_cbv = nib.load(outputs.out_rel_cbv_auc).get_fdata()
+            np.testing.assert_allclose(ncbv_maps[-1], auc_cbv / auc_cbv[0, 0, 0], rtol=1e-6)
+    np.testing.assert_array_equal(*ncbv_maps)

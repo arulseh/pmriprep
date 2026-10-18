@@ -1092,7 +1092,7 @@ def collect_aif_fallback_warning(
     qc_metrics: Optional[dict[str, Any]],
     modality: str,
 ) -> Optional[str]:
-    """Describe a template AIF or a retained DSC AIF with a poor gamma fit.
+    """Describe unavailable DSC AIFs or population DCE AIFs.
 
     Parameters
     ----------
@@ -1104,51 +1104,17 @@ def collect_aif_fallback_warning(
     Returns
     -------
     str or None
-        Warning for a population/template AIF, whether selected explicitly
-        or used as fallback, or a measured DSC AIF retained despite a poor
-        gamma fit. Returns ``None`` for other detection outcomes/modalities.
+        Warning for failed DSC detection or a population DCE AIF.
+        Returns ``None`` for other outcomes.
     """
     if not qc_metrics:
         return None
 
     if modality == "DSC":
         aif_qc = qc_metrics.get("aif_detection") or {}
-        # Retained poor-fit curves carry their own QC warning.
-        if aif_qc.get("aif_gamma_fit_below_floor_retained"):
-            r2 = aif_qc.get("gamma_r2_retained")
-            r2_txt = ""
-            if r2 is not None:
-                try:
-                    r2_txt = f" (R²={float(r2):.2f})"
-                except (TypeError, ValueError):
-                    pass
-            return (
-                f"DSC measured AIF retained despite a poor gamma-variate fit{r2_txt}, "
-                "with synthetic fallback disabled. CBF, nCBF, MTT and "
-                "deconvolution timing depend on this curve. Review the AIF "
-                "and baseline QC before interpreting these maps."
-            )
-        if aif_qc.get("detection_method") != "synthetic":
-            return None
-        reason_code = str(
-            qc_metrics.get("synthetic_fallback_reason")
-            or aif_qc.get("synthetic_fallback_reason")
-            or "cascade_exhausted"
-        )
-        reason = {
-            "cascade_exhausted": "automatic detection found no acceptable arterial curve",
-            "no_candidates": "no arterial candidates survived automatic detection",
-            "low_snr": "arterial candidates had insufficient signal quality",
-            "gamma_r2_floor": "the measured curve had a poor gamma-variate fit",
-        }.get(reason_code, "automatic detection found no acceptable arterial curve")
-        if (qc_metrics.get("config") or {}).get("aif_source") == "synthetic":
-            reason = "user-selected"
-        return (
-            f"DSC AIF uses a synthetic gamma-variate template: {reason}. "
-            "CBF, nCBF, MTT and deconvolution timing depend on the assumed "
-            "AIF shape and timing. Review the AIF and baseline QC before "
-            "interpreting these maps."
-        )
+        if aif_qc.get("detection_status") == "failed":
+            return "DSC AIF detection failed; only AIF-independent maps are available."
+        return None
 
     if modality == "DCE":
         aif_qc = qc_metrics.get("aif_detection") or {}

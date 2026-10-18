@@ -428,11 +428,24 @@ def _enrich_dsc(
     # Deconvolution details
     deconv = qc.get("deconvolution")
     if deconv and isinstance(deconv, dict):
-        deconv_block = perf.get("Deconvolution", {})
+        deconv_block = dict(perf.get("Deconvolution", {}))
+        if deconv.get("deconvolution_performed") is False:
+            deconv_block = {
+                "configured_method": deconv.get("configured_method"),
+                "performed": False,
+                "unavailable_reason": deconv.get("deconvolution_unavailable_reason"),
+            }
+        elif deconv.get("deconvolution_performed") is True:
+            deconv_block["performed"] = True
         for key in (
             "method",
             "inference",
             "fit_domain",
+            "processing_status",
+            "unavailable_maps",
+            "ncbv_integration_rule",
+            "cbv_auc_bat_frame",
+            "cbv_auc_end_frame",
             "cpi_dispersion",
             "cpi_infer_delay",
             "cpi_control_points",

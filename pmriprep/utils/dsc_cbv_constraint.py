@@ -5,7 +5,7 @@ for use in DCE PK model fitting. When DSC data is available and passes quality
 checks, the CBV-derived vp map informs Bayesian fitting without bounding NLLS.
 
 The prior pipeline:
-    1. Assess DSC CBV quality (CNR coverage, AIF metrics, CBV ranges)
+    1. Assess DSC CBV quality (tissue CNR coverage and nCBV support/ranges)
     2. Scale NAWM-normalized CBV to a vp prior
     3. Determine whether to use the soft Bayesian prior or skip it
 
@@ -27,10 +27,6 @@ from pmriprep.utils.dce_constants import (
     VP_MEDIAN_MIN,
     VP_MEDIAN_MAX,
 )
-from pmriprep.utils.dsc_aif import (
-    GAMMA_PEAK_RATIO_MIN,
-    GAMMA_PEAK_RATIO_MAX,
-)
 from pmriprep.utils.dsc_constants import (
     GD_DOTA_STANDARD_DOSE,
     QC_MEAN_CNR_MINIMUM,
@@ -50,36 +46,14 @@ CNR_COVERAGE_HIGH: float = 0.95
 #: Minimum CNR coverage fraction for moderate-quality DSC
 CNR_COVERAGE_MODERATE: float = 0.84
 
-#: CNR coverage skip threshold before dose scaling and AIF-tier overrides.
-CNR_COVERAGE_SKIP: float = 0.70
-
 #: Minimum mean CNR for the vp-prior quality gate.
 CNR_MEAN_MINIMUM: float = QC_MEAN_CNR_MINIMUM
-
-#: Policy minimum signal-drop fraction (PH / 100) for moderate confidence.
-AIF_PEAK_HEIGHT_MIN: float = 0.15
-
-#: Policy minimum signal-drop fraction (PH / 100) for high confidence.
-AIF_PEAK_HEIGHT_MARGINAL: float = 0.25
-
-#: Maximum baseline return ratio for acceptable quality
-AIF_BASELINE_RETURN_MAX: float = 0.40
-
-#: Marginal baseline return ratio
-AIF_BASELINE_RETURN_MARGINAL: float = 0.30
 
 #: Policy interval for the median of positive brain nCBV values (dimensionless).
 CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade
 CBV_NEGATIVE_FRACTION_MAX: float = 0.01
-
-# Gamma peak ratio thresholds for constraint quality gating.
-# Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
-# Values outside the wider interval receive low confidence.
-GAMMA_PEAK_RATIO_LOW_MIN: float = 0.80
-GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
-
 
 # =============================================================================
 # Enums and Dataclasses
@@ -88,18 +62,9 @@ GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 
 SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
 SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
-SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
-SKIP_REASON_EXTERNAL_AIF = "external_aif_qc_unavailable"
 SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
 SKIP_REASON_NLLS_UNSUPPORTED = "nlls_constraint_unsupported"
 NO_DSC_RUN_REASON_STRING = "No DSC data were available for a vp prior."
-SYNTHETIC_AIF_REASON_STRING = (
-    "The DSC vp prior was skipped by the AIF-source quality gate."
-)
-EXTERNAL_AIF_REASON_STRING = (
-    "The external DSC AIF lacks the signal and candidate-voxel QC required "
-    "for the DSC-informed vp prior."
-)
 
 
 class ConstraintMode(Enum):
@@ -121,24 +86,17 @@ class CBVQualityAssessment:
         confidence: Quality tier - 'high', 'moderate', or 'low'.
         use_constraint: Whether the assessment permits a DSC-derived vp prior.
         cnr_coverage: Fraction of brain voxels with CNR > 4.
-        aif_peak_height: Combined measured pool's signal-drop fraction (PH / 100), or None.
-        aif_baseline_return: Measured pool's tail-to-peak concentration ratio, or None.
         cbv_median: Median dimensionless nCBV in brain, or None if not assessed.
         cbv_negative_fraction: Fraction of negative nCBV values, or None.
-        gamma_peak_ratio: Gamma-variate peak ratio (fitted/measured), or None.
         reasons: List of reasons for quality decisions.
     """
 
     confidence: str = "low"
     use_constraint: bool = False
-    cnr_coverage: float = 0.0
-    aif_peak_height: Optional[float] = None
-    aif_baseline_return: Optional[float] = None
+    cnr_coverage: Optional[float] = None
+    mean_cnr: Optional[float] = None
     cbv_median: Optional[float] = None
     cbv_negative_fraction: Optional[float] = None
-    detection_level: Optional[str] = None
-    n_aif_voxels: Optional[int] = None
-    gamma_peak_ratio: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
 
 
@@ -181,7 +139,7 @@ class VpConstraintResult:
 # =============================================================================
 
 
-def _finite_aif_metric(value: Any) -> Optional[float]:
+def _finite_metric(value: Any) -> Optional[float]:
     """Return a finite scalar QC metric, or None when unavailable."""
     try:
         metric = float(value)
@@ -190,56 +148,6 @@ def _finite_aif_metric(value: Any) -> Optional[float]:
     return metric if np.isfinite(metric) else None
 
 
-def _normalize_aif_qc_keys(aif_qc_data: dict[str, Any]) -> dict[str, Any]:
-    """Normalize DSC AIF QC keys to the quality assessment schema.
-
-    Maps the producer-shape ``aif_qc.aif_metrics`` block (``ph``,
-    ``brr``) to the assessment-schema keys (``aif_peak_height``,
-    ``baseline_return_ratio``), converting percentages to fractions.
-    Each existing assessment-schema key takes precedence independently.
-    Missing or nonfinite metrics are unavailable for prior qualification.
-
-    Parameters
-    ----------
-    aif_qc_data : dict[str, Any]
-        Raw AIF QC dictionary, possibly carrying the
-        producer-shape ``aif_metrics`` nested dict instead of the
-        assessment schema keys (``aif_peak_height``,
-        ``baseline_return_ratio``, ``cnr_whole_brain``).
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary with normalized keys suitable for assess_dsc_cbv_quality.
-
-    """
-    data = dict(aif_qc_data)
-
-    # --- Gamma peak ratio from auto-fit metrics ---
-    if "gamma_peak_ratio" not in data:
-        auto_metrics = data.get("gamma_fit_auto_metrics", {})
-        if isinstance(auto_metrics, dict) and "peak_ratio" in auto_metrics:
-            data["gamma_peak_ratio"] = auto_metrics["peak_ratio"]
-
-    aif_metrics = data.get("aif_metrics") or {}
-    for source, target in (
-        ("ph", "aif_peak_height"),
-        ("brr", "baseline_return_ratio"),
-    ):
-        if target not in data and source in aif_metrics:
-            metric = _finite_aif_metric(aif_metrics[source])
-            data[target] = metric / 100.0 if metric is not None else None
-
-    # --- CNR coverage: default to moderate if not available ---
-    if "cnr_whole_brain" not in data:
-        logger.warning(
-            "CNR coverage not in AIF QC data; defaulting to %.2f (moderate). "
-            "CBV constraint quality assessment may be optimistic.",
-            CNR_COVERAGE_MODERATE,
-        )
-        data["cnr_whole_brain"] = {"fraction_cnr_gt_4": CNR_COVERAGE_MODERATE}
-
-    return data
 
 
 def _is_auto(user_override: Optional[str]) -> bool:
@@ -312,255 +220,76 @@ def _bolus_gd_fraction(
 
 
 def assess_dsc_cbv_quality(
-    aif_qc_data: dict[str, Any],
+    dsc_qc_data: dict[str, Any],
     cbv_data: Optional[npt.NDArray[np.floating]] = None,
     brain_mask: Optional[npt.NDArray[np.floating]] = None,
     dose: float = 1.0,
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> CBVQualityAssessment:
-    """Assess DSC CBV quality for use as a vp constraint.
-
-    Implements a three-tier quality framework (high/moderate/low) based on:
-    - CNR coverage: fraction of brain voxels with CNR > 4
-    - AIF signal drop: combined measured pool's signal PH / 100
-    - AIF baseline return: combined measured concentration tail / peak
-    - nCBV value ranges: whether whole-brain median nCBV is plausible
-
-    CNR coverage thresholds scale with the administered Gd dose
-    (``dose × agent_standard_dose`` relative to 0.1 mmol/kg reference).
-    Lower doses reduce the required CNR coverage under this quality policy.
+    """Assess tissue CNR and nCBV support for a Bayesian vp prior.
 
     Parameters
     ----------
-    aif_qc_data : dict[str, Any]
-        Dictionary from DSC AIF QC JSON containing metrics
-        like cnr_whole_brain, aif_peak_height, baseline_return_ratio.
-    cbv_data : npt.NDArray[np.floating], optional
-        Optional 3D dimensionless nCBV map for value range validation.
-    brain_mask : npt.NDArray[np.floating], optional
-        Optional 3D brain mask for nCBV statistics.
-    dose : float, optional
-        DSC bolus dose multiplier (1.0 = full standard).
-    agent_standard_dose : float, optional
-        Agent's standard dose in mmol Gd/kg
-        (default 0.1 for Gd-DOTA class).
+    dsc_qc_data : dict
+        Tissue CNR measurements in ``cnr_whole_brain``.
+    cbv_data : ndarray, optional
+        Dimensionless NAWM-normalized CBV map.
+    brain_mask : ndarray, optional
+        Brain support on the same grid as nCBV.
+    dose : float
+        Administered bolus multiplier relative to the agent's standard dose.
+    agent_standard_dose : float
+        Standard dose in mmol Gd/kg.
 
     Returns
     -------
     CBVQualityAssessment
-        CBVQualityAssessment with confidence tier and detailed metrics.
+        Finite tissue measurements and the resulting project-policy tier.
     """
-    aif_qc_data = _normalize_aif_qc_keys(aif_qc_data)
-
     result = CBVQualityAssessment()
     confidence = "high"
-
-    # Scale CNR coverage thresholds by the effective bolus Gd fraction.
-    # Default (full-dose Gd-DOTA) gives eff=1.0 → unscaled thresholds.
     eff_dose = _bolus_gd_fraction(dose, agent_standard_dose)
-    cnr_skip = CNR_COVERAGE_SKIP * eff_dose
-    cnr_moderate = CNR_COVERAGE_MODERATE * eff_dose
-    cnr_high = CNR_COVERAGE_HIGH * eff_dose
+    moderate = CNR_COVERAGE_MODERATE * eff_dose
+    high = CNR_COVERAGE_HIGH * eff_dose
+    cnr = dsc_qc_data.get("cnr_whole_brain") or {}
+    result.cnr_coverage = _finite_metric(cnr.get("fraction_cnr_gt_4")) if isinstance(cnr, dict) else None
+    result.mean_cnr = _finite_metric(cnr.get("mean_cnr")) if isinstance(cnr, dict) else None
+    coverage, mean = result.cnr_coverage, result.mean_cnr
+    if mean is None or coverage is None or not 0 <= coverage <= 1:
+        confidence = "low"
+        result.reasons.append("Finite tissue CNR measurements unavailable")
+    elif mean < CNR_MEAN_MINIMUM:
+        confidence = "low"
+        result.reasons.append(f"Mean CNR {mean:.1f} < {CNR_MEAN_MINIMUM}")
+    elif coverage < moderate:
+        confidence = "low"
+        result.reasons.append(f"CNR coverage {coverage:.1%} < {moderate:.1%} (dose-scaled)")
+    elif coverage < high:
+        confidence = "moderate"
+        result.reasons.append(f"CNR coverage {coverage:.1%} < {high:.1%} (dose-scaled)")
 
-    # AIF-tier overrides apply only when every contributing tier belongs
-    # to the strict/relaxed atlas set. Compound levels are joined with "+".
-    from pmriprep.utils.dsc_constants import split_detection_level
-
-    _detection_level_for_cnr = str(aif_qc_data.get("detection_method", ""))
-    _contributing_tiers = set(split_detection_level(_detection_level_for_cnr))
-    _AIF_BYPASS_TIERS = {"atlas_strict", "atlas_relaxed"}
-    aif_high_quality = bool(_contributing_tiers) and _contributing_tiers.issubset(
-        _AIF_BYPASS_TIERS
-    )
-
-    # --- CNR Coverage and Mean CNR ---
-    cnr_info = aif_qc_data.get("cnr_whole_brain", {})
-    if isinstance(cnr_info, dict):
-        cnr_coverage = cnr_info.get("fraction_cnr_gt_4", 0.0)
-        mean_cnr = cnr_info.get("mean_cnr")
-    else:
-        cnr_coverage = 0.0
-        mean_cnr = None
-    result.cnr_coverage = cnr_coverage
-
-    # Low mean CNR takes precedence over the coverage and AIF-tier rules.
-    if mean_cnr is not None and mean_cnr < CNR_MEAN_MINIMUM:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"Mean CNR {mean_cnr:.1f} < {CNR_MEAN_MINIMUM} (inadequate contrast)"
-        )
-    elif cnr_coverage < cnr_skip and not aif_high_quality:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {cnr_skip:.1%} "
-            f"(dose-scaled, eff={eff_dose:.2f}); AIF "
-            f"tier '{_detection_level_for_cnr}' does not qualify for bypass"
-        )
-    elif cnr_coverage < cnr_skip and aif_high_quality:
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {cnr_skip:.1%} "
-            f"(dose-scaled) but AIF tier '{_detection_level_for_cnr}' "
-            f"retained at moderate confidence"
-        )
-    elif cnr_coverage < cnr_moderate and not aif_high_quality:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {cnr_moderate:.1%} "
-            f"(dose-scaled, eff={eff_dose:.2f})"
-        )
-    elif cnr_coverage < cnr_moderate and aif_high_quality:
-        # atlas_strict/atlas_relaxed in the [SKIP, MODERATE) band: treat
-        # CNR as informational, keep at moderate confidence rather than
-        # downgrading to low (which would drive SKIP). The bypass applies
-        # across the whole sub-MODERATE CNR range so AIF tier carries the
-        # decision when CNR is marginal.
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {cnr_moderate:.1%} "
-            f"(dose-scaled) but AIF tier '{_detection_level_for_cnr}' "
-            f"retained at moderate confidence"
-        )
-    elif cnr_coverage < cnr_high:
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"CNR coverage {cnr_coverage:.1%} < {cnr_high:.1%} "
-            f"(dose-scaled, eff={eff_dose:.2f})"
-        )
-
-    # --- AIF Detection Level ---
-    # Synthetic AIFs receive low confidence under the prior policy. For
-    # compound detection levels, the lowest qualifying tier sets confidence.
-    _AIF_LEVELS_LOW = {"synthetic"}
-    _AIF_LEVELS_MODERATE = {"brain_permissive", "brain_relaxed", "atlas_permissive"}
-
-    detection_level = str(aif_qc_data.get("detection_method", ""))
-    result.detection_level = detection_level or None
-    _contributing = set(split_detection_level(detection_level))
-
-    if _contributing & _AIF_LEVELS_LOW:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"AIF detection level '{detection_level}': low prior confidence"
-        )
-    elif _contributing & _AIF_LEVELS_MODERATE:
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"AIF detection level '{detection_level}': moderate prior confidence"
-        )
-
-    # --- AIF Candidate Count ---
-    # Fewer than three selected candidates lower confidence. An absent
-    # count defaults to three.
-    n_candidates = int(aif_qc_data.get("n_aif_voxels_selected", 3))
-    result.n_aif_voxels = n_candidates
-
-    if n_candidates < 2:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"Only {n_candidates} AIF voxel(s) -- no noise averaging"
-        )
-    elif n_candidates < 3:
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"Only {n_candidates} AIF voxels -- limited averaging"
-        )
-
-    # --- AIF signal drop ---
-    aif_peak = _finite_aif_metric(aif_qc_data.get("aif_peak_height"))
-    result.aif_peak_height = aif_peak
-
-    if aif_peak is None:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append("AIF signal-drop fraction (PH) unavailable")
-    elif aif_peak < AIF_PEAK_HEIGHT_MIN:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"AIF signal-drop fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MIN}"
-        )
-    elif aif_peak < AIF_PEAK_HEIGHT_MARGINAL:
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"AIF signal-drop fraction {aif_peak:.2f} < {AIF_PEAK_HEIGHT_MARGINAL}"
-        )
-
-    # --- AIF Baseline Return ---
-    baseline_return = _finite_aif_metric(aif_qc_data.get("baseline_return_ratio"))
-    result.aif_baseline_return = baseline_return
-
-    if baseline_return is None:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append("AIF baseline-return ratio (BRR) unavailable")
-    elif baseline_return > AIF_BASELINE_RETURN_MAX:
-        confidence = _downgrade_confidence(confidence, "low")
-        result.reasons.append(
-            f"AIF baseline return {baseline_return:.2f} > {AIF_BASELINE_RETURN_MAX}"
-        )
-    elif baseline_return > AIF_BASELINE_RETURN_MARGINAL:
-        confidence = _downgrade_confidence(confidence, "moderate")
-        result.reasons.append(
-            f"AIF baseline return {baseline_return:.2f} > {AIF_BASELINE_RETURN_MARGINAL}"
-        )
-
-    # --- Gamma Peak Ratio ---
-    # Compare gamma-fit and measured peaks against the quality-policy intervals.
-    gamma_peak_ratio = aif_qc_data.get("gamma_peak_ratio")
-    if gamma_peak_ratio is not None:
-        result.gamma_peak_ratio = gamma_peak_ratio
-        if (gamma_peak_ratio < GAMMA_PEAK_RATIO_LOW_MIN
-                or gamma_peak_ratio > GAMMA_PEAK_RATIO_LOW_MAX):
-            confidence = _downgrade_confidence(confidence, "low")
-            result.reasons.append(
-                f"Gamma peak ratio {gamma_peak_ratio:.3f} outside "
-                f"[{GAMMA_PEAK_RATIO_LOW_MIN}, {GAMMA_PEAK_RATIO_LOW_MAX}]"
-            )
-        elif (gamma_peak_ratio < GAMMA_PEAK_RATIO_MIN
-                or gamma_peak_ratio > GAMMA_PEAK_RATIO_MAX):
-            confidence = _downgrade_confidence(confidence, "moderate")
-            result.reasons.append(
-                f"Gamma peak ratio {gamma_peak_ratio:.3f} outside "
-                f"[{GAMMA_PEAK_RATIO_MIN}, {GAMMA_PEAK_RATIO_MAX}]"
-            )
-
-    # --- CBV Value Range (if map provided) ---
     if cbv_data is not None:
-        if brain_mask is not None:
-            mask_bool = brain_mask > 0
-            cbv_in_brain = cbv_data[mask_bool]
+        values = cbv_data[brain_mask > 0] if brain_mask is not None else cbv_data.ravel()
+        values = values[np.isfinite(values)]
+        positive = values[values > 0]
+        if not positive.size:
+            confidence = "low"
+            result.reasons.append("No usable positive nCBV support")
         else:
-            cbv_in_brain = cbv_data[np.isfinite(cbv_data)]
-
-        if len(cbv_in_brain) > 0:
-            # Check negative fraction
-            n_negative = int(np.sum(cbv_in_brain < 0))
-            neg_fraction = n_negative / len(cbv_in_brain)
-            result.cbv_negative_fraction = neg_fraction
-
-            if neg_fraction > CBV_NEGATIVE_FRACTION_MAX:
-                confidence = _downgrade_confidence(confidence, "low")
+            result.cbv_negative_fraction = float(np.mean(values < 0))
+            result.cbv_median = float(np.median(positive))
+            if result.cbv_negative_fraction > CBV_NEGATIVE_FRACTION_MAX:
+                confidence = "low"
                 result.reasons.append(
-                    f"CBV negative fraction {neg_fraction:.3f} > {CBV_NEGATIVE_FRACTION_MAX}"
+                    f"nCBV negative fraction {result.cbv_negative_fraction:.3f} > {CBV_NEGATIVE_FRACTION_MAX}"
                 )
-
-            # Check median range
-            cbv_positive = cbv_in_brain[cbv_in_brain > 0]
-            if len(cbv_positive) > 0:
-                cbv_median = float(np.median(cbv_positive))
-                result.cbv_median = cbv_median
-
-                if cbv_median < CBV_MEDIAN_RANGE[0] or cbv_median > CBV_MEDIAN_RANGE[1]:
-                    confidence = _downgrade_confidence(confidence, "moderate")
-                    result.reasons.append(
-                        f"nCBV median {cbv_median:.2f} outside "
-                        f"[{CBV_MEDIAN_RANGE[0]}, {CBV_MEDIAN_RANGE[1]}]"
-                    )
-
+            if not CBV_MEDIAN_RANGE[0] <= result.cbv_median <= CBV_MEDIAN_RANGE[1]:
+                confidence = _downgrade_confidence(confidence, "moderate")
+                result.reasons.append(f"nCBV median {result.cbv_median:.2f} outside {CBV_MEDIAN_RANGE}")
     result.confidence = confidence
     result.use_constraint = confidence != "low"
-
     if not result.reasons:
-        result.reasons.append("All quality checks passed")
-
+        result.reasons.append("Tissue CNR and nCBV checks passed")
     return result
 
 
@@ -617,24 +346,11 @@ def determine_constraint_mode(
     user_override: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
 ) -> ConstraintConfig:
-    """Determine constraint mode from DSC quality assessment.
+    """Select a soft prior from tissue QC and leakage-reference availability.
 
-    Two independent decisions determine the outcome:
-
-    - **MODE (SOFT vs SKIP)** is governed by DSC *quality/noise*: the
-      ``confidence`` tier from :func:`assess_dsc_cbv_quality` (AIF tier, CNR,
-      AIF peak/baseline, gamma-peak ratio) plus the hard SKIP triggers
-      (synthetic AIF, disabled correction, unavailable leakage reference, and
-      user ``skip``). Low
-      confidence produces SKIP; high/moderate produces SOFT.
-    - **σ (prior width, SOFT only)** uses the fixed 0.60 release-policy width.
-      This is a fixed relative standard deviation, not a subject-specific
-      uncertainty estimate. Signed leakage metrics remain descriptive and do
-      not enable, disable, or tune the Bayesian prior.
-
-    Decision order: synthetic AIF → SKIP; correction disabled → SKIP;
-    unavailable leakage reference → SKIP; user override; then confidence →
-    {SOFT with the fixed release-policy σ, or SKIP}.
+    Low tissue confidence, disabled correction or an unavailable correction
+    reference withholds the prior. Eligible maps use a fixed relative SD of
+    0.60. K2 and correction residuals remain descriptive.
 
     Parameters
     ----------
@@ -652,23 +368,6 @@ def determine_constraint_mode(
     ConstraintConfig
         ConstraintConfig with mode, uncertainty, and reason.
     """
-    # The vp-prior policy excludes synthetic AIFs before other quality gates.
-    if dsc_quality.detection_level == "synthetic":
-        if (
-            user_override is not None
-            and user_override.lower() not in ("auto", "skip")
-        ):
-            logger.warning(
-                "User requested constraint mode '%s' but AIF is synthetic; "
-                "the vp-prior policy selects SKIP for this AIF source.",
-                user_override,
-            )
-        return ConstraintConfig(
-            mode=ConstraintMode.SKIP,
-            vp_uncertainty=0.0,
-            reason=SYNTHETIC_AIF_REASON_STRING,
-        )
-
     # An uncorrected CBV map is not an acceptable Bayesian-prior anchor.
     if (k2_metrics or {}).get("leakage_correction_disabled") is True:
         return ConstraintConfig(
@@ -722,7 +421,7 @@ def determine_constraint_mode(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=SIGMA_SOFT_DSC_PRIOR,
             reason=(
-                "DSC signal, AIF, leakage-reference, and cross-modal registration "
+                "DSC tissue signal, leakage-reference, and cross-modal registration "
                 "QC supported use of the NAWM-normalized CBV prior."
             ),
         )
@@ -747,7 +446,7 @@ def determine_constraint_mode(
 
 def prepare_vp_constraint_from_data(
     ncbv_file: Optional[Union[str, Path]],
-    aif_qc_data: dict[str, Any],
+    dsc_qc_data: dict[str, Any],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
@@ -759,29 +458,16 @@ def prepare_vp_constraint_from_data(
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC nCBV for DCE PK modeling.
 
-    Orchestrates:
-
-    1. Source qualification, nCBV availability and registration QC
-    2. Quality assessment on the AIF QC dict + nCBV distribution
-    3. Constraint mode determination
-    4. nCBV→vp prior conversion via ``ncbv_to_vp_prior``
-       (vp = NAWM_VP_REFERENCE × nCBV)
-    5. Magnitude gate: SKIP when the derived vp median is outside policy bounds
-
-    External AIFs are excluded because their signal and candidate-voxel QC
-    are unavailable. Synthetic AIFs are excluded by the source policy.
-    For qualifying sources, if ``ncbv_file`` is None or does not exist,
-    returns a SKIP result with
-    ``qc_report["skip_reason"] = "no_nawm_mask"``. This is the expected
-    outcome when the upstream DSC workflow could not produce an nCBV map
-    (no NAWM mask from tumor segmentation and none user-supplied).
+    Requires an available NAWM-normalized map, accepted registration QC,
+    finite tissue CNR and valid support after spatial transfer. The derived
+    prior median must satisfy the configured magnitude bounds.
 
     Parameters
     ----------
     ncbv_file : Optional[Union[str, Path]]
         Path to DSC nCBV NIfTI, or None / missing → clean SKIP.
-    aif_qc_data : dict[str, Any]
-        DSC AIF QC metrics dictionary (from workflow).
+    dsc_qc_data : dict[str, Any]
+        Tissue QC metrics dictionary from the DSC workflow.
     brain_mask_file : Union[str, Path]
         Path to brain mask NIfTI.
     mode_override : str, optional
@@ -791,7 +477,7 @@ def prepare_vp_constraint_from_data(
     dose : float, optional
         Administered DSC dose as a multiple of the agent's standard dose.
     agent_standard_dose : float, optional
-        Standard agent dose in mmol Gd/kg for dose-adjusted AIF quality checks.
+        Standard agent dose in mmol Gd/kg for dose-adjusted tissue CNR checks.
     dsc_registration_qc : dict[str, Any], optional
         QC for the DSC-to-T1w transform used by the spatial prior.
     dce_registration_qc : dict[str, Any], optional
@@ -809,38 +495,6 @@ def prepare_vp_constraint_from_data(
     import nibabel as nib  # type: ignore[import-untyped]
 
     result = VpConstraintResult()
-
-    # Source qualification precedes nCBV availability and numerical QC.
-    source_skip_reason = None
-    source_reason = ""
-    if aif_qc_data.get("detection_method") == "external":
-        source_skip_reason = SKIP_REASON_EXTERNAL_AIF
-        source_reason = EXTERNAL_AIF_REASON_STRING
-    elif (
-        aif_qc_data.get("detection_method") == "synthetic"
-        or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
-    ):
-        source_skip_reason = SKIP_REASON_SYNTHETIC_AIF
-        source_reason = SYNTHETIC_AIF_REASON_STRING
-
-    if source_skip_reason is not None:
-        logger.info(
-            "%s DCE fitting uses the model's ordinary priors and bounds.",
-            source_reason,
-        )
-        result.config = ConstraintConfig(
-            mode=ConstraintMode.SKIP,
-            vp_uncertainty=0.0,
-            reason=source_reason,
-        )
-        result.vp_map = None
-        result.qc_report = {
-            "mode": ConstraintMode.SKIP.value,
-            "reason": result.config.reason,
-            "vp_uncertainty": result.config.vp_uncertainty,
-            "skip_reason": source_skip_reason,
-        }
-        return result
 
     # Missing-NAWM handling: if no nCBV file available, cleanly SKIP.
     if ncbv_file is None or not Path(str(ncbv_file)).is_file():
@@ -924,7 +578,7 @@ def prepare_vp_constraint_from_data(
     # distribution; under the nCBV path it sees a NAWM-anchored ratio
     # whose median should sit in CBV_MEDIAN_RANGE=(0.3, 3.0).
     quality = assess_dsc_cbv_quality(
-        aif_qc_data=aif_qc_data if aif_qc_data else {},
+        dsc_qc_data=dsc_qc_data if dsc_qc_data else {},
         cbv_data=ncbv_data,
         brain_mask=mask_data,
         dose=dose,
@@ -957,17 +611,23 @@ def prepare_vp_constraint_from_data(
         "dsc_cbv_confidence": quality.confidence,
         "dsc_cbv_use_constraint": quality.use_constraint,
         "cnr_coverage": quality.cnr_coverage,
-        "aif_peak_height": quality.aif_peak_height,
-        "aif_baseline_return": quality.aif_baseline_return,
-        "detection_method": quality.detection_level,
-        "n_aif_voxels_selected": quality.n_aif_voxels,
-        "gamma_peak_ratio": quality.gamma_peak_ratio,
+        "mean_cnr": quality.mean_cnr,
         # Unit annotations so downstream consumers don't conflate scales.
         "cbv_median_units": "ncbv",
         "vp_median_units": "fraction",
         "nawm_vp_reference": NAWM_VP_REFERENCE,
         "registration_statuses": registration_statuses,
     }
+
+    if vp_valid.size == 0:
+        result.config = ConstraintConfig(
+            mode=ConstraintMode.SKIP, vp_uncertainty=0.0,
+            reason="No finite DSC-derived vp support was available in the DCE brain mask.",
+        )
+        qc_report.update(mode="skip", reason=result.config.reason, vp_uncertainty=0.0,
+                         skip_reason="empty_prior_support")
+        result.qc_report = qc_report
+        return result
 
     if len(vp_valid) > 0:
         vp_median = float(np.median(vp_valid))
@@ -1016,7 +676,7 @@ def prepare_vp_constraint_from_data(
 
     # Only provide vp_map if constraint will be used
     if config.mode != ConstraintMode.SKIP:
-        result.vp_map = vp_map
+        result.vp_map = np.where(mask_bool, vp_map, np.nan)
     else:
         result.vp_map = None
 

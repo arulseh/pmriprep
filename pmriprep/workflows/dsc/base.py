@@ -60,10 +60,8 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
 def init_dsc_concentration_aif_wf(
     *,
     baseline_frames: int,
-    aif_method: str,
     n_candidates: int,
     lesion_distance: float,
-    disable_fallback: bool,
     dose: float,
     agent_standard_dose: float,
     gd_multiplicity: int,
@@ -81,14 +79,10 @@ def init_dsc_concentration_aif_wf(
     ----------
     baseline_frames : int
         Pre-bolus baseline frames (S0 estimation; also the AIF baseline).
-    aif_method : str
-        AIF detection method ("auto" or "synthetic").
     n_candidates : int
         Number of AIF candidate voxels to average.
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
-    disable_fallback : bool
-        Disable the synthetic-AIF fallback when detection fails.
     dose, agent_standard_dose : float
         Contrast dose multiplier and the agent's standard dose (mmol Gd/kg).
     gd_multiplicity : int
@@ -124,9 +118,8 @@ def init_dsc_concentration_aif_wf(
     -------
     concentration_file, signal_file
         ΔR2* concentration and raw signal.
-    out_aif_curve, out_measured_aif_curve, out_aif_mask, out_aif_coord,
-    detection_level, aif_baseline_frames, qc_metrics, out_raw_aif_curve,
-    gamma_fit_applied
+    out_aif_curve, out_aif_mask, out_aif_coord,
+    detection_level, aif_baseline_frames, qc_metrics, out_gamma_aif_curve, out_rejected_aif_curve, out_rejected_aif_mask,
         AIF detection products and QC.
     """
     workflow = pe.Workflow(name=name)
@@ -152,14 +145,14 @@ def init_dsc_concentration_aif_wf(
                 "concentration_file",
                 "signal_file",
                 "out_aif_curve",
-                "out_measured_aif_curve",
                 "out_aif_mask",
                 "out_aif_coord",
                 "detection_level",
                 "aif_baseline_frames",
                 "qc_metrics",
-                "out_raw_aif_curve",
-                "gamma_fit_applied",
+                "out_gamma_aif_curve",
+                "out_rejected_aif_curve",
+                "out_rejected_aif_mask",
             ]
         ),
         name="outputnode",
@@ -180,11 +173,9 @@ def init_dsc_concentration_aif_wf(
     # Node 3: AIF Detection (uses uncorrected concentration; arterial BBB intact)
     aif_detect = pe.Node(
         AIFDetection(
-            aif_method=aif_method,
             criteria="strict",
             n_candidates=n_candidates,
             lesion_distance=lesion_distance,
-            disable_fallback=disable_fallback,
             baseline_frames=baseline_frames,
             dose=dose,
             agent_standard_dose=agent_standard_dose,
@@ -221,14 +212,14 @@ def init_dsc_concentration_aif_wf(
         ]),
         (aif_detect, outputnode, [
             ("out_aif_curve", "out_aif_curve"),
-            ("out_measured_aif_curve", "out_measured_aif_curve"),
             ("out_aif_mask", "out_aif_mask"),
             ("out_aif_coord", "out_aif_coord"),
             ("detection_level", "detection_level"),
             ("aif_baseline_frames", "aif_baseline_frames"),
             ("qc_metrics", "qc_metrics"),
-            ("out_raw_aif_curve", "out_raw_aif_curve"),
-            ("gamma_fit_applied", "gamma_fit_applied"),
+            ("out_gamma_aif_curve", "out_gamma_aif_curve"),
+            ("out_rejected_aif_curve", "out_rejected_aif_curve"),
+            ("out_rejected_aif_mask", "out_rejected_aif_mask"),
         ]),
     ])
     return workflow
@@ -694,7 +685,7 @@ def init_dsc_deconvolution_wf(
     ------
     concentration_file, signal_file, raw_concentration_file
         Leakage-corrected and raw concentration / signal time series.
-    aif_file, measured_aif_file, aif_detection_level, baseline_frames
+    aif_file, aif_detection_level, baseline_frames
         Arterial input function and detection provenance.
     k2_map_input_file, bsw_guidance_file
         Leakage-correction coefficient map and exact CPI guidance archive.
@@ -730,7 +721,6 @@ def init_dsc_deconvolution_wf(
                 "k2_map_input_file",
                 "bsw_guidance_file",
                 "aif_file",
-                "measured_aif_file",
                 "aif_detection_level",
                 "baseline_frames",
                 "brain_mask_file",
@@ -750,6 +740,7 @@ def init_dsc_deconvolution_wf(
                 "out_rel_cbf",
                 "out_rel_cbv",
                 "out_rel_cbv_auc",
+                "out_tissue_auc",
                 "out_mtt",
                 "out_tmax",
                 "out_psr",
@@ -785,7 +776,6 @@ def init_dsc_deconvolution_wf(
             ("k2_map_input_file", "k2_map_input_file"),
             ("bsw_guidance_file", "bsw_guidance_file"),
             ("aif_file", "aif_file"),
-            ("measured_aif_file", "measured_aif_file"),
             ("aif_detection_level", "aif_detection_level"),
             ("baseline_frames", "baseline_frames"),
             ("brain_mask_file", "brain_mask_file"),
@@ -800,6 +790,7 @@ def init_dsc_deconvolution_wf(
             ("out_rel_cbf", "out_rel_cbf"),
             ("out_rel_cbv", "out_rel_cbv"),
             ("out_rel_cbv_auc", "out_rel_cbv_auc"),
+            ("out_tissue_auc", "out_tissue_auc"),
             ("out_mtt", "out_mtt"),
             ("out_tmax", "out_tmax"),
             ("out_psr", "out_psr"),
@@ -1217,7 +1208,7 @@ def init_dsc_qc_wf(
     session_id : str or None
         BIDS session label.
     aif_source : str
-        AIF provenance label for the merged QC ("external", "synthetic", "auto").
+        AIF provenance label for the merged QC ("external", "auto").
     baseline_frames : int
         Pre-bolus baseline frame count (S0) for the preprocessing QC plot.
     deconvolution_method : str
@@ -1236,7 +1227,7 @@ def init_dsc_qc_wf(
         Per-sub-workflow QC metric dicts / scalars merged into ``qc_metrics``.
     prebolus_mean_file, dsc_moco, registered_t1w, brain_mask_file
         Images for the registration / preprocessing / brain-mask filmstrips.
-    out_aif_curve, out_aif_mask, out_raw_aif_curve, gamma_fit_applied, concentration_file, corrected_concentration_file
+    out_aif_curve, out_aif_mask, out_gamma_aif_curve, out_rejected_aif_curve, out_rejected_aif_mask, concentration_file, corrected_concentration_file
         AIF, concentration, and leakage-QC inputs.
     rel_cbf, rel_cbv_auc, mtt, tmax, psr, ttp, k2, auc_raw, auc_corr, auc_diff, qc_fit_data
         DSC parameter / leakage / fit maps for the QC plots.
@@ -1267,12 +1258,14 @@ def init_dsc_qc_wf(
                 "aif_qc_metrics",
                 "out_aif_curve",
                 "out_aif_mask",
-                "out_raw_aif_curve",
-                "gamma_fit_applied",
+                "out_gamma_aif_curve",
+                "out_rejected_aif_curve",
+                "out_rejected_aif_mask",
                 "concentration_file",
                 "deconv_qc_metrics",
                 "rel_cbf",
                 "rel_cbv_auc",
+                "ncbv",
                 "mtt",
                 "tmax",
                 "psr",
@@ -1387,7 +1380,7 @@ def init_dsc_qc_wf(
     dsc_param_maps_qc = pe.Node(
         niu.Function(
             input_names=[
-                "rel_cbf_file", "rel_cbv_file", "mtt_file",
+                "rel_cbf_file", "rel_cbv_file", "ncbv_file", "mtt_file",
                 "tmax_file", "psr_file", "ttp_file",
                 "brain_mask_file", "timing_label", "subject_id", "session_id",
             ],
@@ -1473,8 +1466,9 @@ def init_dsc_qc_wf(
             ("aif_qc_metrics", "qc_metrics"),
             ("out_aif_curve", "aif_curve_file"),
             ("out_aif_mask", "aif_mask_file"),
-            ("out_raw_aif_curve", "raw_aif_curve_file"),
-            ("gamma_fit_applied", "gamma_fit_applied"),
+            ("out_gamma_aif_curve", "gamma_aif_curve_file"),
+            ("out_rejected_aif_curve", "rejected_aif_curve_file"),
+            ("out_rejected_aif_mask", "rejected_aif_mask_file"),
             ("t1w_to_dsc_matrix", "t1w_to_dsc_xfm"),
             ("brain_mask_file", "brain_mask_file"),
             ("tr", "tr"),
@@ -1489,6 +1483,7 @@ def init_dsc_qc_wf(
         (inputnode, dsc_param_maps_qc, [
             ("rel_cbf", "rel_cbf_file"),
             ("rel_cbv_auc", "rel_cbv_file"),
+            ("ncbv", "ncbv_file"),
             ("mtt", "mtt_file"),
             ("tmax", "tmax_file"),
             ("psr", "psr_file"),
@@ -1806,7 +1801,7 @@ def init_dsc_preproc_wf(
     The workflow follows this processing flow:
     1. Motion correction (mcflirt)
     2. Signal-to-concentration conversion (ΔR2*)
-    3. AIF detection (atlas-based → automatic → synthetic fallback)
+    3. AIF detection (atlas-based → automatic → partial outputs)
     4. Leakage correction and preload-provenance recording
     5. Deconvolution (method from config: sSVD, oSVD, tikhonov, cpi)
     6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR)
@@ -2043,10 +2038,8 @@ def init_dsc_preproc_wf(
         _aif_mask = str(config.aif_mask_file)
     conc_aif_wf = init_dsc_concentration_aif_wf(
         baseline_frames=config.pre_bolus,
-        aif_method=config.aif_method,
         n_candidates=config.n_aif_candidates,
         lesion_distance=config.lesion_distance,
-        disable_fallback=config.disable_aif_fallback,
         dose=config.dose,
         agent_standard_dose=config.agent_standard_dose,
         gd_multiplicity=gd_multiplicity,
@@ -2057,7 +2050,7 @@ def init_dsc_preproc_wf(
 
     # -------------------------------------------------------------------
     # Node 4: Leakage correction and preload provenance
-    # K2 correction needs the AIF, so runs after AIF detection
+    # K2 correction uses the finalized baseline from AIF detection
     # -------------------------------------------------------------------
     leakage_wf = init_dsc_leakage_wf(
         preload=config.preload,
@@ -2194,8 +2187,6 @@ def init_dsc_preproc_wf(
     # Determine AIF source for boilerplate text generation
     if config.aif_file is not None:
         aif_source = "external"
-    elif config.aif_method == "synthetic":
-        aif_source = "synthetic"
     else:
         aif_source = "auto"
 
@@ -2322,7 +2313,6 @@ def init_dsc_preproc_wf(
         ]),
         (conc_aif_wf, deconvolution_wf, [
             ("outputnode.out_aif_curve", "inputnode.aif_file"),
-            ("outputnode.out_measured_aif_curve", "inputnode.measured_aif_file"),
             ("outputnode.detection_level", "inputnode.aif_detection_level"),
             ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
@@ -2402,7 +2392,7 @@ def init_dsc_preproc_wf(
     # Feed relative perfusion maps and the NAWM reference to normalization.
     workflow.connect([
         (deconvolution_wf, normalization_wf, [
-            ("outputnode.out_rel_cbv_auc", "inputnode.cbv_file"),
+            ("outputnode.out_tissue_auc", "inputnode.cbv_file"),
             ("outputnode.out_rel_cbf", "inputnode.cbf_file"),
         ]),
         (transform_nawm, normalization_wf, [
@@ -2431,8 +2421,9 @@ def init_dsc_preproc_wf(
             ("outputnode.qc_metrics", "inputnode.aif_qc_metrics"),
             ("outputnode.out_aif_curve", "inputnode.out_aif_curve"),
             ("outputnode.out_aif_mask", "inputnode.out_aif_mask"),
-            ("outputnode.out_raw_aif_curve", "inputnode.out_raw_aif_curve"),
-            ("outputnode.gamma_fit_applied", "inputnode.gamma_fit_applied"),
+            ("outputnode.out_gamma_aif_curve", "inputnode.out_gamma_aif_curve"),
+            ("outputnode.out_rejected_aif_curve", "inputnode.out_rejected_aif_curve"),
+            ("outputnode.out_rejected_aif_mask", "inputnode.out_rejected_aif_mask"),
             ("outputnode.concentration_file", "inputnode.concentration_file"),
         ]),
         (deconvolution_wf, qc_wf, [
@@ -2458,6 +2449,7 @@ def init_dsc_preproc_wf(
             ("dsc_brain_mask_file", "inputnode.registered_t1w_mask"),
         ]),
         (normalization_wf, qc_wf, [
+            ("outputnode.ncbv_file", "inputnode.ncbv"),
             ("outputnode.normalization_factor", "inputnode.normalization_factor"),
             ("outputnode.cbf_normalization_factor", "inputnode.cbf_normalization_factor"),
         ]),

@@ -25,13 +25,12 @@ class AIFQCPlotInputSpec(BaseInterfaceInputSpec):
 
     aif_curve_file = File(
         exists=True,
-        mandatory=True,
-        desc="1D AIF curve text file",
+        desc="Accepted AIF curve text file, when available",
     )
     aif_mask_file = File(
         exists=True,
         mandatory=False,
-        desc="3D AIF voxel mask NIfTI (not provided for synthetic AIF)",
+        desc="3D AIF voxel mask NIfTI (provided for measured AIFs)",
     )
     dsc_file = File(
         exists=True,
@@ -62,16 +61,9 @@ class AIFQCPlotInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Session ID for plot title",
     )
-    raw_aif_curve_file = traits.Str(
-        "",
-        usedefault=True,
-        desc="Pre-gamma-fit raw AIF curve text file (empty if no gamma fit)",
-    )
-    gamma_fit_applied = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Whether gamma-variate fitting was applied to the AIF",
-    )
+    gamma_aif_curve_file = File(exists=True, desc="Diagnostic gamma-fit curve")
+    rejected_aif_curve_file = File(exists=True, desc="Rejected measured curve for QC")
+    rejected_aif_mask_file = File(exists=True, desc="Matching rejected-candidate voxel mask")
     t1w_to_dsc_xfm = File(
         exists=True,
         mandatory=False,
@@ -88,7 +80,7 @@ class AIFQCPlotOutputSpec(TraitedSpec):
     """Output specification for AIFQCPlot interface."""
 
     out_aif_plot = File(exists=True, desc="AIF curve QC plot PNG")
-    out_aif_location = File(desc="AIF location overlay PNG (None for synthetic AIF)")
+    out_aif_location = File(desc="AIF location overlay PNG (absent without spatial support)")
     out_aif_candidates = File(desc="AIF candidates glass brain PNG")
     out_aif_metrics = traits.Dict(desc="AIF quality metrics for HTML report")
 
@@ -108,7 +100,10 @@ class AIFQCPlot(BaseInterface):
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Load data
-        aif_curve = np.loadtxt(self.inputs.aif_curve_file)
+        accepted = isdefined(self.inputs.aif_curve_file) and bool(self.inputs.aif_curve_file)
+        rejected = not accepted and isdefined(self.inputs.rejected_aif_curve_file)
+        curve_file = self.inputs.aif_curve_file if accepted else self.inputs.rejected_aif_curve_file
+        aif_curve = np.loadtxt(curve_file) if accepted or rejected else None
 
         dsc_img = nib.load(self.inputs.dsc_file)
         dsc_data = dsc_img.get_fdata()  # type: ignore[attr-defined]
@@ -124,42 +119,34 @@ class AIFQCPlot(BaseInterface):
         ses = self.inputs.session_id or ""
         detection_level = qc.get("detection_method", "unknown")
 
-        # Load raw AIF for gamma fit overlay
-        raw_aif_curve = None
-        raw_aif_file = self.inputs.raw_aif_curve_file
-        if (
-            detection_level not in ("synthetic", "external")
-            and raw_aif_file
-            and Path(raw_aif_file).exists()
-        ):
-            raw_aif_curve = np.loadtxt(raw_aif_file)
-        gamma_applied = (
-            self.inputs.gamma_fit_applied
-            if detection_level not in ("synthetic", "external")
-            else False
+        display_qc = dict(qc)
+        if rejected:
+            display_qc.update(qc.get("rejected_candidate") or {})
+            display_qc["candidate_rejected"] = True
+        gamma_curve = (
+            np.loadtxt(self.inputs.gamma_aif_curve_file)
+            if isdefined(self.inputs.gamma_aif_curve_file) and self.inputs.gamma_aif_curve_file
+            else None
         )
-
-        # Generate plots
         out_dir = Path.cwd()
-
-        aif_plot_path = str(out_dir / "aif_curve_qc.png")
-        self._plot_aif_curve(
-            aif_curve, tr, qc, sub, ses, aif_plot_path,
-            raw_aif_curve=raw_aif_curve,
-            gamma_fit_applied=gamma_applied,
-        )
-
-        # Only generate location plot if voxel-based detection was used
-        aif_location_path: str | None = None
-        if detection_level not in ("synthetic", "external") and isdefined(self.inputs.aif_mask_file):
-            aif_mask_img = nib.load(self.inputs.aif_mask_file)
-            aif_mask = aif_mask_img.get_fdata()  # type: ignore[attr-defined]
-
-            aif_location_path = str(out_dir / "aif_location_qc.png")
-            self._plot_aif_location(
-                dsc_data, aif_mask, brain_mask, voxel_sizes,
-                qc, sub, ses, aif_location_path,
+        aif_plot_path = None
+        if aif_curve is not None:
+            aif_plot_path = str(out_dir / "aif_curve_qc.png")
+            self._plot_aif_curve(
+                aif_curve, tr, display_qc, sub, ses, aif_plot_path,
+                gamma_aif_curve=gamma_curve, rejected=rejected,
             )
+        mask_file = self.inputs.rejected_aif_mask_file if rejected else self.inputs.aif_mask_file
+        aif_location_path: str | None = None
+        if detection_level != "external" and isdefined(mask_file) and mask_file:
+            mask_img: Any = nib.load(mask_file)
+            aif_mask = mask_img.get_fdata()
+            if np.any(aif_mask > 0):
+                aif_location_path = str(out_dir / "aif_location_qc.png")
+                self._plot_aif_location(
+                    dsc_data, aif_mask, brain_mask, voxel_sizes,
+                    display_qc, sub, ses, aif_location_path,
+                )
 
         # Build AIF metrics dict for HTML report. Producer (aif_detect)
         # populates the canonical nested ``aif_metrics`` block on its
@@ -185,15 +172,6 @@ class AIFQCPlot(BaseInterface):
         if "ph" in upstream:
             aif_metrics["ph"] = round(float(upstream["ph"]), 1)
 
-        if gamma_applied:
-            aif_metrics["gamma_fit"] = True
-            r_sq = qc.get("gamma_fit_r_squared")
-            if r_sq is not None:
-                aif_metrics["gamma_r_squared"] = round(float(r_sq), 3)
-            auc_ratio = qc.get("gamma_fit_auc_ratio")
-            if auc_ratio is not None:
-                aif_metrics["gamma_auc_ratio"] = round(float(auc_ratio), 3)
-
         # Generate glass brain candidates plot if transforms are available
         aif_candidates_path: str | None = None
         has_xfms = (
@@ -201,9 +179,9 @@ class AIFQCPlot(BaseInterface):
             and isdefined(self.inputs.t1w_to_mni_xfm)
         )
         if (
-            detection_level not in ("synthetic", "external")
+            detection_level != "external"
             and has_xfms
-            and qc.get("candidate_coords")
+            and display_qc.get("candidate_coords")
         ):
             from pmriprep.interfaces.dce_aif_qc import (
                 plot_aif_candidates_glass_brain,
@@ -211,8 +189,8 @@ class AIFQCPlot(BaseInterface):
 
             aif_candidates_path = str(out_dir / "aif_candidates_qc.png")
             plot_aif_candidates_glass_brain(
-                candidate_coords=qc["candidate_coords"],
-                candidate_scores=qc.get("candidate_scores", []),
+                candidate_coords=display_qc["candidate_coords"],
+                candidate_scores=display_qc.get("candidate_scores", []),
                 native_img=dsc_img,
                 t1w_to_native_xfm=self.inputs.t1w_to_dsc_xfm,
                 t1w_to_mni_xfm=self.inputs.t1w_to_mni_xfm,
@@ -223,9 +201,10 @@ class AIFQCPlot(BaseInterface):
             )
 
         self._results: dict[str, Any] = {
-            "out_aif_plot": aif_plot_path,
             "out_aif_metrics": aif_metrics,
         }
+        if aif_plot_path is not None:
+            self._results["out_aif_plot"] = aif_plot_path
         if aif_location_path is not None:
             self._results["out_aif_location"] = aif_location_path
         if aif_candidates_path is not None:
@@ -234,10 +213,8 @@ class AIFQCPlot(BaseInterface):
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:
-        outputs = self.output_spec().get()  # type: ignore[misc]
-        if hasattr(self, "_results"):
-            outputs.update(self._results)
-        return outputs  # type: ignore[no-any-return]
+        """Return the plots available for this detection outcome."""
+        return dict(getattr(self, "_results", {}))
 
     # -----------------------------------------------------------------
     # Plot 1: AIF Curve
@@ -251,13 +228,13 @@ class AIFQCPlot(BaseInterface):
         subject_id: str,
         session_id: str,
         output_path: str,
-        raw_aif_curve: Optional[npt.NDArray[Any]] = None,
-        gamma_fit_applied: bool = False,
+        gamma_aif_curve: Optional[npt.NDArray[Any]] = None,
+        rejected: bool = False,
     ) -> None:
         """Plot AIF concentration curve with quality annotations.
 
-        When gamma-variate fitting was applied, overlays the raw AIF behind
-        the fitted curve for visual comparison.
+        The measured curve and optional diagnostic gamma fit retain their
+        own labels. Rejected candidates are shown only as QC evidence.
         """
         import matplotlib.pyplot as plt  # type: ignore[import-untyped]
         from pmriprep.utils.qc_standards import COLORBLIND_PALETTE
@@ -267,43 +244,21 @@ class AIFQCPlot(BaseInterface):
 
         fig, ax = plt.subplots(figsize=(10, 6))
         try:
-            # Plot AIF curve(s)
-            if raw_aif_curve is not None and gamma_fit_applied:
-                # Accepted gamma fit: raw AIF behind (translucent) + fitted solid
-                ax.plot(
-                    time, raw_aif_curve,
-                    color=COLORBLIND_PALETTE.primary,
-                    linewidth=1, marker=".", markersize=3,
-                    alpha=0.5, label="Measured AIF",
-                )
-                ax.plot(
-                    time, aif_curve,
-                    color=COLORBLIND_PALETTE.error,
-                    linewidth=2, label="Gamma-variate fit",
-                )
-            elif raw_aif_curve is not None and not gamma_fit_applied:
-                # Rejected gamma fit: AIF solid + rejected fit dashed
-                ax.plot(
-                    time, aif_curve,
-                    color=COLORBLIND_PALETTE.primary,
-                    linewidth=1.5, marker="o", markersize=3,
-                    label="AIF",
-                )
-                ax.plot(
-                    time, raw_aif_curve,
-                    color=COLORBLIND_PALETTE.error,
-                    linewidth=1.5, linestyle="--", alpha=0.6,
-                    label="Gamma fit (rejected)",
-                )
-            else:
-                ax.plot(
-                    time, aif_curve,
-                    color=COLORBLIND_PALETTE.primary,
-                    linewidth=1.5,
-                    marker="o",
-                    markersize=3,
-                    label="AIF",
-                )
+            label = "Rejected candidate" if rejected else (
+                "Supplied AIF" if qc.get("detection_method") == "external" else "Measured AIF"
+            )
+            ax.plot(time, aif_curve, color=COLORBLIND_PALETTE.primary,
+                    linewidth=1.5, marker="o", markersize=3, label=label)
+            if gamma_aif_curve is not None:
+                r2 = qc.get("gamma_fit_r_squared")
+                fit_label = f"Gamma fit (QC, R²={r2:.3f})" if r2 is not None else "Gamma fit (QC)"
+                ax.plot(time, gamma_aif_curve, color=COLORBLIND_PALETTE.error,
+                        linewidth=1.5, linestyle="--", alpha=0.6, label=fit_label)
+                start = qc.get("gamma_fit_evaluation_start_frame")
+                end = qc.get("gamma_fit_evaluation_end_frame")
+                if start is not None and end is not None:
+                    ax.text(0, -0.18, f"Gamma R² window: frames {start}–{end - 1}",
+                            transform=ax.transAxes, fontsize=8, color="0.4")
 
             # Peak marker
             peak_idx = int(np.argmax(aif_curve))
@@ -339,23 +294,9 @@ class AIFQCPlot(BaseInterface):
             ax.legend(loc="upper right", fontsize=9)
             ax.grid(True, alpha=0.3)
 
-            # Title with gamma fit status
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
-            r_sq = qc.get("gamma_fit_r_squared")
-            if gamma_fit_applied and r_sq is not None:
-                title_suffix = f" | Gamma fit (R\u00b2={r_sq:.3f})"
-            elif raw_aif_curve is not None and not gamma_fit_applied:
-                r_sq_str = f", R\u00b2={r_sq:.3f}" if r_sq is not None else ""
-                title_suffix = f" | Gamma fit rejected{r_sq_str}"
-            elif qc.get("gamma_fit_converged") is False:
-                title_suffix = " | Gamma fit unavailable"
-            else:
-                title_suffix = ""
-            ax.set_title(
-                f"{sub_label}{ses_label} | DSC AIF Quality{title_suffix}",
-                fontsize=12,
-            )
+            ax.set_title(f"{sub_label}{ses_label} | DSC AIF", fontsize=12)
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
@@ -438,7 +379,7 @@ class AIFQCPlot(BaseInterface):
                 )
                 if np.any(mask_slice > 0.5):
                     masked = np.ma.masked_where(mask_slice < 0.5, mask_slice)  # type: ignore[no-untyped-call]
-                    ax_plt.imshow(masked, cmap="hot", alpha=0.4, aspect=aspect)
+                    ax_plt.imshow(masked, cmap="hot", vmin=0, vmax=1, alpha=0.4, aspect=aspect)
 
                 # Crosshair at centroid
                 # Map 3D centroid to 2D slice position after radiological transform.
@@ -515,7 +456,8 @@ class AIFQCPlot(BaseInterface):
             # Overall title
             sub_label = f"sub-{subject_id}" if subject_id else ""
             ses_label = f" | ses-{session_id}" if session_id else ""
-            fig.suptitle(f"{sub_label}{ses_label} | DSC AIF Location", fontsize=12)
+            location_label = "Candidate voxels" if qc.get("candidate_rejected") else "DSC AIF Location"
+            fig.suptitle(f"{sub_label}{ses_label} | {location_label}", fontsize=12)
 
             plt.tight_layout()
             fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")

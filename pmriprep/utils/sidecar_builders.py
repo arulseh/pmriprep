@@ -52,7 +52,7 @@ _PIPELINE_QC_STRIP_KEYS = frozenset({
 
 _CONFIG_STRIP_KEYS = frozenset({
     "n_procs", "nprocs", "hdbet_device", "tumor_seg_device",
-    "disable_aif_fallback", "n_aif_candidates",
+    "n_aif_candidates",
     "underlays", "no_t1", "no_dsc_validation",
 })
 
@@ -1153,7 +1153,7 @@ def build_dsc_map_sidecar(
                     "tissue": "NAWM",
                     "method": "median_finite_values_positive_median_required",
                     "factor": float(factor),
-                    "parameter": "CBV" if map_key == "ncbv" else "CBF",
+                    "parameter": "TissueAUC" if map_key == "ncbv" else "CBF",
                 },
             }
     if map_key == "mtt" and isinstance(qc_metrics, dict):

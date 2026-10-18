@@ -164,10 +164,10 @@ _REL_MAPS: tuple[DSCMapSpec, ...] = (
 # Optional maps with per-map desc + bids_suffix
 _OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("ttp_map", "dsc", "ttp",
-     "Tissue concentration time to peak relative to AIF bolus arrival.",
+     "Tissue concentration time to peak relative to the finalized baseline reference.",
      "s", "ttp",
-     {"ReferencePoint": "AIF bolus arrival time",
-      "UndefinedValue": "NaN when tissue peak precedes AIF bolus arrival"}),
+     {"ReferencePoint": "finalized baseline reference",
+      "UndefinedValue": "NaN when tissue peak precedes the baseline reference"}),
     DSCMapSpec(
         "cnr_map", "dsc", "cnr", "DSC signal-drop contrast-to-noise ratio", "1", "cnr",
         {
@@ -441,7 +441,7 @@ def _build_aif_mask_meta(
     source = aif_block.get("Source")
     if source:
         spatial_support_available = source in {
-            "measured", "gamma_fit_measured",
+            "measured",
         }
         out["SpatialSupportAvailable"] = spatial_support_available
         if not spatial_support_available:
@@ -703,10 +703,7 @@ def _copy_xfm(
 
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    # Defensive no-op when upstream registration produced no transform.
-    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
-    # sentinel-handling rationale.
-    if not isdefined(in_file) or in_file == "":
+    if not isdefined(in_file) or not in_file:
         logging.getLogger("nipype.workflow").warning(
             "Skipping DSC _copy_xfm sink (from=%s, to=%s): upstream "
             "produced no output (in_file=%r)",
@@ -730,13 +727,13 @@ def _copy_xfm(
 
 
 def _copy_perf_map(
-    in_file: str,
-    output_dir: str,
-    subject: str,
-    session: str,
-    desc: str,
-    suffix: str,
-    meta_dict: dict,
+    in_file: str | None = None,
+    output_dir: str = "",
+    subject: str = "",
+    session: str = "",
+    desc: str = "",
+    suffix: str = "",
+    meta_dict: dict | None = None,
     datatype: str = "perf",
     bids_suffix: str = "stat",
 ) -> str:
@@ -754,12 +751,7 @@ def _copy_perf_map(
 
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    # Defensive no-op when upstream conditional producer returned no
-    # output. See pmriprep.workflows.dce.datasinks._copy_perf_map for
-    # the sentinel-handling rationale (Undefined/None/"" all need
-    # explicit handling because isdefined(None) == True is a Nipype
-    # gotcha).
-    if not isdefined(in_file) or in_file == "":
+    if not isdefined(in_file) or not in_file:
         logging.getLogger("nipype.workflow").warning(
             "Skipping DSC _copy_perf_map sink (desc=%s, suffix=%s): upstream "
             "produced no output (in_file=%r)",
@@ -790,13 +782,13 @@ def _copy_perf_map(
 
 
 def _copy_aif_mask(
-    in_file: str,
-    output_dir: str,
-    subject: str,
-    session: str,
-    desc: str,
-    suffix: str,
-    meta_dict: dict,
+    in_file: str | None = None,
+    output_dir: str = "",
+    subject: str = "",
+    session: str = "",
+    desc: str = "",
+    suffix: str = "",
+    meta_dict: dict | None = None,
     datatype: str = "perf",
     bids_suffix: str = "mask",
 ) -> str:
@@ -985,6 +977,8 @@ def _build_signed_auc_cbv_provenance(
         ),
     }
     if normalized:
+        provenance["Estimator"] = "post_baseline_tissue_AUC_divided_by_NAWM_median"
+        provenance["IntegrationRule"] = "post_baseline_trapezoid"
         provenance["NormalizationReferenceDomain"] = (
             "finite_nonnegative_NAWM_with_positive_median_required"
         )
@@ -993,17 +987,20 @@ def _build_signed_auc_cbv_provenance(
     deconvolution = qc_metrics.get("deconvolution")
     if not isinstance(deconvolution, dict):
         return provenance
+    prefix = "tissue_auc" if normalized else "cbv_auc"
     keys = {
-        "cbv_auc_finite_voxels": "FiniteInBrainVoxelCount",
-        "cbv_auc_negative_voxels": "NegativeInBrainVoxelCount",
-        "cbv_auc_negative_fraction": "NegativeInBrainVoxelFraction",
+        f"{prefix}_finite_voxels": "FiniteInBrainVoxelCount",
+        f"{prefix}_negative_voxels": "NegativeInBrainVoxelCount",
+        f"{prefix}_negative_fraction": "NegativeInBrainVoxelFraction",
     }
     for source, target in keys.items():
         value = deconvolution.get(source)
         if value is not None:
             provenance[target] = value
     if "NegativeInBrainVoxelFraction" in provenance:
-        provenance["NegativeFractionSource"] = "pre_sanitization_AUC_CBV_estimator"
+        provenance["NegativeFractionSource"] = (
+            "pre_sanitization_tissue_AUC" if normalized else "pre_sanitization_AUC_CBV_estimator"
+        )
         provenance["NegativeFractionDenominator"] = (
             "finite_pre_sanitization_in_brain_voxels"
         )

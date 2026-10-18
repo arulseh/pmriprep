@@ -271,11 +271,9 @@ class TestCompoundDetectionLevelDispatch:
             == QCAction.REVIEW
         )
 
-    def test_compound_with_synthetic_excludes(self) -> None:
-        """Worst-tier-wins: a single synthetic part downgrades to EXCLUDE
-        even when stricter tiers also contribute."""
+    def test_unavailable_aif_keeps_independent_maps_for_review(self) -> None:
         from pmriprep.utils.qc_standards import QCAction
-        assert self._aif_action("atlas_relaxed+synthetic") == QCAction.EXCLUDE
+        assert self._aif_action("unavailable") == QCAction.REVIEW
 
     def test_full_atlas_permissive_reviews(self) -> None:
         """The set-membership dispatch classifies ``full_atlas_permissive``

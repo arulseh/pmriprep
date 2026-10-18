@@ -358,7 +358,7 @@ def _build_aif_mask_meta(
     source = aif_block.get("Source")
     if source:
         spatial_support_available = source in {
-            "measured", "gamma_fit_measured",
+            "measured",
         }
         out["SpatialSupportAvailable"] = spatial_support_available
         if not spatial_support_available:

@@ -18,21 +18,13 @@ from pmriprep.utils.aif_provenance import (
 @pytest.mark.parametrize(
     ("qc", "modality", "expected"),
     [
-        pytest.param({"detection_method": "synthetic"}, "DSC", "synthetic", id="dsc-synthetic"),
+        pytest.param({"detection_method": "unavailable"}, "DSC", "unavailable", id="dsc-unavailable"),
         pytest.param({"detection_method": "atlas_strict"}, "DSC", "measured", id="dsc-measured"),
-        pytest.param(
-            {"detection_method": "atlas_strict", "gamma_fit_applied": True},
-            "DSC", "gamma_fit_measured", id="dsc-gamma-fit",
-        ),
         pytest.param({"detection_method": "external"}, "DSC", "external", id="dsc-external"),
         pytest.param({"detection_method": "population"}, "DCE", "population", id="dce-population"),
         pytest.param({"detection_method": "atlas"}, "DCE", "measured", id="dce-atlas"),
         pytest.param({"detection_method": "whole_brain"}, "DCE", "measured", id="dce-whole-brain"),
         pytest.param({"detection_method": "external"}, "DCE", "external", id="dce-external"),
-        pytest.param(
-            {"detection_method": "atlas", "gamma_fit_applied": True},
-            "DCE", "measured", id="dce-ignores-gamma-fit",
-        ),
     ],
 )
 def test_derive_aif_source(qc: dict, modality: str, expected: str) -> None:
@@ -55,7 +47,7 @@ def test_derive_aif_source(qc: dict, modality: str, expected: str) -> None:
         pytest.param({"quality_score": 0.70}, "measured", "DCE", "pass", id="dce-score-pass"),
         pytest.param({"quality_score": 0.50}, "measured", "DCE", "warn", id="dce-score-warn"),
         pytest.param({"quality_score": 0.49}, "measured", "DCE", "poor", id="dce-score-poor"),
-        pytest.param({"quality_score": 0.95}, "synthetic", "DSC", "poor", id="synthetic-forced-poor"),
+        pytest.param({"quality_score": 0.95}, "unavailable", "DSC", "poor", id="unavailable-forced-poor"),
         pytest.param({"quality_score": 0.80}, "population", "DCE", "poor", id="population-forced-poor"),
         pytest.param({}, "measured", "DSC", "warn", id="missing-score"),
         pytest.param(
@@ -83,7 +75,6 @@ class TestBuildProvenanceBlockDSC:
         )
         assert block["Source"] == "measured"
         assert block["QualityFlag"] == "pass"
-        assert block["GammaFitApplied"] is False
         assert block["QualityScore"] == pytest.approx(0.8)
         assert block["UsedAsCBVDenominator"] is True
 
@@ -107,20 +98,19 @@ class TestBuildProvenanceBlockDSC:
         assert block["WholeBrainSymmetryAngleDegrees"] == pytest.approx(-2.5)
         assert block["WholeBrainSymmetryOverlap"] == pytest.approx(0.96)
 
-    def test_synthetic(self) -> None:
+    def test_unavailable(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
         block = build_aif_provenance_block(
             {
-                "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},
-                "synthetic_fallback_reason": "no_candidates",
+                "aif_detection": {"detection_method": "unavailable", "quality_score": 0.3},
+
             },
             modality="DSC",
         )
-        assert block["Source"] == "synthetic"
+        assert block["Source"] == "unavailable"
         assert block["QualityFlag"] == "poor"
-        assert block["SyntheticFallbackReason"] == "no_candidates"
-        assert block["UsedAsCBVDenominator"] is True
+        assert block["UsedAsCBVDenominator"] is False
 
     def test_gamma_optimizer_failure_is_explicit(self) -> None:
         """A retained measured AIF carries optional gamma-fit failure provenance."""
@@ -130,7 +120,6 @@ class TestBuildProvenanceBlockDSC:
             {"aif_detection": {
                 "detection_method": "atlas_strict",
                 "quality_score": 0.8,
-                "gamma_fit_applied": False,
                 "gamma_fit_converged": False,
                 "gamma_fit_failure_reason": "optimizer_error",
             }},
@@ -138,7 +127,6 @@ class TestBuildProvenanceBlockDSC:
         )
 
         assert block["Source"] == "measured"
-        assert block["GammaFitApplied"] is False
         assert block["GammaFitConverged"] is False
         assert block["GammaFitFailureReason"] == "optimizer_error"
 
@@ -201,7 +189,6 @@ class TestBuildProvenanceBlockDCE:
             "Trigger": "below_expected_minimum",
             "PeakUnits": "mM",
         }
-        assert "GammaFitApplied" not in block
 
     def test_population(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
@@ -346,21 +333,6 @@ def test_detection_level_validation(level: str, modality: str, expected: bool) -
 
 
 class TestDSCRegression:
-    def test_dsc_block_unchanged(self) -> None:
-        from pmriprep.utils.aif_provenance import build_aif_provenance_block
-
-        block = build_aif_provenance_block(
-            {"aif_detection": {
-                "detection_method": "atlas_strict",
-                "quality_score": 0.8,
-                "gamma_fit_applied": True,
-            }},
-            modality="DSC",
-        )
-        assert block["Source"] == "gamma_fit_measured"
-        assert block["GammaFitApplied"] is True
-        assert "Confidence" not in block
-        assert "PopulationModel" not in block
 
     def test_dsc_apply_sidecar_preserves_source_and_dependence(self) -> None:
         sidecar: dict = {}
@@ -453,7 +425,6 @@ class TestPublicArtifactSchema:
             "detection_method": "atlas_strict",
             "quality_score": 0.8,
             "n_aif_voxels_selected": 6,
-            "gamma_fit_applied": True,
             "gamma_fit_r_squared": 0.95,
         }
         curve = build_aif_timeseries_sidecar(
@@ -478,7 +449,7 @@ class TestPublicArtifactSchema:
         assert quantitative_map["PerfusionProcessing"]["AIF"] == expected
         assert mask["SpatialSupportAvailable"] is True
 
-    @pytest.mark.parametrize("source", ["synthetic", "external"])
+    @pytest.mark.parametrize("source", ["unavailable", "external"])
     def test_nonspatial_dsc_aif_mask_is_explicit(self, source: str) -> None:
         """An empty non-measured AIF mask does not imply failed detection."""
         from pmriprep.workflows.dsc.datasinks import _build_aif_mask_meta

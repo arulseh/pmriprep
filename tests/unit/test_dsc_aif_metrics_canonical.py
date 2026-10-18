@@ -88,18 +88,14 @@ class TestAutoDetectionFullShape:
         assert am["ph"] == pytest.approx(100 * (900 - 700) / 900)
         assert am["brr"] == pytest.approx(0.0)
 
-    @pytest.mark.parametrize("ph, other_tail_fraction, expected_confidence", [
-        (14.0, 0.3, "low"), (20.0, 0.3, "moderate"), (30.0, 0.3, "high"),
-        (30.0, 0.9, "low"),
+    @pytest.mark.parametrize("ph, other_tail_fraction", [
+        (14.0, 0.3), (20.0, 0.3), (30.0, 0.3),
+        (30.0, 0.9),
     ])
-    def test_pooled_ph_and_brr_qualify_prior(
-        self, ph: float, other_tail_fraction: float, expected_confidence: str,
+    def test_pooled_ph_and_brr_describe_averaged_aif(
+        self, ph: float, other_tail_fraction: float,
     ) -> None:
-        """The measured pool controls eligibility even when its best candidate passes."""
-        from pmriprep.utils.dsc_cbv_constraint import (
-            ConstraintMode, assess_dsc_cbv_quality, determine_constraint_mode,
-        )
-
+        """PH and BRR describe the emitted pool rather than its best candidate."""
         concentration, signal, candidates = _measured_pool(ph, other_tail_fraction)
         mask = np.ones(concentration.shape[:3], dtype=bool)
         curve, _ = AIFDetection._compute_roi_averaged_aif(
@@ -108,26 +104,16 @@ class TestAutoDetectionFullShape:
         _, qc = AIFDetection._finalize_aif_metrics(
             curve, candidates, signal, mask, np.eye(4), 1.5, 6, 3, baseline_frames=10,
         )
-        qc["cnr_whole_brain"] = {"fraction_cnr_gt_4": 0.99}
-        quality = assess_dsc_cbv_quality(qc)
-        config = determine_constraint_mode(
-            quality, k2_metrics={"k2_reference_available": True},
-        )
         # Costs give weights 1/2, 1/4, 1/4. Quadratic smoothing preserves the signal dip.
-        assert quality.aif_peak_height == pytest.approx(ph / 100)
-        assert quality.aif_baseline_return == pytest.approx(
+        assert qc["aif_metrics"]["ph"] / 100 == pytest.approx(ph / 100)
+        assert qc["aif_metrics"]["brr"] / 100 == pytest.approx(
             np.mean(curve[54:64]) / np.max(curve[12:36])
         )
-        assert quality.aif_baseline_return != pytest.approx(0.1)
-        assert quality.confidence == expected_confidence
-        assert config.mode == (
-            ConstraintMode.SKIP if expected_confidence == "low" else ConstraintMode.SOFT
-        )
+        assert qc["aif_metrics"]["brr"] / 100 != pytest.approx(0.1)
 
     @pytest.mark.parametrize("signal_state", ["missing", "nonfinite"])
-    def test_unavailable_pooled_signal_withholds_prior(self, signal_state: str) -> None:
+    def test_unavailable_pooled_signal_has_no_ph(self, signal_state: str) -> None:
         """Unavailable pool signal leaves PH unavailable despite candidate metadata."""
-        from pmriprep.utils.dsc_cbv_constraint import assess_dsc_cbv_quality
 
         concentration, signal, candidates = _measured_pool(30.0)
         mask = np.ones(concentration.shape[:3], dtype=bool)
@@ -139,12 +125,8 @@ class TestAutoDetectionFullShape:
             curve, candidates, None if signal_state == "missing" else signal,
             mask, np.eye(4), 1.5, 6, 3, baseline_frames=10,
         )
-        quality = assess_dsc_cbv_quality(qc)
         assert "ph" not in qc["aif_metrics"]
-        assert quality.aif_peak_height is None
-        assert quality.aif_baseline_return is not None
-        assert quality.use_constraint is False
-        assert "AIF signal-drop fraction (PH) unavailable" in quality.reasons
+        assert np.isfinite(qc["aif_metrics"]["brr"])
 
 
 class TestExternalAifSubsetShape:
@@ -192,25 +174,10 @@ class TestExternalAifSubsetShape:
         assert "fwhm" in am
         assert qc["washout_fraction"] == pytest.approx(1.0)
         assert qc["detection_method"] == "external"
-        assert qc["cbv_auc_denominator_is_synthetic"] is False
+        assert qc["cbv_auc_denominator_available"] is True
 
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
-        from pmriprep.utils.dsc_cbv_constraint import prepare_vp_constraint_from_data
-        from pmriprep.workflows.dce._helpers import _dsc_dce_validation_node
 
         provenance = build_aif_provenance_block(qc, modality="DSC")
         assert provenance["Source"] == "external"
         assert provenance["UsedAsCBVDenominator"] is True
-        prior = prepare_vp_constraint_from_data(
-            ncbv_file=None, aif_qc_data=qc, brain_mask_file=str(conc_path),
-        )
-        assert prior.config.mode.value == "skip"
-        assert prior.vp_map is None
-        assert prior.qc_report["skip_reason"] == "external_aif_qc_unavailable"
-        concordance = _dsc_dce_validation_node(
-            vp_file=str(conc_path),
-            pk_qc={"dsc_cbv_constraint": prior.qc_report},
-        )
-        assert concordance["skipped"] is True
-        assert concordance["skip_reason"] == "external_aif_qc_unavailable"
-        assert concordance["reason"] == prior.config.reason

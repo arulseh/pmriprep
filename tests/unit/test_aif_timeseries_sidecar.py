@@ -33,10 +33,8 @@ def aif_qc() -> dict[str, Any]:
         "laterality_mask_source": "enhancing",
         "n_contralateral": 4,
         "n_ipsilateral": 2,
-        "gamma_fit_applied": True,
         "gamma_fit_r_squared": 0.94,
-        "gamma_fit_auc_ratio": 0.97,
-        "synthetic": False,
+        "gamma_fit_diagnostics": {"first_pass_area_fraction": 0.6},
         "hematocrit": 0.42,
         "aif_metrics": {
             "peak_conc": 12.5,
@@ -76,7 +74,7 @@ class TestCanonicalAIFBlock:
             aif_qc=aif_qc,
         )
         block = sidecar["PerfusionProcessing"]["AIF"]
-        assert block["Source"] == "gamma_fit_measured"
+        assert block["Source"] == "measured"
         assert block["DetectionLevel"] == "atlas_strict"
         assert block["NumberOfVoxelsSelected"] == 6
         assert block["PeakAmplitude"] == pytest.approx(12.5)
@@ -92,10 +90,9 @@ class TestCanonicalAIFBlock:
         assert block["TumorLateralityMaskSource"] == "enhancing"
         assert block["NumberOfContralateralCandidates"] == 4
         assert block["NumberOfIpsilateralCandidates"] == 2
-        assert block["GammaFitApplied"] is True
         assert block["GammaFitRSquared"] == pytest.approx(0.94)
-        assert block["GammaFitAUCRatio"] == pytest.approx(0.97)
-        assert block["UsedAsCBVDenominator"] is False
+        assert block["GammaFitDiagnostics"]["first_pass_area_fraction"] == pytest.approx(0.6)
+        assert block["UsedAsCBVDenominator"] is True
         assert block["Hematocrit"] == pytest.approx(0.42)
 
     def test_dce_modality_units(self, aif_qc, bids_root):
@@ -141,11 +138,11 @@ class TestOptionalKeysOmitted:
             bids_dir=bids_root,
             subject="X",
             session=None,
-            aif_qc={"detection_method": "synthetic", "synthetic": True},
+            aif_qc={"detection_method": "external"},
         )
         block = sidecar["PerfusionProcessing"]["AIF"]
-        assert block["Source"] == "synthetic"
-        assert block["DetectionLevel"] == "synthetic"
+        assert block["Source"] == "external"
+        assert block["DetectionLevel"] == "external"
         assert "FWHM" not in block
 
 

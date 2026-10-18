@@ -727,7 +727,7 @@
     }
   },
   "function_sha256": {
-    "aif_mask_meta": "8b97eda71134c24c8889b666dd65a552736fd3a6fe5f16ccb1e406a8363c4882",
+    "aif_mask_meta": "6693835090c270d8dc40c1caa46ea149f724737ef039b5b016eeedb9e8151be8",
     "aif_mask_sink": "93c01285d7934e3dce643b514dd09f9d5c30d1eb75df99136727eb50a04dc364",
     "base_minimal_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "base_perf_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
@@ -818,7 +818,7 @@
   "node_params": {
     "aif_mask_meta": {
       "description": "AIF spatial-support mask in DCE space",
-      "function_str": "def _build_aif_mask_meta(\n    base: dict,\n    description: str,\n    qc_metrics: dict | None,\n) -> dict:\n    \"\"\"Build an AIF ROI sidecar with the canonical DCE AIF block.\"\"\"\n    from pmriprep.utils.aif_provenance import build_aif_provenance_block\n\n    out = dict(base)\n    out[\"Description\"] = description\n    out[\"Type\"] = \"ROI\"\n    aif_block = build_aif_provenance_block(qc_metrics, modality=\"DCE\")\n    if aif_block:\n        out.setdefault(\"PerfusionProcessing\", {})[\"AIF\"] = aif_block\n    source = aif_block.get(\"Source\")\n    if source:\n        spatial_support_available = source in {\n            \"measured\", \"gamma_fit_measured\",\n        }\n        out[\"SpatialSupportAvailable\"] = spatial_support_available\n        if not spatial_support_available:\n            out[\"EmptyMaskMeaning\"] = (\n                \"No spatial AIF voxels were selected for this non-measured curve\"\n            )\n    return out\n"
+      "function_str": "def _build_aif_mask_meta(\n    base: dict,\n    description: str,\n    qc_metrics: dict | None,\n) -> dict:\n    \"\"\"Build an AIF ROI sidecar with the canonical DCE AIF block.\"\"\"\n    from pmriprep.utils.aif_provenance import build_aif_provenance_block\n\n    out = dict(base)\n    out[\"Description\"] = description\n    out[\"Type\"] = \"ROI\"\n    aif_block = build_aif_provenance_block(qc_metrics, modality=\"DCE\")\n    if aif_block:\n        out.setdefault(\"PerfusionProcessing\", {})[\"AIF\"] = aif_block\n    source = aif_block.get(\"Source\")\n    if source:\n        spatial_support_available = source in {\n            \"measured\",\n        }\n        out[\"SpatialSupportAvailable\"] = spatial_support_available\n        if not spatial_support_available:\n            out[\"EmptyMaskMeaning\"] = (\n                \"No spatial AIF voxels were selected for this non-measured curve\"\n            )\n    return out\n"
     },
     "aif_mask_sink": {
       "bids_suffix": "mask",

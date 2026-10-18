@@ -337,14 +337,14 @@ class TestEnrichDSC:
         assert perf["BaselineFrames"]["n_frames"] == 10
         assert perf["BaselineFrames"]["detection_method"] == "auto_p99"
 
-    def test_synthetic_aif(self) -> None:
-        """Synthetic AIF is derived from detection_method."""
+    def test_unavailable_aif(self) -> None:
+        """Unavailable AIF provenance follows detection outcome."""
         sidecar = _make_dsc_sidecar()
         qc = {
-            "aif_detection": {"detection_method": "synthetic", "n_aif_voxels_selected": 0},
+            "aif_detection": {"detection_method": "unavailable", "n_aif_voxels_selected": 0},
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
-        assert result["PerfusionProcessing"]["AIF"]["Source"] == "synthetic"
+        assert result["PerfusionProcessing"]["AIF"]["Source"] == "unavailable"
 
     def test_tikhonov_lambda(self) -> None:
         """Tikhonov sidecars retain selection and residue-integration semantics."""
@@ -453,3 +453,17 @@ class TestEnrichDSC:
         }
         result = enrich_provenance_from_qc(sidecar, dsc_qc, "DCE")
         assert "PerfusionProcessing" in result
+
+
+def test_partial_dsc_provenance_records_configured_and_executed_methods() -> None:
+    sidecar = {"PerfusionProcessing": {"Deconvolution": {"method": "cpi", "fit_domain": "signal"}}}
+    result = enrich_provenance_from_qc(sidecar, {
+        "deconvolution": {"configured_method": "cpi", "deconvolution_performed": False,
+                          "deconvolution_unavailable_reason": "aif_unavailable",
+                          "processing_status": "partial"},
+        "aif_detection": {"detection_method": "unavailable", "detection_status": "failed"},
+    }, "DSC")
+    assert result["PerfusionProcessing"]["Deconvolution"] == {
+        "configured_method": "cpi", "performed": False,
+        "unavailable_reason": "aif_unavailable", "processing_status": "partial",
+    }

@@ -50,6 +50,18 @@
     ],
     [
       "aif_detection",
+      "out_rejected_aif_curve",
+      "aif_qc_plot",
+      "rejected_aif_curve_file"
+    ],
+    [
+      "aif_detection",
+      "out_rejected_aif_mask",
+      "aif_qc_plot",
+      "rejected_aif_mask_file"
+    ],
+    [
+      "aif_detection",
       "qc_metrics",
       "aif_qc_plot",
       "qc_metrics"
@@ -2545,7 +2557,7 @@
     "dce_pk_fit_qc": "ea610e699089c32c3606df70138abb51296b2e1d643b6b2c1804c041076006bc",
     "dce_pk_maps_qc": "8a796024e48c475edefc903bb449e51ea720bbeeeb1c1315ce764fdabfe8489a",
     "derive_smoothed_kep": "599bb294e5520863fe6b795cd72eabac724c5573e6d25e84d3ba435eaa690365",
-    "dsc_dce_validation": "fb7b661418a517fa5ecc35048c268ee63f96925d8120655914f91d704735f296",
+    "dsc_dce_validation": "da5d51bf521025d8b460e0958d7283097da1db47e0cd23af83eb7f31de11be16",
     "dsc_dce_xval_plot": "4b3043f6b55becca0f1b47f258f81d1409455bf4f1fa0bea62b1be65fe452777",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",

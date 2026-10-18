@@ -24,7 +24,7 @@ Modality = Literal["DSC", "DCE"]
 
 #: DSC keys whose computation does not consume the AIF.
 AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
-    "psr",
+    "psr", "ncbv", "auc", "auc_corr", "ttp",
     "cnr", "tsnr",
     "k2",
 })
@@ -76,6 +76,8 @@ def _is_valid_detection_level(
         return False
     if modality == "DCE":
         return detection_level in DCE_DETECTION_LEVELS
+    if detection_level == "unavailable":
+        return True
     parts = split_detection_level(detection_level)
     return bool(parts) and all(p in DSC_DETECTION_LEVELS for p in parts)
 
@@ -86,14 +88,12 @@ def _derive_aif_source(
 ) -> str:
     """Derive ``Source`` value from AIF QC metrics."""
     detection_level = aif_qc.get("detection_method", "")
-    if detection_level == "synthetic":
-        return "synthetic"
+    if detection_level == "unavailable":
+        return "unavailable"
     if detection_level == "population":
         return "population"
     if detection_level == "external":
         return "external"
-    if modality == "DSC" and aif_qc.get("gamma_fit_applied"):
-        return "gamma_fit_measured"
     return "measured"
 
 
@@ -104,13 +104,12 @@ def _derive_quality_flag(
 ) -> str:
     """Derive ``QualityFlag`` from source and gate/score quality.
 
-    Non-subject-specific sources (synthetic, population) are forced to
-    ``poor``. DCE uses its gate-based ``aif_confidence``. DSC uses the
+    Unavailable and population sources receive ``poor``. DCE uses its gate-based ``aif_confidence``. DSC uses the
     accepted cascade tier, matching the overall QC recommendation and HTML;
     its reported score is a transformed candidate-ranking cost rather than a
     calibrated absolute-quality scale.
     """
-    if source in {"synthetic", "population"}:
+    if source in {"unavailable", "population"}:
         return "poor"
     if source == "external":
         return "warn"
@@ -181,8 +180,7 @@ def build_aif_provenance_block(
     Returns an empty dict when AIF QC is absent.
 
     For DSC, ``UsedAsCBVDenominator`` indicates whether the selected curve
-    supplies the AUC-CBV denominator. Gamma-fitted measured AIFs use the
-    underlying raw measured curve for that denominator.
+    supplies the AUC-CBV denominator.
     """
     if not isinstance(qc_metrics, dict):
         return {}
@@ -210,6 +208,8 @@ def build_aif_provenance_block(
         "DetectionLevel": aif_qc.get("detection_method", "unknown"),
         "QualityFlag": _derive_quality_flag(aif_qc, source, modality),
     }
+    if aif_qc.get("detection_status"):
+        block["DetectionStatus"] = aif_qc["detection_status"]
     qs = aif_qc.get("quality_score")
     if qs is not None:
         block["QualityScore"] = float(qs)
@@ -312,9 +312,6 @@ def build_aif_provenance_block(
         symmetry_overlap = aif_qc.get("whole_brain_symmetry_overlap")
         if symmetry_overlap is not None:
             block["WholeBrainSymmetryOverlap"] = float(symmetry_overlap)
-        block["GammaFitApplied"] = bool(
-            aif_qc.get("gamma_fit_applied", False),
-        )
         gamma_converged = aif_qc.get("gamma_fit_converged")
         if gamma_converged is not None:
             block["GammaFitConverged"] = bool(gamma_converged)
@@ -324,17 +321,16 @@ def build_aif_provenance_block(
         gamma_r2 = aif_qc.get("gamma_fit_r_squared")
         if gamma_r2 is not None:
             block["GammaFitRSquared"] = float(gamma_r2)
-        gamma_auc_ratio = aif_qc.get("gamma_fit_auc_ratio")
-        if gamma_auc_ratio is not None:
-            block["GammaFitAUCRatio"] = float(gamma_auc_ratio)
-        block["UsedAsCBVDenominator"] = source in {"measured", "external", "synthetic"}
-        if source == "synthetic":
-            reason = (
-                qc_metrics.get("synthetic_fallback_reason")
-                or aif_qc.get("synthetic_fallback_reason")
-            )
-            if reason:
-                block["SyntheticFallbackReason"] = str(reason)
+        if "gamma_fit_evaluation_start_frame" in aif_qc:
+            block["GammaFitEvaluationWindow"] = {
+                "StartFrame": aif_qc["gamma_fit_evaluation_start_frame"],
+                "EndFrameExclusive": aif_qc["gamma_fit_evaluation_end_frame"],
+                "RSquaredCurve": "unscaled_gamma_model",
+            }
+        diagnostics = aif_qc.get("gamma_fit_diagnostics")
+        if diagnostics:
+            block["GammaFitDiagnostics"] = diagnostics
+        block["UsedAsCBVDenominator"] = source in {"measured", "external"}
 
     # DCE-specific fields
     if modality == "DCE":

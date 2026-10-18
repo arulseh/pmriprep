@@ -301,7 +301,7 @@ def test_production_dispatch_preserves_signed_area(
     aux = np.zeros_like(cbf)
     maps = ComputeDSCMaps._finalize_dsc_maps(
         cbf=cbf, cbv=cbv, cbv_auc=np.ones_like(cbv), mtt=primary,
-        tmax=aux, ttp=aux, auc_raw=aux, auc_corrected=aux,
+        tmax=aux, ttp=aux, tissue_auc=aux, auc_raw=aux, auc_corrected=aux,
         auc_difference=aux, cnr=aux, tsnr=aux, psr=aux, cbf_std=None,
         mask_bool=mask,
     )

@@ -404,18 +404,17 @@
         <h3>Arterial Input Function (AIF) Detection</h3>
         {% if dce.qc_metrics.aif_detection %}
         <div class="metrics">
-            {% if dce.qc_metrics.aif_detection.aif_status is defined %}
+            {% set aif = dce.qc_metrics.aif_detection %}
+            {% set detection_status = aif.detection_status | default('accepted') %}
             <div class="metric">
-                <div class="metric-label">AIF Status</div>
-                <div class="metric-value {{ dce.qc_metrics.aif_detection.aif_status | lower }}">{{ dce.qc_metrics.aif_detection.aif_status }}</div>
+                <div class="metric-label">AIF Detection</div>
+                <div class="metric-value {{ 'poor' if detection_status == 'failed' else ('na' if detection_status == 'not_attempted' else aif.aif_status | default('warn') | lower) }}">{{ 'FAILED' if detection_status == 'failed' else ('Not attempted' if detection_status == 'not_attempted' else aif.aif_status | default('WARN')) }}</div>
+                {% if detection_status == 'failed' %}<div class="metric-note">{{ 'Quality checks failed' if aif.rejected_candidate else 'No acceptable candidates' }}</div>{% endif %}
             </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.detection_method is defined %}
             <div class="metric">
-                <div class="metric-label">Method</div>
-                <div class="metric-value">{{ aif_method_labels.get(dce.qc_metrics.aif_detection.detection_method, dce.qc_metrics.aif_detection.detection_method | replace('_', ' ') | title) }}</div>
+                <div class="metric-label">AIF Used</div>
+                <div class="metric-value">{{ 'Population' if aif.detection_method == 'population' else ('Supplied' if aif.detection_method == 'external' else 'Measured') }}</div>
             </div>
-            {% endif %}
             {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
                if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
             {% if used is defined %}

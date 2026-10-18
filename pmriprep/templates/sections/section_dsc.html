@@ -157,21 +157,17 @@
         <div class="metrics">
             {% if dsc.qc_metrics.aif_detection.detection_method is defined %}
             {% set aif_level = dsc.qc_metrics.aif_detection.detection_method %}
-            {% set aif_score = dsc.qc_metrics.aif_detection.quality_score
-                               if dsc.qc_metrics.aif_detection.quality_score is defined
-                               else none %}
-            {% set aif_flag = 'poor' if aif_level == 'synthetic'
-                              else ('pass' if aif_score is not none and aif_score >= 0.7
-                                    else ('warn' if aif_score is not none and aif_score >= 0.5
-                                          else ('pass' if aif_level in ['atlas_strict', 'atlas_relaxed']
-                                                else 'warn'))) %}
+            {% set detection_status = dsc.qc_metrics.aif_detection.detection_status | default('accepted') %}
+            {% set atlas_accepted = aif_level and (aif_level.split('+') | reject('in', ['atlas_strict', 'atlas_relaxed']) | list | length == 0) %}
+            {% set aif_flag = 'poor' if detection_status == 'failed' else ('na' if detection_status == 'not_attempted' else ('pass' if atlas_accepted else 'warn')) %}
             <div class="metric">
-                <div class="metric-label">AIF Status</div>
-                <div class="metric-value {{ aif_flag }}">{{ aif_flag | upper }}</div>
+                <div class="metric-label">AIF Detection</div>
+                <div class="metric-value {{ aif_flag }}">{{ 'FAILED' if detection_status == 'failed' else ('Not attempted' if detection_status == 'not_attempted' else aif_flag | upper) }}</div>
+                {% if detection_status == 'failed' %}<div class="metric-note">{{ 'No candidates' if dsc.qc_metrics.aif_detection.failure_reason == 'no_candidates' else 'Quality checks failed' }}</div>{% endif %}
             </div>
             <div class="metric">
-                <div class="metric-label">Method</div>
-                <div class="metric-value">{{ aif_level | replace("_", " ") | title }}</div>
+                <div class="metric-label">AIF Used</div>
+                <div class="metric-value">{{ 'None' if detection_status == 'failed' else ('Supplied' if aif_level == 'external' else 'Measured') }}</div>
             </div>
             {% endif %}
             {% set dsc_used = dsc.qc_metrics.aif_detection.n_aif_voxels_selected
@@ -260,27 +256,7 @@
             </div>
             {% endif %}
         </div>
-        {% if dsc.qc_metrics.aif_detection and dsc.qc_metrics.aif_detection.detection_method == 'synthetic' %}
-        {% set fallback_reason = dsc.qc_metrics.synthetic_fallback_reason|default(dsc.qc_metrics.aif_detection.synthetic_fallback_reason, true)|default('cascade_exhausted', true) %}
-        <div class="alert-warn" style="margin-top: 12px; padding: 10px 14px; border-left: 4px solid #d97706; background: #fef3c7; border-radius: 4px;">
-            <strong>Synthetic gamma-variate AIF.</strong>
-            Reason:
-            {% if dsc.qc_metrics.config and dsc.qc_metrics.config.aif_source == 'synthetic' %}user-selected{% elif fallback_reason == 'no_candidates' %}no arterial candidates survived automatic detection{% elif fallback_reason == 'low_snr' %}arterial candidates had insufficient signal quality{% elif fallback_reason == 'gamma_r2_floor' %}the measured curve had a poor gamma-variate fit{% else %}automatic detection found no acceptable arterial curve{% endif %}.
-            <ul style="margin: 6px 0 0 1em;">
-                <li><b>CBF, nCBF, MTT and deconvolution timing:</b>
-                    depend on the template AIF shape and timing.</li>
-                <li><b>AUC-CBV:</b> uses the template integral. With valid AIF
-                    and NAWM references, AUC-nCBV reduces to corrected tissue
-                    AUC divided by its NAWM median.</li>
-                <li><b>Other maps:</b> BSW K2 uses a tissue reference; PSR uses
-                    raw signal and the selected baseline and recovery windows;
-                    TTP uses the tissue peak relative to the selected baseline reference.</li>
-            </ul>
-            <p style="margin: 6px 0 0 0;">
-                Review AIF, baseline and reference-tissue QC when interpreting these maps.
-            </p>
-        </div>
-        {% endif %}
+
     </div>
     {% endif %}
 
@@ -366,9 +342,15 @@
     {% endif %}
 
     <!-- Example Voxel Fit -->
-    {% if dsc.images.dsc_fit_qc %}
+    {% if dsc.images.dsc_fit_qc or dsc.qc_metrics.deconvolution.processing_status == "partial" %}
     <div class="section">
         <h3>Example Voxel Fit</h3>
+        {% if dsc.qc_metrics.deconvolution.processing_status == 'partial' %}
+        <div class="metrics"><div class="metric">
+            <div class="metric-label">Fit</div><div class="metric-value na">Not performed</div>
+            <div class="metric-note">No acceptable AIF</div>
+        </div></div>
+        {% endif %}
         {% if dsc.qc_metrics.deconvolution is defined and dsc.qc_metrics.deconvolution.qc_voxel is defined %}
         <div class="metrics">
             <div class="metric">
@@ -389,10 +371,12 @@
             {% endif %}
         </div>
         {% endif %}
+        {% if dsc.images.dsc_fit_qc and dsc.qc_metrics.deconvolution.processing_status != 'partial' %}
         <div class="figure-container" style="margin-top: 10px;">
             <img src="{{ dsc.images.dsc_fit_qc }}" alt="DSC Fit QC">
             <a href="{{ dsc.images.dsc_fit_qc }}" download class="figure-download">Save</a>
         </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -400,6 +384,12 @@
     {% if dsc.qc_metrics.deconvolution is defined or dsc.images.dsc_param_maps_qc %}
     <div class="section">
         <h3>DSC Perfusion Maps</h3>
+        {% if dsc.qc_metrics.deconvolution.processing_status == 'partial' %}
+        <div class="metrics"><div class="metric">
+            <div class="metric-label">Output</div><div class="metric-value warn">Partial</div>
+            <div class="metric-note">AIF-independent maps only</div>
+        </div></div>
+        {% endif %}
         {% if dsc.qc_metrics.deconvolution is defined %}
         <div class="metrics">
             {% if dsc.qc_metrics.deconvolution.method is defined %}
