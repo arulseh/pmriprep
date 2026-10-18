@@ -31,7 +31,7 @@ def _worker_info(value: int) -> tuple[int, int, list[int]]:
 
 def _failure(value: int) -> int:
     """Propagate one failing voxel rather than silently substituting a fit."""
-    if value == 0:
+    if value == 2:
         raise RuntimeError("owned worker failure")
     clock.sleep(2)
     return value
@@ -81,7 +81,7 @@ def test_failed_and_abandoned_work_reaps_workers(monkeypatch: pytest.MonkeyPatch
             iterator = executor.map(_failure if fails else _worker_info, range(6), ordered=ordered)
             if fails:
                 with pytest.raises(RuntimeError, match="owned worker failure"):
-                    next(iterator)
+                    list(iterator)
             else:
                 next(iterator)
                 assert executor.pool is not None
