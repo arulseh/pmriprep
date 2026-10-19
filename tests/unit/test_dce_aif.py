@@ -1974,6 +1974,7 @@ def test_apply_aif_scale_default_preserves_in_band_and_high_peaks(peak: float) -
 
 _DEFAULT_GATE_CONTEXT = {
     "atlas_tier": "MCA_ACA_dce_strict",
+    "g6_atlas_eligible": True,
     "n_voxels": 10,
     "hemisphere": "bilateral",
     "n_slabs_spanned": 3,
@@ -1987,7 +1988,7 @@ _DEFAULT_GATE_CONTEXT = {
         pytest.param(
             4.0,
             {},
-            {"atlas_tier": "MCA_ACA_dil_dce_strict", "n_voxels": 2,
+            {"atlas_tier": "MCA_ACA_dil_dce_strict", "g6_atlas_eligible": False, "n_voxels": 2,
              "hemisphere": "unilateral_left", "n_slabs_spanned": 1},
             "FAIL_G6*",
             None,
@@ -2018,7 +2019,7 @@ _DEFAULT_GATE_CONTEXT = {
         pytest.param(
             8.83,
             {"ratio_30": 0.41},
-            {"atlas_tier": "MCA_ACA_dil_dce_strict", "n_voxels": 2,
+            {"atlas_tier": "MCA_ACA_dil_dce_strict", "g6_atlas_eligible": False, "n_voxels": 2,
              "hemisphere": "unilateral_left", "n_slabs_spanned": 1},
             "FAIL_G6*",
             None,
@@ -2040,7 +2041,7 @@ _DEFAULT_GATE_CONTEXT = {
         pytest.param(7.5, {}, {}, "G6_ADMIT", None, id="g6-scale-7p5"),
         pytest.param(8.0, {}, {}, "G6_ADMIT", None, id="g6-scale-ceiling"),
         pytest.param(8.5, {}, {}, "FAIL_G6_a", None, id="g6-scale-above-ceiling"),
-        pytest.param(4.0, {}, {"atlas_tier": "MCA_ACA_dil_dce_strict"},
+        pytest.param(4.0, {}, {"atlas_tier": "MCA_ACA_dil_dce_strict", "g6_atlas_eligible": False},
                      "FAIL_G6_f", None, id="g6-dilated-tier"),
         pytest.param(4.0, {}, {"atlas_tier": "MCA_ACA_dce_relaxed"},
                      "G6_ADMIT", None, id="g6-relaxed-tier"),
@@ -2532,6 +2533,7 @@ class TestCascadeGateDecisions:
             "agent_standard_dose": 0.1, "agent_r1_known": True,
             "field_strength": 3.0, "dose": 1.0, "target_peak": 0.0,
             "baseline_frames": 5, "lesion_mask_file": None,
+            "aif_mask_file": None,
             "mr_acquisition_type": "3D",
         })()
         return det
@@ -2793,6 +2795,7 @@ class TestScoreAndGatePool:
         n_slabs = _count_slabs_spanned(cands)
         status, decision = _evaluate_gates(
             sf, qc, "MCA_ACA_dce_strict", len(cands), hemi, n_slabs,
+            g6_atlas_eligible=True,
         )
 
         np.testing.assert_array_equal(outcome.curve_scaled, curve_scaled)

@@ -118,10 +118,11 @@ def _derive_quality_flag(
         parts = set(split_detection_level(detection_level))
         if not parts:
             return "warn"
-        if parts <= {"atlas_strict", "atlas_relaxed"}:
+        if parts <= {"atlas_strict", "atlas_relaxed", "user_mask_strict", "user_mask_relaxed"}:
             return "pass"
         if parts & {
             "atlas_permissive",
+            "user_mask_permissive",
             "full_atlas_permissive",
             "brain_relaxed",
             "brain_permissive",
@@ -210,6 +211,13 @@ def build_aif_provenance_block(
     }
     if aif_qc.get("detection_status"):
         block["DetectionStatus"] = aif_qc["detection_status"]
+    for key, field in (
+        ("search_region", "SearchRegion"),
+        ("failure_reason", "FailureReason"),
+        ("failure_detail", "FailureDetail"),
+    ):
+        if aif_qc.get(key):
+            block[field] = aif_qc[key]
     qs = aif_qc.get("quality_score")
     if qs is not None:
         block["QualityScore"] = float(qs)

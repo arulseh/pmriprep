@@ -130,10 +130,10 @@ def test_empty_search_stops_before_scoring(
     assert result.postfilter_diagnostics is None
 
 
-@pytest.mark.parametrize("atlas_is_mra", [True, False])
+@pytest.mark.parametrize("user_mask_supplied", [True, False])
 def test_roi_tier_passes_physical_voxel_sizes(
     monkeypatch: pytest.MonkeyPatch,
-    atlas_is_mra: bool,
+    user_mask_supplied: bool,
 ) -> None:
     """Bundled and user-supplied ROIs receive physical voxel sampling."""
     detector = AIFDetection()
@@ -151,11 +151,14 @@ def test_roi_tier_passes_physical_voxel_sizes(
         lambda *args, **kwargs: (np.empty((0, 3), dtype=int), np.zeros((2, 2, 2))),
     )
 
+    attempt = detector._build_cascade_attempts(
+        "strict", context.atlas_mask, not user_mask_supplied, None, user_mask_supplied,
+    )[0]
     detector._prepare_tier_candidates(
         context,
         "strict",
         context.atlas_mask,
-        atlas_is_mra,
+        attempt[3],
         None,
         float("nan"),
         float("nan"),
@@ -165,7 +168,7 @@ def test_roi_tier_passes_physical_voxel_sizes(
     )
 
     assert observed["voxel_sizes"] == context.voxel_sizes
-    assert observed["apply_posterior_midline_exclusion"] is not atlas_is_mra
+    assert observed["apply_posterior_midline_exclusion"] is False
 
 
 def test_all_candidates_inside_lesion_margin_exhaust_tier() -> None:

@@ -1079,13 +1079,15 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
     )
 
 
-@pytest.mark.parametrize("modality, source, outcome, label", [
-    ("dsc", "unavailable", "failed", "None"),
-    ("dce", "population", "failed", "Population"),
-    ("dce", "population", "not_attempted", "Population"),
-    ("dsc", "external", "not_attempted", "Supplied"),
+@pytest.mark.parametrize("modality, source, outcome, label, supplied_mask", [
+    ("dsc", "unavailable", "failed", "None", True),
+    ("dce", "population", "failed", "Population", True),
+    ("dce", "population", "not_attempted", "Population", False),
+    ("dsc", "external", "not_attempted", "Supplied", False),
+    ("dsc", "user_mask_strict", "accepted", "Measured", True),
+    ("dce", "atlas", "accepted", "Measured", True),
 ])
-def test_aif_detection_outcome_is_separate_from_used_source(env, modality, source, outcome, label):
+def test_aif_detection_outcome_is_separate_from_used_source(env, modality, source, outcome, label, supplied_mask):
     context = {
         "qc_metrics": {
             "aif_detection": {"detection_method": source, "detection_status": outcome,
@@ -1095,11 +1097,28 @@ def test_aif_detection_outcome_is_separate_from_used_source(env, modality, sourc
         "images": {"aif_curve": "curve.png", "aif_location": "voxels.png", "dsc_fit_qc": "fit.png"},
         "display_status": {},
     }
+    if supplied_mask:
+        context["qc_metrics"]["aif_detection"].update(
+            search_region="user_mask", aif_status="PASS",
+        )
+        if outcome == "failed":
+            context["qc_metrics"]["aif_detection"].update(
+                failure_reason="user_mask_exhausted", failure_detail="empty_user_mask",
+                aif_status="FAIL",
+            )
     rendered = env.get_template(f"sections/section_{modality}.html").render(**{modality: context})
     assert "AIF Detection" in rendered
     assert "AIF Used" in rendered
     assert f">{label}</div>" in rendered
-    assert 'class="metric-value poor">FAILED' in rendered if outcome == "failed" else "Not attempted" in rendered
+    if outcome == "failed":
+        assert 'class="metric-value poor">FAILED' in rendered
+        assert "Empty search mask" in rendered
+    elif outcome == "accepted":
+        assert 'class="metric-value pass">PASS' in rendered
+    else:
+        assert "Not attempted" in rendered
+    if supplied_mask:
+        assert "Search: supplied mask" in rendered
     assert 'src="curve.png"' in rendered and 'src="voxels.png"' in rendered
     if source == "unavailable":
         assert "Not performed" in rendered and "Partial" in rendered

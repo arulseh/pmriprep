@@ -40,6 +40,7 @@ def test_derive_aif_source(qc: dict, modality: str, expected: str) -> None:
         ),
         pytest.param({"detection_method": "atlas_relaxed"}, "measured", "DSC", "pass", id="dsc-relaxed"),
         pytest.param({"detection_method": "atlas_permissive"}, "measured", "DSC", "warn", id="dsc-permissive"),
+        pytest.param({"detection_method": "user_mask_permissive"}, "measured", "DSC", "warn", id="dsc-user-mask-permissive"),
         pytest.param(
             {"detection_method": "atlas_relaxed+atlas_permissive"},
             "measured", "DSC", "warn", id="dsc-compound-worst-tier",

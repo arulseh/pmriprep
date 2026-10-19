@@ -578,7 +578,7 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
             "External AIF provided; verify curve quality", 1,
         )
     elif parts_set & {
-        "atlas_permissive", "full_atlas_permissive",
+        "atlas_permissive", "full_atlas_permissive", "user_mask_permissive",
         "brain_relaxed", "brain_permissive",
     }:
         aif_rec = QCRecommendation(
@@ -587,7 +587,7 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
             "curve and location",
             1,
         )
-    elif parts_set <= {"atlas_strict", "atlas_relaxed"}:
+    elif parts_set <= {"atlas_strict", "atlas_relaxed", "user_mask_strict", "user_mask_relaxed"}:
         aif_rec = QCRecommendation(
             QCAction.INCLUDE,
             "Measured AIF passed automated quality checks", 0,

@@ -1,6 +1,7 @@
 """Characterization tests for DSC AIF cascade tier planning."""
 
 import numpy as np
+import pytest
 
 from pmriprep.interfaces.dsc_aif import AIFDetection
 
@@ -48,9 +49,10 @@ def test_initial_criteria_removes_stricter_tiers() -> None:
     ]
 
 
-def test_strict_roi_constraint_excludes_brain_search() -> None:
-    """A strict supplied ROI prevents fallback to unconstrained brain tiers."""
-    atlas = np.ones((2, 2, 2), dtype=np.uint8)
+@pytest.mark.parametrize("filled", [False, True])
+def test_supplied_mask_bounds_every_tier(filled: bool) -> None:
+    """Even an empty supplied ROI is the boundary for every search tier."""
+    atlas = np.full((2, 2, 2), filled, dtype=np.uint8)
     full_atlas = np.ones((2, 2, 2), dtype=np.uint8)
 
     attempts = AIFDetection._build_cascade_attempts(
@@ -58,17 +60,17 @@ def test_strict_roi_constraint_excludes_brain_search() -> None:
     )
 
     assert _names(attempts) == [
-        "atlas_strict",
-        "atlas_relaxed",
-        "atlas_permissive",
-        "full_atlas_permissive",
+        "user_mask_strict",
+        "user_mask_relaxed",
+        "user_mask_permissive",
     ]
+    assert all(roi is atlas and constrained for _, roi, _, constrained in attempts)
 
 
-def test_strict_roi_without_roi_retains_brain_search() -> None:
-    """The strict-ROI flag alone does not suppress brain-wide detection."""
+def test_no_roi_uses_brain_search() -> None:
+    """Without a supplied mask or atlas, detection uses whole-brain tiers."""
     attempts = AIFDetection._build_cascade_attempts(
-        "strict", None, False, None, True,
+        "strict", None, False, None, False,
     )
 
     assert _names(attempts) == ["brain_relaxed", "brain_permissive"]

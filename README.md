@@ -181,7 +181,7 @@ DSC fields:
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
 | `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
 | `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
-| `aif_mask_file` | `null` | AIF search-space mask (native-DSC space) |
+| `aif_mask_file` | `null` | AIF search mask (native-DSC space); no search outside it. If exhausted, produce AIF-independent maps only |
 | `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
@@ -210,7 +210,7 @@ DCE fields:
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
 | `aif_method` | `auto` | `auto` or `population` |
 | `aif_file` | `null` | External plasma AIF; bypasses detection and scaling |
-| `aif_mask_file` | `null` | AIF search-space mask (native-DCE space) |
+| `aif_mask_file` | `null` | AIF search mask (native-DCE space); no search outside it. If exhausted, use the population AIF |
 | `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |

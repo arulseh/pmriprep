@@ -48,9 +48,15 @@ def _detected_result(*, baseline_frames: int = 2) -> dsc_aif._FinalizedDetectedA
     )
 
 
-@pytest.mark.parametrize("outcome", ["accepted", "accepted_fit_failed", "rejected", "no_candidates"])
+@pytest.mark.parametrize("outcome,supplied_mask", [
+    ("accepted", False),
+    ("accepted_fit_failed", False),
+    ("rejected", False),
+    ("rejected", True),
+    ("no_candidates", False),
+])
 def test_run_interface_preserves_analysis_and_diagnostic_roles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, supplied_mask: bool,
 ) -> None:
     """The public runner exports usable input separately from diagnostic artifacts."""
     concentration = tmp_path / "concentration.nii.gz"
@@ -65,6 +71,8 @@ def test_run_interface_preserves_analysis_and_diagnostic_roles(
     cascade = _cascade(accepted=accepted)
     measured = _detected_result()
     diagnostic = measured.curve * 0.5
+    if supplied_mask:
+        detector.inputs.aif_mask_file = str(mask)
     if outcome == "rejected":
         cascade = cascade._replace(rejected=dsc_aif._RejectedAIF(
             measured.curve, measured.mask,
@@ -112,7 +120,13 @@ def test_run_interface_preserves_analysis_and_diagnostic_roles(
         assert not isdefined(outputs.out_aif_mask)
         assert qc["detection_status"] == "failed"
         assert outputs.candidate_count == qc["n_aif_voxels_selected"] == 0
-        assert qc["failure_reason"] == ("quality_checks_failed" if outcome == "rejected" else "no_candidates")
+        failure = "quality_checks_failed" if outcome == "rejected" else "no_candidates"
+        if supplied_mask:
+            assert qc["failure_reason"] == "user_mask_exhausted"
+            assert qc["failure_detail"] == failure
+            assert qc["search_region"] == "user_mask"
+        else:
+            assert qc["failure_reason"] == failure
     if outcome == "rejected":
         np.testing.assert_array_equal(np.loadtxt(outputs.out_rejected_aif_curve), measured.curve)
         np.testing.assert_array_equal(nib.load(outputs.out_rejected_aif_mask).get_fdata(), measured.mask)

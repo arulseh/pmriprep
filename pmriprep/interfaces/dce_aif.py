@@ -1088,6 +1088,8 @@ def _evaluate_gates(
     hemisphere: str,
     n_slabs_spanned: int,
     peak_ceiling_mm: float | None = None,
+    *,
+    g6_atlas_eligible: bool = False,
 ) -> tuple[GateStatus, GateDecision]:
     """Evaluate the 7 acceptance gates against a candidate pool.
 
@@ -1107,7 +1109,7 @@ def _evaluate_gates(
         Output of ``_compute_pool_qc``.
     atlas_tier : str or None
         Tier label (e.g. ``"MCA_ACA_dce_strict"`` / ``"..._relaxed"`` /
-        ``"..._permissive"``). Used only by G6 (f).
+        ``"..._permissive"``), recorded in the decision trace.
     n_voxels : int
         Pool size (used by G6 (g)).
     hemisphere : str
@@ -1118,6 +1120,9 @@ def _evaluate_gates(
         Dose- and tier-specific upper peak limit for the emitted plasma AIF.
         ``None`` preserves the standalone gate evaluation used by callers
         without dose metadata.
+    g6_atlas_eligible : bool, optional
+        Whether the pool comes from the internal atlas eligible for G6 (f).
+        Supplied search masks are ineligible.
 
     Returns
     -------
@@ -1186,11 +1191,7 @@ def _evaluate_gates(
 
     # G1 fails — consult G6 escape clause.
     g6_a = scale_factor <= DCE_AIF_GATE_SCALE_G6_CEILING
-    g6_f = atlas_tier in (
-        "MCA_ACA_dce_strict",
-        "MCA_ACA_dce_relaxed",
-        "MCA_ACA_dce_permissive",
-    )
+    g6_f = g6_atlas_eligible
     if hemisphere == "bilateral":
         g6_g = n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL
     else:
@@ -1516,7 +1517,7 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
     aif_mask_file = File(
         exists=True,
         mandatory=False,
-        desc="Optional user-supplied AIF search mask (overrides atlas mask)",
+        desc="Optional AIF search mask; measured candidates must lie inside it",
     )
     external_aif_file = File(
         exists=True,
@@ -3265,6 +3266,13 @@ class AIFDetection(BaseInterface):
             scale.required_factor, qc, atlas_tier_label,
             len(cands), hemisphere, n_slabs,
             peak_ceiling_mm=peak_ceiling_plasma,
+            g6_atlas_eligible=(
+                not (isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file)
+                and atlas_tier_label in {
+                    "MCA_ACA_dce_strict", "MCA_ACA_dce_relaxed",
+                    "MCA_ACA_dce_permissive",
+                }
+            ),
         )
         return PoolGateOutcome(
             curve_scaled=scale.curve,
@@ -3389,6 +3397,9 @@ class AIFDetection(BaseInterface):
         Whole-brain stays at "relaxed" (not permissive) because the atlas's
         spatial constraint is what makes permissive-tier candidates safe;
         without it, permissive admits tissue voxels.
+
+        A supplied search mask replaces the atlas tiers and restricts both
+        passes to its voxels. Exhaustion proceeds to the population AIF.
 
         Parameters
         ----------
@@ -3640,7 +3651,9 @@ class AIFDetection(BaseInterface):
                     break
 
         # Pass 1 (cont.): whole-brain relaxed
-        if not pass1_succeeded:
+        if not pass1_succeeded and not (
+            isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file
+        ):
             cands, scs, mets = self._find_candidates_in_mask(
                 conc_data, wb_search_mask, n_candidates, tr,
                 baseline_frames, "relaxed",
@@ -4369,7 +4382,7 @@ class AIFDetection(BaseInterface):
         if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
             atlas_img = nib.load(self.inputs.aif_mask_file)
             atlas_masks = [atlas_img.get_fdata()]  # type: ignore[attr-defined]
-            atlas_names = [re.sub(r"^MNI_\d+mm_MRA_arterial_", "", Path(self.inputs.aif_mask_file).name.split(".")[0])]
+            atlas_names = ["user_mask"]
         else:
             # Load tiered atlas cascade (atlas_mask_files, tightest first)
             if isdefined(self.inputs.atlas_mask_files):
@@ -4502,25 +4515,29 @@ class AIFDetection(BaseInterface):
         # exclusion. The anterior midline remains available for arterial
         # candidates. Atlas search retains its lighter preparation because
         # the arterial atlas already excludes venous structures.
-        symmetry_zone, symmetry_angle, symmetry_overlap = (
-            self._brain_symmetry_midline_zone(brain_mask, affine)
-        )
-        wb_search_mask = self._prepare_search_mask(
-            brain_mask,
-            voxel_sizes,
-            lesion_mask=lesion_mask,
-            lesion_distance_mm=_lesion_dist,
-            skip_midline=False,
-            slab_edge_inferior_mm=inferior_inflow_mm,
-            slab_edge_superior_mm=SSS_EXCLUSION_MM,
-            erosion_iterations=0,
-            physical_erosion_mm=_WB_DEPTH_EROSION_MM,
-            apply_superior_fraction_exclusion=False,
-            symmetry_midline_zone=symmetry_zone,
-        )
-        whole_brain_search_support_voxels = int(
-            np.count_nonzero(wb_search_mask > 0.5)
-        )
+        symmetry_angle = symmetry_overlap = float("nan")
+        whole_brain_search_support_voxels: int | None = None
+        wb_search_mask = np.zeros_like(atlas_search_mask)
+        if not (isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file):
+            symmetry_zone, symmetry_angle, symmetry_overlap = (
+                self._brain_symmetry_midline_zone(brain_mask, affine)
+            )
+            wb_search_mask = self._prepare_search_mask(
+                brain_mask,
+                voxel_sizes,
+                lesion_mask=lesion_mask,
+                lesion_distance_mm=_lesion_dist,
+                skip_midline=False,
+                slab_edge_inferior_mm=inferior_inflow_mm,
+                slab_edge_superior_mm=SSS_EXCLUSION_MM,
+                erosion_iterations=0,
+                physical_erosion_mm=_WB_DEPTH_EROSION_MM,
+                apply_superior_fraction_exclusion=False,
+                symmetry_midline_zone=symmetry_zone,
+            )
+            whole_brain_search_support_voxels = int(
+                np.count_nonzero(wb_search_mask > 0.5)
+            )
 
         # ===== Compute tissue TTP reference =====
         tissue_ttp_frame = self._calculate_tissue_ttp_reference(
@@ -5347,6 +5364,20 @@ class AIFDetection(BaseInterface):
             emit = self._emit_detected_aif(state, loaded, params)
         else:
             emit = self._emit_population_aif(state, loaded, params)
+
+        if (
+            params.aif_method != "population"
+            and isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file
+        ):
+            emit.qc_metrics["search_region"] = "user_mask"
+            if not state.candidates:
+                emit.qc_metrics["failure_reason"] = "user_mask_exhausted"
+                emit.qc_metrics["auto_fallback_reason"] = "user_mask_exhausted"
+                emit.qc_metrics["failure_detail"] = (
+                    "empty_user_mask" if not np.any(atlas_masks[0] > 0.5)
+                    else "quality_checks_failed" if state.rejected is not None
+                    else "no_candidates"
+                )
 
         return self._finalize_and_save(runtime, emit, state, loaded, params)
 

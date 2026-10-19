@@ -2103,7 +2103,6 @@
       "gd_multiplicity": 1,
       "lesion_distance": 15.0,
       "n_candidates": 10,
-      "strict_roi_constraint": false,
       "tr": 0.0
     },
     "aif_qc_plot": {

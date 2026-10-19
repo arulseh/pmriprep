@@ -439,7 +439,7 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
     aif_mask_file = File(
         exists=True,
         mandatory=False,
-        desc="Optional user-supplied AIF search mask (overrides atlas mask)",
+        desc="Optional AIF search mask; measured candidates must lie inside it",
     )
     lesion_mask_file = traits.Either(
         File(exists=True),
@@ -483,11 +483,6 @@ class AIFDetectionInputSpec(BaseInterfaceInputSpec):
         LESION_EXCLUSION_DISTANCE_MM,
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
-    )
-    strict_roi_constraint = traits.Bool(
-        False,
-        usedefault=True,
-        desc="If True, do NOT fall back to whole brain when atlas/ROI mask is provided",
     )
     baseline_frames = traits.Int(
         5,
@@ -2392,7 +2387,7 @@ class AIFDetection(BaseInterface):
         atlas_mask: Optional[npt.NDArray[Any]],
         atlas_is_mra: bool,
         full_atlas_mask: Optional[npt.NDArray[Any]],
-        strict_roi_constraint: bool,
+        user_mask_supplied: bool,
     ) -> list[_CascadeAttempt]:
         """Build the ordered DSC AIF search tiers permitted by the inputs."""
         criteria_order = ["strict", "relaxed", "permissive"]
@@ -2403,17 +2398,19 @@ class AIFDetection(BaseInterface):
 
         attempts: list[_CascadeAttempt] = []
         if atlas_mask is not None:
+            region = "user_mask" if user_mask_supplied else "atlas"
             for criteria in criteria_order:
                 attempts.append(
-                    (criteria, atlas_mask, f"atlas_{criteria}", atlas_is_mra)
+                    (criteria, atlas_mask, f"{region}_{criteria}",
+                     atlas_is_mra or user_mask_supplied)
                 )
 
-        if full_atlas_mask is not None:
+        if full_atlas_mask is not None and not user_mask_supplied:
             attempts.append(
                 ("permissive", full_atlas_mask, "full_atlas_permissive", True)
             )
 
-        if atlas_mask is None or not strict_roi_constraint:
+        if not user_mask_supplied:
             for criteria in ("relaxed", "permissive"):
                 attempts.append((criteria, None, f"brain_{criteria}", False))
 
@@ -2461,7 +2458,7 @@ class AIFDetection(BaseInterface):
         context: _DSCAIFDetectionContext,
         criteria: str,
         roi: Optional[npt.NDArray[Any]],
-        is_atlas: bool,
+        roi_constrained: bool,
         posterior_midline_zone: Optional[npt.NDArray[Any]],
         symmetry_angle: float,
         symmetry_overlap: float,
@@ -2475,7 +2472,7 @@ class AIFDetection(BaseInterface):
             roi,
             context.lesion_mask,
             voxel_sizes=context.voxel_sizes,
-            apply_posterior_midline_exclusion=not is_atlas,
+            apply_posterior_midline_exclusion=not roi_constrained,
             posterior_midline_zone=posterior_midline_zone,
         )
         candidate_voxels, peak_map = self._find_aif_candidate_voxels(
@@ -2507,7 +2504,7 @@ class AIFDetection(BaseInterface):
             context.voxel_sizes,
             lesion_min_distance_mm=context.lesion_distance,
         )
-        if not is_atlas:
+        if not roi_constrained:
             filter_metadata["whole_brain_symmetry_method"] = (
                 "brain_projection_reflection"
                 if posterior_midline_zone is not None
@@ -2654,6 +2651,13 @@ class AIFDetection(BaseInterface):
             tier_provenance,
         )
 
+    def _aif_averaging_mask(self, context: _DSCAIFDetectionContext) -> npt.NDArray[Any]:
+        """Limit arterial ROI averaging to the supplied search region, if any."""
+        if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
+            assert context.atlas_mask is not None
+            return (context.brain_mask > 0.5) & (context.atlas_mask > 0.5)
+        return context.brain_mask
+
     def _finalize_detected_aif(
         self,
         cascade: _CascadeDetectionResult,
@@ -2683,7 +2687,7 @@ class AIFDetection(BaseInterface):
             curve,
             cascade.candidates,
             context.signal,
-            context.brain_mask,
+            self._aif_averaging_mask(context),
             context.affine,
             context.tr,
             context.n_candidates,
@@ -2917,7 +2921,7 @@ class AIFDetection(BaseInterface):
             atlas_mask,
             atlas_is_mra,
             full_atlas_mask,
-            bool(self.inputs.strict_roi_constraint),
+            isdefined(self.inputs.aif_mask_file) and bool(self.inputs.aif_mask_file),
         )
 
         # Compute tissue-TTP reference once — independent of tier
@@ -2931,8 +2935,8 @@ class AIFDetection(BaseInterface):
         symmetry_overlap = float("nan")
         symmetry_computed = False
 
-        for crit, roi, level_name, is_atlas in attempts:
-            if not is_atlas and not symmetry_computed:
+        for crit, roi, level_name, roi_constrained in attempts:
+            if not roi_constrained and not symmetry_computed:
                 (
                     posterior_midline_zone,
                     symmetry_angle,
@@ -2953,7 +2957,7 @@ class AIFDetection(BaseInterface):
                 context,
                 crit,
                 roi,
-                is_atlas,
+                roi_constrained,
                 posterior_midline_zone,
                 symmetry_angle,
                 symmetry_overlap,
@@ -3056,7 +3060,7 @@ class AIFDetection(BaseInterface):
             single_best, rejected = self._try_single_best_fallback(
                 union_state.candidates,
                 conc_data,
-                brain_mask,
+                self._aif_averaging_mask(context),
                 tr,
                 aif_baseline_frames,
                 logger,
@@ -3173,6 +3177,16 @@ class AIFDetection(BaseInterface):
                 n_aif_voxels_selected=0, cbv_auc_denominator_available=False,
             )
             logger.warning("DSC AIF detection failed; retaining independent tissue maps")
+        if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
+            qc["search_region"] = "user_mask"
+            if curve is None:
+                assert context.atlas_mask is not None
+                qc["failure_detail"] = (
+                    "empty_user_mask"
+                    if not np.any(context.atlas_mask > 0.5)
+                    else qc["failure_reason"]
+                )
+                qc["failure_reason"] = "user_mask_exhausted"
         qc.update(
             detection_method=cascade.detection_level,
             n_aif_voxels_selected=len(cascade.candidates) if curve is not None else 0,
