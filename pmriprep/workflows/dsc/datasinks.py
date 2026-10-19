@@ -61,7 +61,7 @@ class DSCAnatSpec:
     is_subtraction: bool = False
 
 
-# Always-present DSC perfusion maps.
+# Core DSC map sinks; unavailable maps are omitted at runtime.
 _CORE_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec(
         "mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
@@ -1259,10 +1259,8 @@ def _add_xfm_sink(
 
 
 _ALWAYS_PRESENT_INPUTS = frozenset({
-    # The four DSC core perfusion maps are mandatory inputs to the factory.
-    # All other outputs (moco, mean ref, AIF mask, optional/normalized/
-    # Bayesian/k2/parametric, structural underlays, masks, xfms)
-    # are gated by ``present_inputs``.
+    # Build these sinks for every run. MTT and Tmax may be unavailable;
+    # PSR supplies the shared output geometry even for partial results.
     "mtt_map", "tmax_map", "psr_map",
 })
 
@@ -1300,7 +1298,8 @@ def init_dsc_datasinks_wf(
         fits report AIF-relative arrival delay; SVD-family methods report Tmax.
     present_inputs : set of str, optional
         Inputnode fields wired by the caller. Sinks for absent optional inputs
-        are omitted; mandatory perfusion inputs are always treated as present.
+        are omitted; core-map sinks are always built and skip unavailable maps
+        at runtime. PSR supplies the shared output geometry.
     has_smoothing : bool, optional
         Create sinks for smoothed hemodynamic maps.
     motion_correct : bool, optional
@@ -1341,7 +1340,7 @@ def init_dsc_datasinks_wf(
                 "work_dir",
                 # Sources
                 "source_dsc",
-                # Always-present perfusion maps
+                # Core maps
                 "mtt_map", "tmax_map", "psr_map",
                 # Relative
                 "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
@@ -1413,7 +1412,7 @@ def init_dsc_datasinks_wf(
             ("bids_dir", "bids_dir"),
             ("subject_id", "subject"),
             ("session_id", "session"),
-            ("mtt_map", "reference_voxel_source"),
+            ("psr_map", "reference_voxel_source"),
             ("provenance_dict", "provenance_dict"),
             ("qc_metrics", "qc_metrics"),
         ]),
@@ -1440,7 +1439,7 @@ def init_dsc_datasinks_wf(
             ("bids_dir", "bids_dir"),
             ("subject_id", "subject"),
             ("session_id", "session"),
-            ("mtt_map", "reference_voxel_source"),
+            ("psr_map", "reference_voxel_source"),
             ("provenance_dict", "provenance_dict"),
         ]),
     ])

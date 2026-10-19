@@ -351,18 +351,6 @@
     [
       "inputnode",
       "mtt_map",
-      "base_minimal_meta",
-      "reference_voxel_source"
-    ],
-    [
-      "inputnode",
-      "mtt_map",
-      "base_perf_meta",
-      "reference_voxel_source"
-    ],
-    [
-      "inputnode",
-      "mtt_map",
       "mtt_map_sink",
       "in_file"
     ],
@@ -479,6 +467,18 @@
       "provenance_dict",
       "base_perf_meta",
       "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "psr_map",
+      "base_minimal_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "psr_map",
+      "base_perf_meta",
+      "reference_voxel_source"
     ],
     [
       "inputnode",

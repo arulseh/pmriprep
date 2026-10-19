@@ -121,6 +121,7 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
     )
     if tmp_path is not None:
         wf.base_dir = str(tmp_path / "work")
+        wf.config["execution"]["crashdump_dir"] = str(tmp_path)
     inp = wf.inputs.inputnode
     for k, v in inputs.items():
         if k in {"output_dir", "subject_id", "session_id", "bids_dir"}:
@@ -130,6 +131,66 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         inp.qc_metrics = qc_metrics
     wf.run()
     return Path(inputs["output_dir"])
+
+
+def test_partial_dsc_writer_publishes_independent_maps_and_geometry(
+    minimal_inputs: dict, tmp_path: Path,
+) -> None:
+    """Undefined AIF-dependent maps permit the entire derivative writer to finish."""
+    from nipype.interfaces.base import Undefined
+
+    dependent = (
+        "mtt_map", "tmax_map", "rel_cbf_map", "rel_cbv_map",
+        "rel_cbv_auc_map", "ncbf_map", "aif_curve", "aif_mask",
+    )
+    for attr in dependent:
+        minimal_inputs[attr] = Undefined
+    affine = np.diag([2., 3., 4., 1.])
+    independent = {
+        "psr_map": ("dscPsr", 100.),
+        "ttp_map": ("dscTtp", 12.),
+        "cnr_map": ("dscCnr", 8.),
+        "tsnr_map": ("dscTsnr", 40.),
+        "k2_map": ("dscK2", -0.02),
+        "ncbv_map": ("dscNawmNormCbv", 1.2),
+    }
+    for attr, (_, value) in independent.items():
+        path = tmp_path / f"{attr}.nii.gz"
+        nib.save(nib.Nifti1Image(np.full((4, 4, 4), value), affine), path)
+        minimal_inputs[attr] = str(path)
+    for attr, shape in (
+        ("brain_mask_dsc", (4, 4, 4)), ("dsc_mean", (4, 4, 4)),
+        ("dsc_moco", (4, 4, 4, 10)),
+    ):
+        path = tmp_path / f"{attr}.nii.gz"
+        nib.save(nib.Nifti1Image(np.ones(shape), affine), path)
+        minimal_inputs[attr] = str(path)
+    aif_qc = {
+        "detection_method": "unavailable", "detection_status": "failed",
+        "search_region": "user_mask", "failure_reason": "user_mask_exhausted",
+        "failure_detail": "empty_user_mask",
+    }
+    minimal_inputs.update(
+        aif_qc=aif_qc,
+        work_dir=str(tmp_path / "work"),
+        smooth_hemodynamic={"ncbv": minimal_inputs["ncbv_map"]}, smooth_fwhm=3.,
+    )
+    derivatives = _run_writer(minimal_inputs, {
+        "aif_detection": aif_qc,
+        "deconvolution": {"method": "oSVD", "processing_status": "partial"},
+    }, tmp_path)
+    for desc, value in independent.values():
+        image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
+        np.testing.assert_allclose(nib.load(image).get_fdata(), value)
+        meta = _load_sidecar(derivatives, f"desc-{desc}_stat")
+        assert meta["VoxelSize"] == [2., 3., 4.]
+        assert meta["Sources"] == ["bids:raw:sub-test01/ses-01/perf/sub-test01_ses-01_dsc.nii.gz"]
+        assert meta["AIFDependent"] is False
+        assert _aif_block(meta)["FailureDetail"] == "empty_user_mask"
+    brain_meta = _load_sidecar(derivatives, "desc-brain_mask")
+    assert brain_meta["VoxelSize"] == [2., 3., 4.]
+    for desc in ("dscMtt", "dscTmax", "dscRelCbf", "dscRelCbv", "dscRelAUCCbv", "dscNawmNormCbf"):
+        assert not list(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
 
 
 def test_cbv_sidecars_report_statistics_from_their_own_images(

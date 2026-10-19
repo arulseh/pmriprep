@@ -195,10 +195,6 @@ DSC fields:
 | `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
 
-DSC uses measured AIFs for deconvolution. If no acceptable
-AIF is found, tissue-based nCBV, AUC, K2, PSR, TTP, CNR and tSNR remain
-available; AIF-dependent perfusion maps are withheld.
-
 DCE fields:
 
 | Field | Default | Description |
@@ -341,7 +337,9 @@ provenance reports tumor laterality and the final candidate counts relative to
 a unilateral lesion; these fields do not affect candidate selection.
 DSC regional statistics distinguish residue-integral CBV (`cbv`) from
 AUC-CBV (`cbv_auc`); each map's sidecar reports its own regional values.
-Normalized CBV (`ncbv`) is based on AUC-CBV.
+Normalized CBV (`ncbv`) is based on AUC-CBV. DSC uses measured AIFs for
+deconvolution. If no acceptable AIF is found, tissue-based nCBV, AUC, K2, PSR,
+TTP, CNR and tSNR remain available; AIF-dependent perfusion maps are withheld.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.
