@@ -25,8 +25,6 @@ from tests.conftest import generate_parker_aif
 class DSCSignalConfig:
     """Frozen configuration for DSC signal generation.
 
-    Follows the pattern from qiba/conftest.py (QIBATissueParams).
-
     Attributes
     ----------
     tr_sec : float
@@ -991,7 +989,7 @@ def make_gamma_residue(
     n_points: int,
     dt: float,
 ) -> npt.NDArray[np.floating]:
-    """Create a gamma (CTH) residue: the survival function of gamma transit times.
+    """Create a flow-scaled survival residue for gamma-distributed transit times.
 
     Transit times follow a gamma distribution with shape alpha and scale
     beta = MTT/alpha (so the mean alpha*beta == MTT). The residue is the
@@ -999,8 +997,7 @@ def make_gamma_residue(
     the regularized lower incomplete gamma function. R(0) = CBF, R is
     monotonically decreasing, and its integral is CBF*MTT (central volume
     theorem). alpha = 1 recovers the exponential residue CBF*exp(-t/MTT); large
-    alpha approaches a box-car, spanning the capillary-transit-heterogeneity
-    range with a single shape parameter.
+    alpha approaches a box-car as relative transit-time dispersion decreases.
 
     Parameters
     ----------
@@ -1009,7 +1006,7 @@ def make_gamma_residue(
     mtt : float
         Mean transit time in seconds.
     alpha : float
-        Gamma shape parameter (transit-time heterogeneity); alpha=1 -> exponential.
+        Gamma shape parameter (relative dispersion); alpha=1 -> exponential.
     n_points : int
         Number of time points.
     dt : float

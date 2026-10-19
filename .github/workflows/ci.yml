@@ -70,7 +70,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[test]"
-      - run: pytest tests/dro/ tests/qiba/ --runslow -m "not local_validation" -q --maxfail=20
+      - run: pytest tests/dro/ --runslow -q --maxfail=20
 
   doctests:
     name: Python doctests

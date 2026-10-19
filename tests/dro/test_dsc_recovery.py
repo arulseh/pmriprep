@@ -74,7 +74,7 @@ class TestResidueBuilders:
         assert box == pytest.approx(cbf * mtt, rel=0.1)
 
     def test_gamma_residue_central_volume_and_monotone(self) -> None:
-        # gamma (CTH) survival residue: R(0)=CBF, monotone decreasing,
+        # Gamma transit-time survival residue: R(0)=CBF, monotone decreasing,
         # integral == CBF*MTT for every shape alpha.
         cbf, mtt, dt, n = 2.0, 4.0, 0.05, 4000
         for alpha in [1.0, 2.0, 5.0, 20.0]:

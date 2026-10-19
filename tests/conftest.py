@@ -23,16 +23,16 @@ def pytest_collection_modifyitems(
 ) -> None:
     """Classify validation suites and skip slow tests unless requested."""
     tests_root = Path(__file__).parent.resolve()
-    local_root = (tests_root / "osipi").resolve()
-    synthetic_roots = {(tests_root / name).resolve() for name in ("dro", "qiba")}
+    local_roots = {(tests_root / name).resolve() for name in ("osipi", "external")}
+    synthetic_root = (tests_root / "dro").resolve()
 
     for item in items:
         item_path = Path(str(item.path)).resolve()
-        if item_path.is_relative_to(local_root):
+        if any(item_path.is_relative_to(root) for root in local_roots):
             item.add_marker(pytest.mark.local_validation)
         elif (
             not item.get_closest_marker("local_validation")
-            and any(item_path.is_relative_to(root) for root in synthetic_roots)
+            and item_path.is_relative_to(synthetic_root)
         ):
             item.add_marker(pytest.mark.synthetic_dro)
 
