@@ -112,8 +112,21 @@ class TestSelectDSCQCVoxelTiers:
         assert brain_mask[coord]
 
 
-def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(tmp_path) -> None:
-    """Displayed acquisition metrics match the stored-map signal conventions."""
+@pytest.mark.parametrize("analysis_baseline_frames", [None, 4])
+def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(
+    tmp_path, monkeypatch, analysis_baseline_frames,
+) -> None:
+    """The analysis baseline marker is independent of the S0-based QC metrics."""
+    from matplotlib.axes import Axes
+
+    original_axvline = Axes.axvline
+    markers = []
+
+    def record_axvline(ax, x=0, **kwargs):
+        markers.append((x, kwargs.get("label")))
+        return original_axvline(ax, x, **kwargs)
+
+    monkeypatch.setattr(Axes, "axvline", record_axvline)
     curve = np.array([100.0, 102.0, 98.0, 75.0, 85.0])
     signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
     mask = np.ones((3, 3, 3), dtype=bool)
@@ -124,11 +137,16 @@ def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(tmp_path) -> No
         baseline_frames=3,
         volume_tr_s=1.5,
         output_path=str(tmp_path / "dsc_qc.png"),
+        analysis_baseline_frames=analysis_baseline_frames,
     )
 
     assert stats["mean_tsnr"] == pytest.approx(50.0)
     assert stats["mean_cnr"] == pytest.approx(12.5)
     assert stats["fraction_cnr_gt_4"] == 1.0
+    assert markers == (
+        [] if analysis_baseline_frames is None
+        else [(5.25, "Analysis baseline end (4 frames)")]
+    )
 
 
 def test_leakage_qc_accepts_signed_k2(tmp_path) -> None:

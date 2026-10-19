@@ -1210,7 +1210,7 @@ def init_dsc_qc_wf(
     aif_source : str
         AIF provenance label for the merged QC ("external", "auto").
     baseline_frames : int
-        Pre-bolus baseline frame count (S0) for the preprocessing QC plot.
+        Initial S0 estimation frame count used for preprocessing QC metrics.
     deconvolution_method : str
         Method used to label the timing map in the parameter-map report.
     name : str
@@ -1227,6 +1227,8 @@ def init_dsc_qc_wf(
         Per-sub-workflow QC metric dicts / scalars merged into ``qc_metrics``.
     prebolus_mean_file, dsc_moco, registered_t1w, brain_mask_file
         Images for the registration / preprocessing / brain-mask filmstrips.
+    analysis_baseline_frames
+        Finalized baseline frame count marked on the global signal time course.
     out_aif_curve, out_aif_mask, out_gamma_aif_curve, out_rejected_aif_curve, out_rejected_aif_mask, concentration_file, corrected_concentration_file
         AIF, concentration, and leakage-QC inputs.
     rel_cbf, rel_cbv_auc, mtt, tmax, psr, ttp, k2, auc_raw, auc_corr, auc_diff, qc_fit_data
@@ -1256,6 +1258,7 @@ def init_dsc_qc_wf(
                 "preload_qc_dict",
                 "corrected_concentration_file",
                 "aif_qc_metrics",
+                "analysis_baseline_frames",
                 "out_aif_curve",
                 "out_aif_mask",
                 "out_gamma_aif_curve",
@@ -1367,6 +1370,7 @@ def init_dsc_qc_wf(
                 "dsc_signal_file", "brain_mask_file",
                 "baseline_frames",
                 "tr", "te", "subject_id", "session_id",
+                "analysis_baseline_frames",
             ],
             output_names=["plot_file", "stats"],
             function=_generate_dsc_preprocessing_qc,
@@ -1477,6 +1481,7 @@ def init_dsc_qc_wf(
         (inputnode, dsc_preproc_qc, [
             ("dsc_moco", "dsc_signal_file"),
             ("brain_mask_file", "brain_mask_file"),
+            ("analysis_baseline_frames", "analysis_baseline_frames"),
             ("tr", "tr"),
             ("te", "te"),
         ]),
@@ -2419,6 +2424,7 @@ def init_dsc_preproc_wf(
         ]),
         (conc_aif_wf, qc_wf, [
             ("outputnode.qc_metrics", "inputnode.aif_qc_metrics"),
+            ("outputnode.aif_baseline_frames", "inputnode.analysis_baseline_frames"),
             ("outputnode.out_aif_curve", "inputnode.out_aif_curve"),
             ("outputnode.out_aif_mask", "inputnode.out_aif_mask"),
             ("outputnode.out_gamma_aif_curve", "inputnode.out_gamma_aif_curve"),

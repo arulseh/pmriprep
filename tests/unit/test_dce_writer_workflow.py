@@ -258,10 +258,12 @@ def test_dce_factory_with_bayesian_uncertainty(
     assert uncertainty_meta["UncertaintyStatistic"] == "posterior_standard_deviation"
 
 
-def test_map_uncertainty_sidecar_records_run_accounting(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
+@pytest.mark.parametrize("inference", ["nlls", "vi", "map"])
+def test_uncertainty_sidecar_records_collected_qc(
+    tmp_path: Path, minimal_bids: tuple[Path, str], inference: str,
 ) -> None:
-    """MAP uncertainty sidecars include actual Hessian/fallback counts."""
+    """Collected fitting QC reaches uncertainty sidecars through the writer."""
+    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -271,7 +273,7 @@ def test_map_uncertainty_sidecar_records_run_accounting(
         bids_dir=str(bids),
         subject_id="01",
         session_id="0001",
-        pk_model="tofts", inference="map",
+        pk_model="tofts", inference=inference,
         present_inputs={"ktrans_uncertainty"},
     )
     wf.base_dir = str(tmp_path / "work")
@@ -279,8 +281,8 @@ def test_map_uncertainty_sidecar_records_run_accounting(
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
     inp.ktrans_uncertainty = _write_nii(tmp_path / "k_std.nii.gz")
-    inp.config_dict = {"inference": "map"}
-    inp.qc_metrics = {
+    inp.config_dict = {"inference": inference}
+    fit_qc = {
         "parameter_uncertainty": {
             "aif_inflation_input_factor": 2.0,
             "aif_parameter_scale_factors": {"Ktrans": 1.5, "ve": 1.0},
@@ -294,33 +296,43 @@ def test_map_uncertainty_sidecar_records_run_accounting(
             "hessian_unavailable_fraction": 2 / 9,
         }
     }
+    inp.qc_metrics = _collect_qc_metrics(
+        b1_qc=None, t1_qc=None, signal_conversion_qc=None,
+        preprocess_qc=None, brain_extraction_qc=None, registration_qc=None,
+        aif_qc=None, pk_qc=fit_qc, validation_result=None,
+    )
     wf.run()
 
+    desc = "dceStandardErrorKtrans" if inference == "nlls" else "dcePosteriorSDKtrans"
     sidecar = next(
         (out / "pmriprep" / "sub-01" / "ses-0001" / "perf").glob(
-            "*desc-dcePosteriorSDKtrans_stat.json"
+            f"*desc-{desc}_stat.json"
         )
     )
     metadata = json.loads(sidecar.read_text())
-    accounting = metadata["MAPUncertaintyAccounting"]
-    assert accounting["n_laplace_hessian"] == 7
-    assert accounting["n_hessian_unavailable"] == 2
-    assert accounting["n_not_computed"] == 1
+    if inference == "map":
+        accounting = metadata["MAPUncertaintyAccounting"]
+        assert accounting["n_laplace_hessian"] == 7
+        assert accounting["n_hessian_unavailable"] == 2
+        assert accounting["n_not_computed"] == 1
     inflation = metadata["AIFUncertaintyInflation"]
     assert inflation["Applied"] is True
+    assert inflation["InputFactor"] == 2.0
     assert inflation["ParameterScaleFactors"]["Ktrans"] == 1.5
 
 
+@pytest.mark.parametrize("ser_complete", [False, True])
 def test_dce_factory_model_free_no_model_entity(
-    tmp_path: Path, minimal_bids: tuple[Path, str]
+    tmp_path: Path, minimal_bids: tuple[Path, str], ser_complete: bool,
 ) -> None:
-    """Model-free maps (IAUC60, peakEnhancement, etc.) drop the model entity."""
+    """Model-free sidecars retain collected timing QC and omit the model entity."""
+    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
     out = tmp_path / "out"
 
-    present = {"iauc60_map", "peak_enhancement_map", "time_to_peak_map"}
+    present = {"iauc60_map", "peak_enhancement_map", "time_to_peak_map", "ser_map"}
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
@@ -332,8 +344,11 @@ def test_dce_factory_model_free_no_model_entity(
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
     for attr in present:
-        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz"))
-    inp.qc_metrics = {
+        value = np.nan if attr == "ser_map" and not ser_complete else 1.0
+        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz", value))
+    available_duration = 330.0 if ser_complete else 180.0
+    inp.config_dict = {"ser_early_time_s": 90.0, "ser_late_time_s": 300.0}
+    fit_qc = {
         "iauc": {
             "reference_frame": 5,
             "reference_time_s": 25.0,
@@ -341,7 +356,7 @@ def test_dce_factory_model_free_no_model_entity(
             "configured_baseline_frames": 8,
             "effective_baseline_frames": 5,
             "detected_bolus_arrival_frame": 6,
-            "available_post_reference_duration_s": 180.0,
+            "available_post_reference_duration_s": available_duration,
             "windows": {
                 "60": {
                     "requested_duration_s": 60.0,
@@ -349,8 +364,20 @@ def test_dce_factory_model_free_no_model_entity(
                     "cutoff_interpolated": False,
                 }
             },
-        }
+        },
+        "ser": {
+            "reference_frame": 5,
+            "reference_time_s": 25.0,
+            "reference_selection": "earlier_of_baseline_count_and_detected_arrival",
+            "available_post_reference_duration_s": available_duration,
+            "complete": ser_complete,
+        },
     }
+    inp.qc_metrics = _collect_qc_metrics(
+        b1_qc=None, t1_qc=None, signal_conversion_qc=None,
+        preprocess_qc=None, brain_extraction_qc=None, registration_qc=None,
+        aif_qc=None, pk_qc=fit_qc, validation_result=None,
+    )
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
@@ -387,6 +414,15 @@ def test_dce_factory_model_free_no_model_entity(
     assert ttp_sidecar["MinimumPeakEnhancementNoiseSD"] == 5.0
     assert "brain-median" in ttp_sidecar["NoiseEstimate"]
     assert "biased" in ttp_sidecar["Limitation"]
+    ser_sidecar = json.loads(
+        (perf_out / "sub-01_ses-0001_desc-dceSER_stat.json").read_text()
+    )
+    assert ser_sidecar["ReferenceFrame"] == 5
+    assert ser_sidecar["ReferenceTimeSeconds"] == 25.0
+    assert ser_sidecar["EarlySampleTimeSecondsAfterReference"] == 90.0
+    assert ser_sidecar["LateSampleTimeSecondsAfterReference"] == 300.0
+    assert ser_sidecar["AvailablePostReferenceDurationSeconds"] == available_duration
+    assert ser_sidecar["CompleteTiming"] is ser_complete
 
 
 def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -> None:

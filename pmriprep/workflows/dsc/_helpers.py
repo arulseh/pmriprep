@@ -1149,6 +1149,7 @@ def _generate_dsc_preprocessing_qc(
     te: float | None = None,
     subject_id: str = "",
     session_id: str = "",
+    analysis_baseline_frames: int | None = None,
 ) -> tuple[str, dict[str, object]]:
     """Generate DSC preprocessing QC plot.
 
@@ -1159,7 +1160,7 @@ def _generate_dsc_preprocessing_qc(
     brain_mask_file : str
         Path to brain mask NIfTI.
     baseline_frames : int
-        Number of pre-bolus baseline frames.
+        Initial S0 estimation frame count used for the displayed signal metrics.
     tr : float
         Repetition time in seconds.
     te : float, optional
@@ -1168,6 +1169,8 @@ def _generate_dsc_preprocessing_qc(
         Subject identifier.
     session_id : str, optional
         Session identifier.
+    analysis_baseline_frames : int, optional
+        Finalized baseline frame count to mark on the global signal time course.
 
     Returns
     -------
@@ -1195,6 +1198,7 @@ def _generate_dsc_preprocessing_qc(
         subject_id=subject_id,
         session_id=session_id,
         voxel_size_mm=voxel_size_mm,
+        analysis_baseline_frames=analysis_baseline_frames,
     )
     return plot_path, stats
 

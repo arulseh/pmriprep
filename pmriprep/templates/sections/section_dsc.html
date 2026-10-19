@@ -388,14 +388,15 @@
     {% if dsc.qc_metrics.deconvolution is defined or dsc.images.dsc_param_maps_qc %}
     <div class="section">
         <h3>DSC Perfusion Maps</h3>
-        {% if dsc.qc_metrics.deconvolution.processing_status == 'partial' %}
-        <div class="metrics"><div class="metric">
-            <div class="metric-label">Output</div><div class="metric-value warn">Partial</div>
-            <div class="metric-note">AIF-independent maps only</div>
-        </div></div>
-        {% endif %}
         {% if dsc.qc_metrics.deconvolution is defined %}
         <div class="metrics">
+            {% if dsc.qc_metrics.deconvolution.processing_status == 'partial' %}
+            <div class="metric">
+                <div class="metric-label">Output</div>
+                <div class="metric-value warn">Partial</div>
+                <div class="metric-note">AIF-independent maps only</div>
+            </div>
+            {% endif %}
             {% if dsc.qc_metrics.deconvolution.method is defined %}
             <div class="metric">
                 <div class="metric-label">Method</div>
@@ -445,7 +446,7 @@
             {% endif %}
             {% if dsc.qc_metrics.deconvolution.n_voxels is defined %}
             <div class="metric">
-                <div class="metric-label">Voxels Fitted</div>
+                <div class="metric-label">Brain Mask Voxels</div>
                 <div class="metric-value">{{ "{:,}".format(dsc.qc_metrics.deconvolution.n_voxels) }}</div>
             </div>
             {% endif %}

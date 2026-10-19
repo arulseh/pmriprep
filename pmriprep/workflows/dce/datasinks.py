@@ -285,8 +285,9 @@ def _build_model_free_extra(
 ) -> dict | None:
     """Apply configured model-free processing parameters to sidecar metadata."""
     out = dict(extra or {})
+    pk_qc = (qc_metrics or {}).get("pk_modeling") or {}
     if map_key.startswith("iauc"):
-        iauc_qc = (qc_metrics or {}).get("iauc", {})
+        iauc_qc = pk_qc.get("iauc", {})
         cutoff = map_key.removeprefix("iauc")
         if iauc_qc:
             out.update({
@@ -303,7 +304,7 @@ def _build_model_free_extra(
             })
         return out or None
     if map_key == "ttp":
-        reference_qc = (qc_metrics or {}).get("iauc", {})
+        reference_qc = pk_qc.get("iauc", {})
         out.update({
             "ReferenceFrame": reference_qc.get("reference_frame"),
             "ReferenceTimeSeconds": reference_qc.get("reference_time_s"),
@@ -318,7 +319,7 @@ def _build_model_free_extra(
     if map_key != "ser":
         return out or None
     dce = config_dict or {}
-    ser_qc = (qc_metrics or {}).get("ser", {})
+    ser_qc = pk_qc.get("ser", {})
     out.update({
         "EarlySampleTimeSecondsAfterReference": float(
             dce.get("ser_early_time_s", 60.0)
@@ -431,8 +432,9 @@ def _build_uncertainty_extra(
     extra = build_uncertainty_provenance(
         inference=str(estimation), modality="DCE"
     )
-    if isinstance(qc_metrics, dict):
-        uncertainty_qc = qc_metrics.get("parameter_uncertainty")
+    pk_qc = (qc_metrics or {}).get("pk_modeling") or {}
+    if isinstance(pk_qc, dict):
+        uncertainty_qc = pk_qc.get("parameter_uncertainty")
         if isinstance(uncertainty_qc, dict):
             factors = uncertainty_qc.get("aif_parameter_scale_factors")
             if isinstance(factors, dict):
@@ -443,8 +445,8 @@ def _build_uncertainty_extra(
                     "Method": "heuristic_parameter_specific_scaling",
                     "AppliedTo": "spread_and_interval_half_width",
                 }
-    if str(estimation).lower() == "map" and isinstance(qc_metrics, dict):
-        accounting = qc_metrics.get("map_uncertainty")
+    if str(estimation).lower() == "map" and isinstance(pk_qc, dict):
+        accounting = pk_qc.get("map_uncertainty")
         if isinstance(accounting, dict):
             extra["MAPUncertaintyAccounting"] = dict(accounting)
     return extra

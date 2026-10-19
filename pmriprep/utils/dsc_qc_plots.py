@@ -104,6 +104,7 @@ def generate_dsc_preprocessing_qc_plot(
     session_id: str = "",
     output_path: str | None = None,
     voxel_size_mm: tuple[float, float, float] | None = None,
+    analysis_baseline_frames: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Generate a 2-row preprocessing QC plot for DSC data.
 
@@ -118,7 +119,7 @@ def generate_dsc_preprocessing_qc_plot(
     brain_mask : npt.NDArray[Any]
         3D boolean brain mask.
     baseline_frames : int
-        Number of baseline (pre-bolus) frames.
+        Initial S0 estimation frame count used for the displayed signal metrics.
     volume_tr_s : float
         Temporal resolution between volumes in seconds.
     te_s : float, optional
@@ -131,6 +132,9 @@ def generate_dsc_preprocessing_qc_plot(
         Path to save PNG. If None, uses CWD.
     voxel_size_mm : tuple of float, optional
         Three spatial voxel dimensions in millimeters for the returned metadata.
+    analysis_baseline_frames : int, optional
+        Finalized baseline frame count used for leakage correction and DSC map
+        calculation. Its end is marked on the global signal time course.
 
     Returns
     -------
@@ -167,7 +171,14 @@ def generate_dsc_preprocessing_qc_plot(
     # S0 estimation window shading
     if baseline_frames > 0:
         ax.axvspan(0, (baseline_frames - 0.5) * volume_tr_s, alpha=0.15,
-                   color=COLORBLIND_PALETTE.success, label="S0 window")
+                   color=COLORBLIND_PALETTE.success,
+                   label=f"S0 estimation ({baseline_frames} frames)")
+    if analysis_baseline_frames is not None and analysis_baseline_frames > 0:
+        ax.axvline(
+            (analysis_baseline_frames - 0.5) * volume_tr_s,
+            color=COLORBLIND_PALETTE.secondary, linestyle="--", linewidth=1.5,
+            label=f"Analysis baseline end ({analysis_baseline_frames} frames)",
+        )
     # Peak signal drop annotation
     baseline_mean = np.mean(global_signal[:max(1, baseline_frames)])
     min_val = np.min(global_signal)

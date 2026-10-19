@@ -411,11 +411,14 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         aif_source = detected_aif_source or configured_aif_source or "auto"
 
     if aif_source == "unavailable":
-        sentences.append(
-            "DSC AIF detection failed; only AIF-independent maps were computed."
-        )
+        sentences.append("AIF-dependent perfusion parameters were not estimated.")
     elif aif_source == "external":
         sentences.append("A user-supplied DSC arterial input function was used.")
+    elif aif_info.get("search_region") == "user_mask":
+        sentences.append(
+            "The DSC arterial input function was detected within a user-supplied "
+            "search mask using a multi-level criteria cascade [@rulseh_inprep]."
+        )
     else:
         sentences.append(
             "The DSC arterial input function was automatically "
@@ -535,7 +538,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     # NAWM normalization
     for output_name, source_name, factor_key in (
         ("nCBF", "CBF", "cbf_normalization_factor"),
-        ("nCBV", "post-baseline tissue concentration integral", "normalization_factor"),
+        ("nCBV", "the post-baseline tissue concentration integral", "normalization_factor"),
     ):
         norm_factor = dsc_qc.get(factor_key)
         if norm_factor is not None and math.isfinite(norm_factor) and norm_factor > 0:
@@ -658,6 +661,12 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         )
     elif aif_source == "external":
         sentences.append("A user-supplied DCE arterial input function was used.")
+    elif aif_info.get("search_region") == "user_mask":
+        sentences.append(
+            "The DCE arterial input function was detected within a user-supplied "
+            "search mask using dose-aware candidate assessment and "
+            "quality-weighted averaging [@rulseh_inprep]."
+        )
     else:
         sentences.append(
             "The DCE arterial input function was automatically "

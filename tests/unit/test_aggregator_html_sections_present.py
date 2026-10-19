@@ -89,7 +89,7 @@ def test_unified_report_renders_recommendation_and_warnings(
     # Warnings rendered
     assert "Tissue segmentation" in html
     assert "FLAIR not available" in html
-    assert "Voxels Fitted" in html
+    assert "Brain Mask Voxels" in html
     assert "OI Mean (oSVD)" not in html
     assert "Threshold Mean (oSVD)" not in html
     assert "Lambda Mean (Tikhonov)" not in html
@@ -136,11 +136,15 @@ def test_boilerplate_bib_has_unique_fields_per_entry() -> None:
         assert not duplicates, f"duplicate BibTeX fields: {duplicates}"
 
 
-def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
+@pytest.mark.parametrize("supplied_mask", [False, True])
+def test_boilerplate_scientific_wording_matches_configurable_methods(supplied_mask: bool) -> None:
     """Boilerplate avoids unsupported sources and optional-method overclaims."""
     tikhonov = ru._build_dsc_boilerplate(
         {
-            "aif_detection": {"aif_method": "auto"},
+            "aif_detection": {
+                "detection_method": "user_mask_relaxed" if supplied_mask else "atlas_relaxed",
+                "search_region": "user_mask" if supplied_mask else "automatic",
+            },
             "preload": {"preload_correction_applied": True},
             "deconvolution": {"method": "tikhonov"},
         }
@@ -157,12 +161,20 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     assert "@rosen_1990" in tikhonov
     assert "@boxerman_2006" in tikhonov
     assert "@weisskoff_1994" not in tikhonov
-    assert "@mouches_2019" in tikhonov
+    if supplied_mask:
+        assert "detected within a user-supplied search mask" in tikhonov
+    else:
+        assert "MRA-atlas-guided voxel selection" in tikhonov
+        assert "@mouches_2019" in tikhonov
     assert "concentration curve and the measured AIF" in tikhonov
+    assert "AIF-dependent perfusion parameters were not estimated." not in tikhonov
 
     dce = ru._build_dce_boilerplate(
         {
-            "aif_detection": {"aif_source": "auto"},
+            "aif_detection": {
+                "aif_source": "auto",
+                "search_region": "user_mask" if supplied_mask else "automatic",
+            },
             "pk_modeling": {
                 "model": "auto",
                 "candidate_models": ["patlak", "extended_tofts"],
@@ -172,7 +184,11 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     assert "DCE time-series data were motion-corrected" in dce
     assert "dose-aware candidate assessment" in dce
     assert ", and the extended Tofts model" not in dce
-    assert "@mouches_2019" in dce
+    if supplied_mask:
+        assert "detected within a user-supplied search mask" in dce
+    else:
+        assert "MRA-atlas-guided candidate selection" in dce
+        assert "@mouches_2019" in dce
     assert "@schabel_2008" in dce
     assert "@tofts_1999" in dce
     assert "@schwarz_1978" in dce
@@ -180,24 +196,34 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     assert "product integration" in dce
 
 
-def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
+@pytest.mark.parametrize("supplied_mask", [False, True])
+@pytest.mark.parametrize("bsw_applied", [False, True])
+def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths(
+    supplied_mask: bool, bsw_applied: bool,
+) -> None:
     """Runtime outcomes override configured intent in DSC methods text."""
     partial = ru._build_dsc_boilerplate(
         {
             "config": {"aif_source": "auto"},
             "aif_detection": {
                 "detection_method": "unavailable",
+                "search_region": "user_mask" if supplied_mask else "automatic",
             },
             "preload": {
-                "preload_correction_applied": False,
+                "preload_correction_applied": bsw_applied,
                 "k2_method": "bsw",
-                "k2_reference_available": False,
+                "k2_reference_available": bsw_applied,
             },
+            "normalization_factor": 1.0,
         }
     )
-    assert "only AIF-independent maps were computed" in partial
+    assert "DSC nCBV was obtained by dividing the post-baseline tissue concentration integral" in partial
+    assert "AIF-dependent perfusion parameters were not estimated." in partial
     assert "automatically detected" not in partial
-    assert "eligible reference curve could not be constructed" in partial
+    if bsw_applied:
+        assert "Per-voxel BSW leakage correction was applied" in partial
+    else:
+        assert "eligible reference curve could not be constructed" in partial
 
     disabled = ru._build_dsc_boilerplate(
         {
@@ -211,6 +237,7 @@ def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
         }
     )
     assert "user-supplied DSC arterial input function" in disabled
+    assert "AIF-dependent perfusion parameters were not estimated." not in disabled
     assert "concentration curve and the user-supplied AIF" in disabled
     assert "BSW leakage correction was disabled" in disabled
     assert "without estimating or applying K2" not in disabled

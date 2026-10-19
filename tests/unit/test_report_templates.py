@@ -1092,7 +1092,7 @@ def test_aif_detection_outcome_is_separate_from_used_source(env, modality, sourc
         "qc_metrics": {
             "aif_detection": {"detection_method": source, "detection_status": outcome,
                               "failure_reason": "quality_checks_failed"},
-            "deconvolution": {"processing_status": "partial"} if source == "unavailable" else {},
+            "deconvolution": {"processing_status": "partial", "n_voxels": 1234} if source == "unavailable" else {},
         },
         "images": {"aif_curve": "curve.png", "aif_location": "voxels.png", "dsc_fit_qc": "fit.png"},
         "display_status": {},
@@ -1122,4 +1122,5 @@ def test_aif_detection_outcome_is_separate_from_used_source(env, modality, sourc
     assert 'src="curve.png"' in rendered and 'src="voxels.png"' in rendered
     if source == "unavailable":
         assert "Not performed" in rendered and "Partial" in rendered
+        assert "Brain Mask Voxels" in rendered and ">1,234<" in rendered
         assert 'src="fit.png"' not in rendered
