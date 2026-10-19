@@ -242,9 +242,6 @@ class TestSignalDomainRoundTrip:
         conc = signal_to_concentration(signal, te, baseline_frames=10)
         assert np.all(np.isfinite(conc)), "Concentration contains NaN/Inf"
 
-        if np.isfinite(snr) and snr < 5:
-            return
-
         result = svd_deconvolve_oscillation(conc[10:], aif, dt)
 
         if np.isinf(snr):

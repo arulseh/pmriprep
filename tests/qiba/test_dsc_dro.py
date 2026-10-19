@@ -1,9 +1,9 @@
-"""DSC parameter recovery with synthetic fixtures and optional TCIA data.
+"""DSC recovery with synthetic fixtures and optional GBM-DSC-MRI-DRO data.
 
 Synthetic cases use a gamma first pass with Gaussian-dispersed recirculation,
 exponential or gamma-survival residues, and chosen tissue/noise presets.
 They compare methods on the same generated data. Separate conditional tests
-load the external TCIA GBM-DSC-MRI-DRO.
+load the external GBM-DSC-MRI-DRO from The Cancer Imaging Archive.
 """
 
 from typing import Tuple
@@ -12,9 +12,10 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER
+from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER, assert_accuracy
 
 from pmriprep.utils.dsc_deconvolution import (
+    TikhonovSelection,
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
@@ -23,25 +24,23 @@ from pmriprep.utils.dsc_deconvolution import (
 
 from .conftest import (
     CTH_CONFIGS,
+    GBMDSCDROData,
+    GBM_DSC_CONSENSUS_15T,
+    GBM_DSC_CONSENSUS_3T,
+    GBM_DSC_DRO_ROOT,
+    GBM_DSC_PRELOAD_CONFIGS_15T,
+    GBM_DSC_TR_CONFIGS_15T,
+    GBM_DSC_TR_CONFIGS_3T,
     QIBA_NOISE_LEVELS,
     QIBA_TISSUE_PARAMS,
-    TCIADROData,
-    TCIA_CONSENSUS_15T,
-    TCIA_CONSENSUS_3T,
-    TCIA_DRO_ROOT,
-    TCIA_PRELOAD_CONFIGS_15T,
-    TCIA_TR_CONFIGS_15T,
-    TCIA_TR_CONFIGS_3T,
     add_gaussian_noise,
     deconvolve_dro_batch,
-    deconvolve_tcia_regions,
+    deconvolve_gbm_dsc_regions,
     fine_grid_forward,
     generate_cth_residue,
     generate_qiba_aif,
-    load_tcia_dro,
+    load_gbm_dsc_dro,
     make_exponential_residue,
-    skip_no_tcia_dro,
-    skip_no_tcia_preload,
 )
 
 # =============================================================================
@@ -58,7 +57,15 @@ SEED = 42
 # =============================================================================
 
 
-def _auc_cbv_regions(dro: TCIADROData) -> dict[str, float]:
+def _load_available_dro(config_name: str) -> GBMDSCDROData:
+    """Load one GBM-DSC-MRI-DRO configuration, skipping if it is unprepared."""
+    concentration_file = GBM_DSC_DRO_ROOT / config_name / "concentration.npz"
+    if not concentration_file.exists():
+        pytest.skip(f"GBM-DSC-MRI-DRO input unavailable: {concentration_file}")
+    return load_gbm_dsc_dro(config_name)
+
+
+def _auc_cbv_regions(dro: GBMDSCDROData) -> dict[str, float]:
     """Compute median signed AUC-CBV in each ROI over the full acquired window.
 
     Validity depends on concentration curves and areas, not deconvolution.
@@ -323,7 +330,8 @@ class TestQIBAOSVDExponential:
         """Evaluate the 20% residue-MTT recovery target at zero noise."""
         tissue, aif, dt, _, _, mtt = _make_qiba_exponential_data(tissue_key, "zero")
         result = svd_deconvolve_oscillation(tissue, aif, dt)
-        _assert_param_recovery(result.mtt, mtt, 0.20, param_name="MTT")
+        assert np.isfinite(result.mtt) and result.mtt > 0
+        assert_accuracy(abs(result.mtt - mtt) / mtt, 0.20, label="oSVD residue-MTT")
 
     @pytest.mark.parametrize("noise_key,thresh_min,cbf_tol,mtt_tol", OSVD_QIBA_NOISY)
     @pytest.mark.parametrize("tissue_key", SVD_TISSUES)
@@ -370,9 +378,12 @@ class TestQIBATikhonovExponential:
         )
 
         result = tikhonov_deconvolve(tissue, aif, dt)
-
-        _assert_param_recovery(result.cbf, cbf, 0.35, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, 0.58, param_name="MTT")
+        assert result.selection_status == TikhonovSelection.UPPER_ENDPOINT
+        assert np.all(np.isfinite([result.cbf, result.mtt])) and result.cbf > 0 and result.mtt > 0
+        assert_accuracy(
+            [abs(result.cbf - cbf) / cbf, abs(result.mtt - mtt) / mtt],
+            [0.35, 0.58], label="Tikhonov CBF, residue-MTT",
+        )
 
 
 # =============================================================================
@@ -493,9 +504,12 @@ class TestQIBATikhonovCTH:
         )
 
         result = tikhonov_deconvolve(tissue, aif, dt)
-
-        _assert_param_recovery(result.cbf, cbf, 0.30, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, 0.50, param_name="MTT")
+        assert result.selection_status == TikhonovSelection.UPPER_ENDPOINT
+        assert np.all(np.isfinite([result.cbf, result.mtt])) and result.cbf > 0 and result.mtt > 0
+        assert_accuracy(
+            [abs(result.cbf - cbf) / cbf, abs(result.mtt - mtt) / mtt],
+            [0.30, 0.50], label="Tikhonov CBF, residue-MTT",
+        )
 
 
 # =============================================================================
@@ -560,33 +574,27 @@ class TestQIBACrossMethodComparison:
 
         r_ssvd = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)
         r_tikh = tikhonov_deconvolve(tissue, aif, dt)
+        assert r_tikh.selection_status == TikhonovSelection.UPPER_ENDPOINT
 
-        cbf_values = [r_ssvd.cbf, r_tikh.cbf]
+        cbf_values = np.array([r_ssvd.cbf, r_tikh.cbf])
+        assert np.all(np.isfinite(cbf_values)) and np.all(cbf_values > 0)
         mean_cbf = float(np.mean(cbf_values))
-
-        for cbf_val in cbf_values:
-            rel_diff = abs(cbf_val - mean_cbf) / mean_cbf
-            assert rel_diff < 0.20, (
-                f"Method disagreement: CBFs = "
-                f"[{cbf_values[0]:.2f}, {cbf_values[1]:.2f}], "
-                f"mean = {mean_cbf:.2f}"
-            )
+        assert_accuracy(abs(cbf_values - mean_cbf) / mean_cbf, 0.20, label="sSVD/Tikhonov CBF")
 
 
 # =============================================================================
-# TCIA GBM-DSC-MRI-DRO
+# GBM-DSC-MRI-DRO
 # =============================================================================
 
 # Deconvolution methods to test
-TCIA_METHODS = ["ssvd", "osvd"]
+GBM_DSC_METHODS = ["ssvd", "osvd"]
 
 
 @pytest.mark.local_validation
-@skip_no_tcia_dro
-class TestTCIAGBMDSCDRO:
-    """Validate DSC deconvolution against TCIA GBM-DSC-MRI-DRO.
+class TestGBMDSCDRO:
+    """Validate DSC deconvolution against GBM-DSC-MRI-DRO.
 
-    The TCIA GBM-DSC-MRI-DRO provides:
+    The GBM-DSC-MRI-DRO provides:
     - 4 non-overlapping ROI masks: tumor-leak (Ktrans>0), tumor-noleak
       (Ktrans=0, same hemodynamics), NAWM, AIF
     - Known ground truth: tumor CBV=6.1%, WM CBV=3.5%, rCBV~1.74
@@ -606,7 +614,7 @@ class TestTCIAGBMDSCDRO:
         - Tumor-noleak: positive peak, returns near zero post-bolus
         - NAWM: positive peak, returns near zero post-bolus
         """
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
 
         for region in ["tumor_leak", "tumor_noleak", "nawm", "aif_region"]:
             mask = dro.roi_masks[region]
@@ -630,15 +638,15 @@ class TestTCIAGBMDSCDRO:
 
     # -- Test B: rCBV from noleak region ---
 
-    @pytest.mark.parametrize("method", TCIA_METHODS)
+    @pytest.mark.parametrize("method", GBM_DSC_METHODS)
     def test_rcbv_noleak(self, method: str) -> None:
         """rCBV = CBV(noleak) / CBV(WM) should approximate GT ~1.74.
 
         Ground truth: tumor CBV=6.1%, WM CBV=3.5%.
         The 0.8–4.0 interval is a broad fixture regression bound.
         """
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
-        results = deconvolve_tcia_regions(dro, method)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
+        results = deconvolve_gbm_dsc_regions(dro, method)
 
         noleak_cbv = results["tumor_noleak"]["cbv"]
         nawm_cbv = results["nawm"]["cbv"]
@@ -653,7 +661,7 @@ class TestTCIAGBMDSCDRO:
 
     # -- Test C: K2 correction effectiveness ---
 
-    @pytest.mark.parametrize("method", TCIA_METHODS)
+    @pytest.mark.parametrize("method", GBM_DSC_METHODS)
     def test_k2_correction_effectiveness(self, method: str) -> None:
         """K2-corrected leak rCBV should be closer to noleak rCBV.
 
@@ -664,23 +672,24 @@ class TestTCIAGBMDSCDRO:
 
         from pmriprep.utils.dsc_preload import apply_k2_correction
 
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
 
         # Noleak and NAWM rCBV (reference)
-        results = deconvolve_tcia_regions(dro, method)
+        results = deconvolve_gbm_dsc_regions(dro, method)
         noleak_cbv = results["tumor_noleak"]["cbv"]
         nawm_cbv = results["nawm"]["cbv"]
 
-        if nawm_cbv <= 0 or noleak_cbv <= 0:
-            pytest.skip("Invalid CBV estimates for comparison")
+        assert np.isfinite(nawm_cbv) and nawm_cbv > 0
+        assert np.isfinite(noleak_cbv) and noleak_cbv > 0
 
         rcbv_noleak = noleak_cbv / nawm_cbv
 
         # Uncorrected leak rCBV
         leak_cbv_uncorrected = results["tumor_leak"]["cbv"]
+        assert np.isfinite(leak_cbv_uncorrected)
         rcbv_leak_uncorrected = leak_cbv_uncorrected / nawm_cbv
 
-        # Apply K2 correction — add z-dim since TCIA is single 2D slice
+        # Apply K2 correction: add z-dim for the single-slice DRO
         # but apply_k2_correction expects 4D (x, y, z, time)
         brain_mask = (
             dro.roi_masks["tumor_leak"]
@@ -709,8 +718,7 @@ class TestTCIAGBMDSCDRO:
             corrected_leak_curves, dro.aif, dro.dt, method
         )
         valid = np.isfinite(cbv_corr) & (cbv_corr > 0)
-        if valid.sum() == 0:
-            pytest.skip("No valid corrected voxels")
+        assert np.any(valid), "No valid corrected voxels"
 
         leak_cbv_corrected = float(np.median(cbv_corr[valid]))
         rcbv_leak_corrected = leak_cbv_corrected / nawm_cbv
@@ -742,7 +750,7 @@ class TestTCIAGBMDSCDRO:
         """
         from pmriprep.utils.dsc_preload import apply_k2_correction
 
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
 
         brain_mask = (
             dro.roi_masks["tumor_leak"]
@@ -813,31 +821,30 @@ class TestTCIAGBMDSCDRO:
         Both methods operating on the same data should produce similar
         relative CBV estimates. Empirical COV ~18%.
         """
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
 
         rcbv_values = []
-        for method in TCIA_METHODS:
-            results = deconvolve_tcia_regions(dro, method)
+        for method in GBM_DSC_METHODS:
+            results = deconvolve_gbm_dsc_regions(dro, method)
             noleak_cbv = results["tumor_noleak"]["cbv"]
             nawm_cbv = results["nawm"]["cbv"]
-            if nawm_cbv > 0:
-                rcbv_values.append(noleak_cbv / nawm_cbv)
+            assert np.isfinite(nawm_cbv) and nawm_cbv > 0
+            assert np.isfinite(noleak_cbv) and noleak_cbv > 0
+            rcbv_values.append(noleak_cbv / nawm_cbv)
 
         assert len(rcbv_values) >= 2, "Need at least 2 methods for comparison"
-
         mean_rcbv = np.mean(rcbv_values)
         std_rcbv = np.std(rcbv_values)
 
-        if mean_rcbv > 0:
-            cov = std_rcbv / mean_rcbv
-            assert cov < 0.25, (
-                f"Cross-method rCBV COV = {cov:.3f} (>0.25). "
-                f"Values: {rcbv_values}"
-            )
+        cov = std_rcbv / mean_rcbv
+        assert cov < 0.25, (
+            f"Cross-method rCBV COV = {cov:.3f} (>0.25). "
+            f"Values: {rcbv_values}"
+        )
 
     # -- Test F: CBF/MTT physiological ranges ---
 
-    @pytest.mark.parametrize("method", TCIA_METHODS)
+    @pytest.mark.parametrize("method", GBM_DSC_METHODS)
     def test_perfusion_ranges(self, method: str) -> None:
         """CBF and MTT should be in physiological ranges.
 
@@ -845,8 +852,8 @@ class TestTCIAGBMDSCDRO:
         Note: deconvolved CBF is in arbitrary units without calibration
         factor, so we test relative ranges and ordering.
         """
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
-        results = deconvolve_tcia_regions(dro, method)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
+        results = deconvolve_gbm_dsc_regions(dro, method)
 
         # MTT should be in range (1-15s) for all tissue types
         for region in ["tumor_noleak", "nawm"]:
@@ -877,7 +884,7 @@ class TestTCIAGBMDSCDRO:
         shortening T1 and increasing signal above baseline (S(t) > S0),
         which gives negative deltaR2*.
         """
-        dro = load_tcia_dro(TCIA_CONSENSUS_15T)
+        dro = _load_available_dro(GBM_DSC_CONSENSUS_15T)
 
         leak_curves = dro.delta_r2[dro.roi_masks["tumor_leak"]]
 
@@ -911,7 +918,7 @@ class TestTCIAGBMDSCDRO:
         te_configs = []
         for te in [20, 30, 40, 50]:
             name = f"b0_15T_pre_none_bolus_full_TR1500ms_TE{te}ms_FA60deg"
-            if (TCIA_DRO_ROOT / name / "concentration.npz").exists():
+            if (GBM_DSC_DRO_ROOT / name / "concentration.npz").exists():
                 te_configs.append(name)
 
         if len(te_configs) < 2:
@@ -922,7 +929,7 @@ class TestTCIAGBMDSCDRO:
 
         rcbv_values = []
         for config_name in te_configs:
-            dro = load_tcia_dro(config_name)
+            dro = _load_available_dro(config_name)
             results = _auc_cbv_regions(dro)
             noleak_cbv = results["tumor_noleak"]
             nawm_cbv = results["nawm"]
@@ -947,7 +954,7 @@ class TestTCIAGBMDSCDRO:
         fa_configs = []
         for fa in [30, 60, 90]:
             name = f"b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA{fa}deg"
-            if (TCIA_DRO_ROOT / name / "concentration.npz").exists():
+            if (GBM_DSC_DRO_ROOT / name / "concentration.npz").exists():
                 fa_configs.append(name)
 
         if len(fa_configs) < 2:
@@ -958,18 +965,16 @@ class TestTCIAGBMDSCDRO:
 
         rcbv_values = []
         for config_name in fa_configs:
-            dro = load_tcia_dro(config_name)
-            results = deconvolve_tcia_regions(dro, "ssvd")
+            dro = _load_available_dro(config_name)
+            results = deconvolve_gbm_dsc_regions(dro, "ssvd")
             noleak_cbv = results["tumor_noleak"]["cbv"]
             nawm_cbv = results["nawm"]["cbv"]
-            if nawm_cbv > 0:
-                rcbv_values.append(noleak_cbv / nawm_cbv)
-
-        if len(rcbv_values) < 2:
-            pytest.skip("Too few valid rCBV values")
+            assert np.isfinite(nawm_cbv) and nawm_cbv > 0, config_name
+            assert np.isfinite(noleak_cbv) and noleak_cbv > 0, config_name
+            rcbv_values.append(noleak_cbv / nawm_cbv)
 
         mean_rcbv = np.mean(rcbv_values)
-        cov = float(np.std(rcbv_values) / mean_rcbv) if mean_rcbv > 0 else 0
+        cov = float(np.std(rcbv_values) / mean_rcbv)
         assert cov < 0.05, (
             f"rCBV COV across FA = {cov:.4f} (>0.05). "
             f"Values: {[f'{v:.4f}' for v in rcbv_values]}"
@@ -983,11 +988,11 @@ class TestTCIAGBMDSCDRO:
         rCBV ratio cancels r2* B0 dependence. Vessel-size effects
         may contribute ~5-10%. Empirical rel_diff ~2%.
         """
-        configs = [TCIA_CONSENSUS_15T, TCIA_CONSENSUS_3T]
+        configs = [GBM_DSC_CONSENSUS_15T, GBM_DSC_CONSENSUS_3T]
 
         available = [
             c for c in configs
-            if (TCIA_DRO_ROOT / c / "concentration.npz").exists()
+            if (GBM_DSC_DRO_ROOT / c / "concentration.npz").exists()
         ]
 
         if len(available) < 2:
@@ -997,32 +1002,29 @@ class TestTCIAGBMDSCDRO:
 
         rcbv_values = {}
         for config_name in available:
-            dro = load_tcia_dro(config_name)
-            results = deconvolve_tcia_regions(dro, "ssvd")
+            dro = _load_available_dro(config_name)
+            results = deconvolve_gbm_dsc_regions(dro, "ssvd")
             noleak_cbv = results["tumor_noleak"]["cbv"]
             nawm_cbv = results["nawm"]["cbv"]
-            if nawm_cbv > 0:
-                rcbv_values[config_name] = noleak_cbv / nawm_cbv
-
-        if len(rcbv_values) < 2:
-            pytest.skip("Invalid CBV in one or both configs")
+            assert np.isfinite(nawm_cbv) and nawm_cbv > 0, config_name
+            assert np.isfinite(noleak_cbv) and noleak_cbv > 0, config_name
+            rcbv_values[config_name] = noleak_cbv / nawm_cbv
 
         values = list(rcbv_values.values())
         mean_rcbv = np.mean(values)
-        if mean_rcbv > 0:
-            rel_diff = abs(values[0] - values[1]) / mean_rcbv
-            assert rel_diff < 0.15, (
-                f"1.5T vs 3T rCBV differs by {rel_diff:.2%} (>15%): "
-                f"{dict(zip(rcbv_values.keys(), values))}"
-            )
+        rel_diff = abs(values[0] - values[1]) / mean_rcbv
+        assert rel_diff < 0.15, (
+            f"1.5T vs 3T rCBV differs by {rel_diff:.2%} (>15%): "
+            f"{dict(zip(rcbv_values.keys(), values))}"
+        )
 
     # -- Test K: TR sensitivity ---
 
     @pytest.mark.parametrize(
         "tr_configs,label",
         [
-            pytest.param(TCIA_TR_CONFIGS_15T, "1.5T", id="15T"),
-            pytest.param(TCIA_TR_CONFIGS_3T, "3T", id="3T"),
+            pytest.param(GBM_DSC_TR_CONFIGS_15T, "1.5T", id="15T"),
+            pytest.param(GBM_DSC_TR_CONFIGS_3T, "3T", id="3T"),
         ],
     )
     def test_tr_sensitivity(self, tr_configs: list, label: str) -> None:
@@ -1033,7 +1035,7 @@ class TestTCIAGBMDSCDRO:
         """
         available = [
             c for c in tr_configs
-            if (TCIA_DRO_ROOT / c / "concentration.npz").exists()
+            if (GBM_DSC_DRO_ROOT / c / "concentration.npz").exists()
         ]
         if len(available) < 2:
             pytest.skip(
@@ -1043,18 +1045,16 @@ class TestTCIAGBMDSCDRO:
 
         rcbv_values = []
         for config_name in available:
-            dro = load_tcia_dro(config_name)
-            results = deconvolve_tcia_regions(dro, "ssvd")
+            dro = _load_available_dro(config_name)
+            results = deconvolve_gbm_dsc_regions(dro, "ssvd")
             noleak_cbv = results["tumor_noleak"]["cbv"]
             nawm_cbv = results["nawm"]["cbv"]
-            if nawm_cbv > 0:
-                rcbv_values.append(noleak_cbv / nawm_cbv)
-
-        if len(rcbv_values) < 2:
-            pytest.skip("Too few valid rCBV values")
+            assert np.isfinite(nawm_cbv) and nawm_cbv > 0, config_name
+            assert np.isfinite(noleak_cbv) and noleak_cbv > 0, config_name
+            rcbv_values.append(noleak_cbv / nawm_cbv)
 
         mean_rcbv = np.mean(rcbv_values)
-        cov = float(np.std(rcbv_values) / mean_rcbv) if mean_rcbv > 0 else 0
+        cov = float(np.std(rcbv_values) / mean_rcbv)
         assert cov < 0.10, (
             f"[{label}] rCBV COV across TR = {cov:.4f} (>0.10). "
             f"Values: {[f'{v:.4f}' for v in rcbv_values]}"
@@ -1062,18 +1062,15 @@ class TestTCIAGBMDSCDRO:
 
     # -- Test L: 3T rCBV noleak ---
 
-    @pytest.mark.parametrize("method", TCIA_METHODS)
+    @pytest.mark.parametrize("method", GBM_DSC_METHODS)
     def test_rcbv_noleak_3t(self, method: str) -> None:
         """rCBV at 3T should match 1.5T range (0.8-4.0, GT ~1.74).
 
         Extends test_rcbv_noleak to 3T field strength.
         """
-        config = TCIA_CONSENSUS_3T
-        if not (TCIA_DRO_ROOT / config / "concentration.npz").exists():
-            pytest.skip("3T consensus config not available")
-
-        dro = load_tcia_dro(config)
-        results = deconvolve_tcia_regions(dro, method)
+        config = GBM_DSC_CONSENSUS_3T
+        dro = _load_available_dro(config)
+        results = deconvolve_gbm_dsc_regions(dro, method)
 
         noleak_cbv = results["tumor_noleak"]["cbv"]
         nawm_cbv = results["nawm"]["cbv"]
@@ -1088,18 +1085,15 @@ class TestTCIAGBMDSCDRO:
 
     # -- Test M: 3T perfusion ranges ---
 
-    @pytest.mark.parametrize("method", TCIA_METHODS)
+    @pytest.mark.parametrize("method", GBM_DSC_METHODS)
     def test_perfusion_ranges_3t(self, method: str) -> None:
         """CBF and MTT at 3T should be in physiological ranges.
 
         Extends test_perfusion_ranges to 3T field strength.
         """
-        config = TCIA_CONSENSUS_3T
-        if not (TCIA_DRO_ROOT / config / "concentration.npz").exists():
-            pytest.skip("3T consensus config not available")
-
-        dro = load_tcia_dro(config)
-        results = deconvolve_tcia_regions(dro, method)
+        config = GBM_DSC_CONSENSUS_3T
+        dro = _load_available_dro(config)
+        results = deconvolve_gbm_dsc_regions(dro, method)
 
         for region in ["tumor_noleak", "nawm"]:
             mtt = results[region]["mtt"]
@@ -1120,17 +1114,15 @@ class TestTCIAGBMDSCDRO:
 
 
 # =============================================================================
-# TCIA Preload / Leakage Correction Validation
+# GBM-DSC-MRI-DRO Preload / Leakage Correction Validation
 # =============================================================================
 
 
 @pytest.mark.local_validation
-@skip_no_tcia_dro
-@skip_no_tcia_preload
-class TestTCIAPreloadLeakage:
+class TestGBMDSCDROPreloadLeakage:
     """Validate BSW K2 correction across preload dosing schemes.
 
-    The TCIA GBM-DSC-MRI-DRO provides 4 preload/bolus combinations:
+    The GBM-DSC-MRI-DRO provides 4 preload/bolus combinations:
     - pre=none, bolus=full (standard single-dose)
     - pre=quarter, bolus=full (quarter preload)
     - pre=half, bolus=half (half preload, half bolus)
@@ -1148,20 +1140,20 @@ class TestTCIAPreloadLeakage:
         deltaR2* ratio. Empirical COV ~5%.
         """
         rcbv_values = []
-        for config_name in TCIA_PRELOAD_CONFIGS_15T:
-            dro = load_tcia_dro(config_name)
-            results = deconvolve_tcia_regions(dro, "ssvd")
+        for config_name in GBM_DSC_PRELOAD_CONFIGS_15T:
+            dro = _load_available_dro(config_name)
+            results = deconvolve_gbm_dsc_regions(dro, "ssvd")
             noleak_cbv = results["tumor_noleak"]["cbv"]
             nawm_cbv = results["nawm"]["cbv"]
-            if nawm_cbv > 0:
-                rcbv_values.append(noleak_cbv / nawm_cbv)
+            assert np.isfinite(nawm_cbv) and nawm_cbv > 0, config_name
+            assert np.isfinite(noleak_cbv) and noleak_cbv > 0, config_name
+            rcbv_values.append(noleak_cbv / nawm_cbv)
 
         assert len(rcbv_values) >= 3, (
             f"Need ≥3 valid rCBV values, got {len(rcbv_values)}"
         )
-
         mean_rcbv = np.mean(rcbv_values)
-        cov = float(np.std(rcbv_values) / mean_rcbv) if mean_rcbv > 0 else 0
+        cov = float(np.std(rcbv_values) / mean_rcbv)
         assert cov < 0.15, (
             f"Noleak rCBV COV across preloads = {cov:.4f} (>0.15). "
             f"Values: {[f'{v:.4f}' for v in rcbv_values]}"
@@ -1174,21 +1166,22 @@ class TestTCIAPreloadLeakage:
         constant. The half_half config uses half bolus, so it is excluded.
         """
         full_bolus_configs = [
-            c for c in TCIA_PRELOAD_CONFIGS_15T
+            c for c in GBM_DSC_PRELOAD_CONFIGS_15T
             if "bolus_full" in c
         ]
 
         aif_peaks = []
         for config_name in full_bolus_configs:
-            dro = load_tcia_dro(config_name)
-            aif_peaks.append(float(np.max(dro.aif)))
+            dro = _load_available_dro(config_name)
+            peak = float(np.max(dro.aif))
+            assert np.isfinite(peak) and peak > 0, config_name
+            aif_peaks.append(peak)
 
         assert len(aif_peaks) >= 2, (
             f"Need ≥2 full-bolus configs, got {len(aif_peaks)}"
         )
-
         mean_peak = np.mean(aif_peaks)
-        cov = float(np.std(aif_peaks) / mean_peak) if mean_peak > 0 else 0
+        cov = float(np.std(aif_peaks) / mean_peak)
         assert cov < 0.20, (
             f"AIF peak COV across full-bolus preloads = {cov:.4f} (>0.20). "
             f"Peaks: {[f'{p:.2f}' for p in aif_peaks]}"
@@ -1204,15 +1197,16 @@ class TestTCIAPreloadLeakage:
         """
         from pmriprep.utils.dsc_preload import apply_k2_correction
 
-        config_name = TCIA_PRELOAD_CONFIGS_15T[0]  # pre=none
-        dro = load_tcia_dro(config_name)
+        config_name = GBM_DSC_PRELOAD_CONFIGS_15T[0]  # pre=none
+        dro = _load_available_dro(config_name)
 
-        results = deconvolve_tcia_regions(dro, "ssvd")
+        results = deconvolve_gbm_dsc_regions(dro, "ssvd")
         noleak_cbv = results["tumor_noleak"]["cbv"]
         nawm_cbv = results["nawm"]["cbv"]
 
-        if nawm_cbv <= 0 or noleak_cbv <= 0:
-            pytest.skip("Invalid CBV estimates")
+        assert np.isfinite(nawm_cbv) and nawm_cbv > 0
+        assert np.isfinite(noleak_cbv) and noleak_cbv > 0
+        assert np.isfinite(results["tumor_leak"]["cbv"])
 
         rcbv_noleak = noleak_cbv / nawm_cbv
         rcbv_leak_uncorr = results["tumor_leak"]["cbv"] / nawm_cbv
@@ -1246,8 +1240,7 @@ class TestTCIAPreloadLeakage:
             corr_leak, dro.aif, dro.dt, "ssvd"
         )
         valid = np.isfinite(cbv_corr) & (cbv_corr > 0)
-        if valid.sum() == 0:
-            pytest.skip("No valid corrected voxels")
+        assert np.any(valid), "No valid corrected voxels"
 
         rcbv_leak_corr = float(np.median(cbv_corr[valid])) / nawm_cbv
 
@@ -1271,7 +1264,7 @@ class TestTCIAPreloadLeakage:
         from pmriprep.utils.dsc_preload import apply_k2_correction
 
         full_bolus_configs = [
-            c for c in TCIA_PRELOAD_CONFIGS_15T
+            c for c in GBM_DSC_PRELOAD_CONFIGS_15T
             if "bolus_full" in c
         ]
 
@@ -1279,11 +1272,11 @@ class TestTCIAPreloadLeakage:
         rcbv_corr = []
 
         for config_name in full_bolus_configs:
-            dro = load_tcia_dro(config_name)
-            results = deconvolve_tcia_regions(dro, "ssvd")
+            dro = _load_available_dro(config_name)
+            results = deconvolve_gbm_dsc_regions(dro, "ssvd")
             nawm_cbv = results["nawm"]["cbv"]
-            if nawm_cbv <= 0:
-                continue
+            assert np.isfinite(nawm_cbv) and nawm_cbv > 0, config_name
+            assert np.isfinite(results["tumor_leak"]["cbv"]), config_name
 
             # Uncorrected leak rCBV
             rcbv_uncorr.append(results["tumor_leak"]["cbv"] / nawm_cbv)
@@ -1317,12 +1310,10 @@ class TestTCIAPreloadLeakage:
                 corr_leak, dro.aif, dro.dt, "ssvd"
             )
             valid = np.isfinite(cbv_corr) & (cbv_corr > 0)
-            if valid.sum() > 0:
-                rcbv_corr.append(float(np.median(cbv_corr[valid])) / nawm_cbv)
+            assert np.any(valid), f"{config_name}: no valid corrected voxels"
+            rcbv_corr.append(float(np.median(cbv_corr[valid])) / nawm_cbv)
 
-        if len(rcbv_uncorr) < 2 or len(rcbv_corr) < 2:
-            pytest.skip("Too few valid preload configs for comparison")
-
+        assert len(rcbv_uncorr) == len(rcbv_corr) >= 2
         mean_uncorr = np.mean(rcbv_uncorr)
         mean_corr = np.mean(rcbv_corr)
         cov_uncorr = (
@@ -1345,8 +1336,8 @@ class TestTCIAPreloadLeakage:
 
     def test_full_preload_reduces_auc_leak_bias(self) -> None:
         """Full preload reduces the uncorrected AUC-rCBV difference in this fixture."""
-        full_preload = TCIA_PRELOAD_CONFIGS_15T[-1]  # pre=full
-        dro = load_tcia_dro(full_preload)
+        full_preload = GBM_DSC_PRELOAD_CONFIGS_15T[-1]  # pre=full
+        dro = _load_available_dro(full_preload)
         results = _auc_cbv_regions(dro)
 
         nawm_cbv = results["nawm"]
@@ -1356,8 +1347,8 @@ class TestTCIAPreloadLeakage:
         rcbv_leak = results["tumor_leak"] / nawm_cbv
 
         # Compare to no-preload: full preload should have smaller bias
-        no_preload = TCIA_PRELOAD_CONFIGS_15T[0]  # pre=none
-        dro_none = load_tcia_dro(no_preload)
+        no_preload = GBM_DSC_PRELOAD_CONFIGS_15T[0]  # pre=none
+        dro_none = _load_available_dro(no_preload)
         results_none = _auc_cbv_regions(dro_none)
         nawm_cbv_none = results_none["nawm"]
         assert nawm_cbv_none > 0 and results_none["tumor_noleak"] > 0
@@ -1380,18 +1371,16 @@ class TestTCIAPreloadLeakage:
         so the post-bolus overshoot diminishes.
         """
         postbolus_means = {}
-        for config_name in TCIA_PRELOAD_CONFIGS_15T:
-            dro = load_tcia_dro(config_name)
+        none_config = GBM_DSC_PRELOAD_CONFIGS_15T[0]
+        full_config = GBM_DSC_PRELOAD_CONFIGS_15T[-1]
+        for config_name in (none_config, full_config):
+            dro = _load_available_dro(config_name)
             leak_curves = dro.delta_r2[dro.roi_masks["tumor_leak"]]
             n_tp = leak_curves.shape[1]
             post_start = int(0.7 * n_tp)
             postbolus_means[config_name] = float(
                 np.mean(leak_curves[:, post_start:])
             )
-
-        # No-preload should have the most negative post-bolus
-        none_config = TCIA_PRELOAD_CONFIGS_15T[0]
-        full_config = TCIA_PRELOAD_CONFIGS_15T[-1]
 
         # Full preload should have less negative (closer to 0) post-bolus
         assert postbolus_means[full_config] > postbolus_means[none_config], (

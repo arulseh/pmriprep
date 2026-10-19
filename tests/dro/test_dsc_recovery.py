@@ -12,10 +12,11 @@ import numpy.typing as npt
 import pytest
 from scipy.special import gammainc
 
-from tests.dsc_accuracy import P2_NO_CORNER, P2_UPPER_CORNER
+from tests.dsc_accuracy import P2_NO_CORNER, P2_UPPER_CORNER, assert_accuracy
 
 from pmriprep.utils.dsc_constants import DEFAULT_LAMBDA_RANGE
 from pmriprep.utils.dsc_deconvolution import (
+    TikhonovSelection,
     _build_modified_first_derivative_matrix,
     _tikhonov_solve,
     svd_deconvolve_circulant,
@@ -583,11 +584,12 @@ class TestTikhonovRecovery:
         cbv_auc = float(np.trapezoid(tissue, dx=dt)) / float(
             np.trapezoid(aif, dx=dt)
         )
-        auc_mtt = cbv_auc / result.cbf if result.cbf > 0 else 0.0
-
-        _assert_param_recovery(result.cbf, cbf_gt, cbf_tol, param_name="CBF")
-        _assert_param_recovery(
-            auc_mtt, aucmtt_gt, aucmtt_tol, param_name="AUC-MTT"
+        assert np.isfinite(result.cbf) and result.cbf > 0
+        assert np.isfinite(cbv_auc) and cbv_auc > 0
+        auc_mtt = cbv_auc / result.cbf
+        assert_accuracy(
+            [abs(result.cbf - cbf_gt) / cbf_gt, abs(auc_mtt - aucmtt_gt) / aucmtt_gt],
+            [cbf_tol, aucmtt_tol], label="CBF, AUC-MTT",
         )
 
     def test_modified_penalty_beats_l1_on_dispersed(self) -> None:
@@ -841,13 +843,9 @@ class TestDSCEdgeCases:
 
         r_ssvd = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)
         r_tikh = tikhonov_deconvolve(tissue, aif, dt)
+        assert r_tikh.selection_status == TikhonovSelection.UPPER_ENDPOINT
 
-        cbf_values = [r_ssvd.cbf, r_tikh.cbf]
+        cbf_values = np.array([r_ssvd.cbf, r_tikh.cbf])
+        assert np.all(np.isfinite(cbf_values)) and np.all(cbf_values > 0)
         mean_cbf = float(np.mean(cbf_values))
-
-        for cbf_val in cbf_values:
-            rel_diff = abs(cbf_val - mean_cbf) / mean_cbf
-            assert rel_diff < 0.25, (
-                f"Method disagreement: CBFs = {cbf_values}, "
-                f"mean = {mean_cbf:.2f}"
-            )
+        assert_accuracy(abs(cbf_values - mean_cbf) / mean_cbf, 0.25, label="sSVD/Tikhonov CBF")

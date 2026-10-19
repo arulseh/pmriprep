@@ -13,9 +13,10 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER
+from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER, assert_accuracy
 
 from pmriprep.utils.dsc_deconvolution import (
+    TikhonovSelection,
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
     svd_deconvolve_standard_batch,
@@ -316,6 +317,11 @@ class TestCrossMethodAgreement3D:
                     results[method_name][tissue_key] = method_fn(
                         median_curve, aif_post, _DT,
                     )
+                fit = results[method_name][tissue_key]
+                values = np.array([fit.cbf, fit.cbv, fit.mtt])
+                assert np.all(np.isfinite(values)) and np.all(values > 0), (
+                    f"{method_name}/{tissue_key}: invalid CBF, CBV or MTT {values}"
+                )
         return results
 
     @P2_NO_CORNER
@@ -325,19 +331,13 @@ class TestCrossMethodAgreement3D:
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
-        import itertools
-        causal_methods = ["ssvd", "tikhonov"]
+        errors = []
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(causal_methods, 2):
-                cbf1 = results[m1][tissue_key].cbf
-                cbf2 = results[m2][tissue_key].cbf
-                mean_cbf = (cbf1 + cbf2) / 2.0
-                if mean_cbf > 0:
-                    rel_diff = abs(cbf1 - cbf2) / mean_cbf
-                    assert rel_diff < 0.30, (
-                        f"CBF {tissue_key}: {m1}={cbf1:.1f} vs "
-                        f"{m2}={cbf2:.1f}, rel_diff={rel_diff:.3f} >= 0.30"
-                    )
+            assert results["tikhonov"][tissue_key].selection_status == TikhonovSelection.UPPER_ENDPOINT
+            cbf1 = results["ssvd"][tissue_key].cbf
+            cbf2 = results["tikhonov"][tissue_key].cbf
+            errors.append(abs(cbf1 - cbf2) / ((cbf1 + cbf2) / 2.0))
+        assert_accuracy(errors, 0.30, label="sSVD/Tikhonov CBF: GM, WM, tumor")
 
     @P2_NO_CORNER
     def test_cbv_agreement_across_methods(self) -> None:
@@ -346,19 +346,13 @@ class TestCrossMethodAgreement3D:
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
-        import itertools
-        causal_methods = ["ssvd", "tikhonov"]
+        errors = []
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(causal_methods, 2):
-                cbv1 = results[m1][tissue_key].cbv
-                cbv2 = results[m2][tissue_key].cbv
-                mean_cbv = (cbv1 + cbv2) / 2.0
-                if mean_cbv > 0:
-                    rel_diff = abs(cbv1 - cbv2) / mean_cbv
-                    assert rel_diff < 0.15, (
-                        f"CBV {tissue_key}: {m1}={cbv1:.2f} vs "
-                        f"{m2}={cbv2:.2f}, rel_diff={rel_diff:.3f} >= 0.15"
-                    )
+            assert results["tikhonov"][tissue_key].selection_status == TikhonovSelection.UPPER_ENDPOINT
+            cbv1 = results["ssvd"][tissue_key].cbv
+            cbv2 = results["tikhonov"][tissue_key].cbv
+            errors.append(abs(cbv1 - cbv2) / ((cbv1 + cbv2) / 2.0))
+        assert_accuracy(errors, 0.15, label="sSVD/Tikhonov CBV: GM, WM, tumor")
 
     @OSVD_RESIDUE_MTT
     def test_mtt_agreement_across_methods(self) -> None:
@@ -367,19 +361,12 @@ class TestCrossMethodAgreement3D:
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
-        import itertools
-        svd_methods = ["ssvd", "osvd"]
+        errors = []
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(svd_methods, 2):
-                mtt1 = results[m1][tissue_key].mtt
-                mtt2 = results[m2][tissue_key].mtt
-                mean_mtt = (mtt1 + mtt2) / 2.0
-                if mean_mtt > 0:
-                    rel_diff = abs(mtt1 - mtt2) / mean_mtt
-                    assert rel_diff < 0.25, (
-                        f"MTT {tissue_key}: {m1}={mtt1:.2f}s vs "
-                        f"{m2}={mtt2:.2f}s, rel_diff={rel_diff:.3f} >= 0.25"
-                    )
+            mtt1 = results["ssvd"][tissue_key].mtt
+            mtt2 = results["osvd"][tissue_key].mtt
+            errors.append(abs(mtt1 - mtt2) / ((mtt1 + mtt2) / 2.0))
+        assert_accuracy(errors, 0.25, label="sSVD/oSVD MTT: GM, WM, tumor")
 
     def test_tissue_ordering_all_methods(self) -> None:
         """All 3 methods should agree: tumor CBF > GM CBF > WM CBF."""

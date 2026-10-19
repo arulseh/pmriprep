@@ -20,16 +20,10 @@ def _identity_flirt_mat(path: Path) -> None:
 class TestTransformMaskToGrid:
     """Helper-level test for transform_mask_to_grid same-space shortcut."""
 
-    @pytest.mark.skipif(
-        shutil.which("flirt") is None or shutil.which("fslmaths") is None,
-        reason="FSL FLIRT/fslmaths not available",
-    )
     def test_same_space_shortcut_produces_dce_grid_mask(
         self, tmp_path: Path
     ) -> None:
-        """When mask and reference already share geometry, the shortcut
-        binarises and hole-fills without invoking FLIRT.
-        """
+        """Matching grids use NumPy binarization and SciPy hole filling."""
         from pmriprep.utils.registration import transform_mask_to_grid
 
         affine = np.diag([2.0, 2.0, 2.0, 1.0])

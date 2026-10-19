@@ -131,6 +131,7 @@ markers = [
     "publication: marks tests that generate publication figures/tables",
 ]
 addopts = "--strict-markers"
+xfail_strict = true
 testpaths = ["tests/unit"]
 doctest_optionflags = "ALLOW_UNICODE NORMALIZE_WHITESPACE ELLIPSIS"
 

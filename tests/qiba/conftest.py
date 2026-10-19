@@ -1,8 +1,8 @@
-"""Synthetic DSC fixtures and optional TCIA data loaders.
+"""Synthetic DSC fixtures and an optional GBM-DSC-MRI-DRO loader.
 
 Provides gamma-variate AIFs with recirculation, transit-time residue models
-and tissue parameter presets for synthetic recovery tests. External TCIA tests
-require separately prepared local data.
+and tissue parameter presets for synthetic recovery tests. GBM-DSC-MRI-DRO
+tests require separately prepared local data from The Cancer Imaging Archive.
 """
 
 import json
@@ -43,20 +43,17 @@ __all__ = [
     "fine_grid_forward",
     "make_exponential_residue",
     "deconvolve_dro_batch",
-    # TCIA GBM-DSC-MRI-DRO
-    "TCIA_DRO_ROOT",
-    "TCIAConfig",
-    "TCIADROData",
-    "load_tcia_dro",
-    "skip_no_tcia_dro",
-    "skip_no_tcia_preload",
-    "skip_no_tcia_tr",
-    "deconvolve_tcia_regions",
+    # GBM-DSC-MRI-DRO
+    "GBM_DSC_DRO_ROOT",
+    "GBMDSCDROConfig",
+    "GBMDSCDROData",
+    "load_gbm_dsc_dro",
+    "deconvolve_gbm_dsc_regions",
     # Preload and TR config constants
-    "TCIA_PRELOAD_CONFIGS_15T",
-    "TCIA_PRELOAD_CONFIGS_3T",
-    "TCIA_TR_CONFIGS_15T",
-    "TCIA_TR_CONFIGS_3T",
+    "GBM_DSC_PRELOAD_CONFIGS_15T",
+    "GBM_DSC_PRELOAD_CONFIGS_3T",
+    "GBM_DSC_TR_CONFIGS_15T",
+    "GBM_DSC_TR_CONFIGS_3T",
 ]
 
 
@@ -466,15 +463,15 @@ def deconvolve_dro_batch(
 
 
 # =============================================================================
-# TCIA GBM-DSC-MRI-DRO
+# GBM-DSC-MRI-DRO
 # =============================================================================
 
-TCIA_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "tcia_gbm_dsc_dro"
+GBM_DSC_DRO_ROOT = PROJECT_ROOT / "sourcedata" / "qiba" / "tcia_gbm_dsc_dro"
 
 
 @dataclass(frozen=True)
-class TCIAConfig:
-    """TCIA GBM-DSC-MRI-DRO configuration.
+class GBMDSCDROConfig:
+    """GBM-DSC-MRI-DRO acquisition configuration.
 
     Attributes
     ----------
@@ -504,8 +501,8 @@ class TCIAConfig:
 
 
 @dataclass
-class TCIADROData:
-    """Loaded TCIA DRO data for a single configuration.
+class GBMDSCDROData:
+    """Loaded GBM-DSC-MRI-DRO data for a single configuration.
 
     Attributes
     ----------
@@ -521,8 +518,8 @@ class TCIADROData:
         Temporal resolution in seconds.
     roi_masks : Dict[str, npt.NDArray[np.bool_]]
         Dict of boolean masks {tumor_leak, tumor_noleak, nawm, aif_region}.
-    config : TCIAConfig
-        TCIAConfig with acquisition parameters.
+    config : GBMDSCDROConfig
+        GBMDSCDROConfig with acquisition parameters.
     metadata : Dict[str, Any]
         Full metadata dict from metadata.json.
     """
@@ -533,16 +530,16 @@ class TCIADROData:
     time_sec: npt.NDArray[np.floating]
     dt: float
     roi_masks: Dict[str, npt.NDArray[np.bool_]]
-    config: TCIAConfig
+    config: GBMDSCDROConfig
     metadata: Dict[str, Any]
 
 
 # Cache to avoid reloading
-_tcia_dro_cache: Dict[str, TCIADROData] = {}
+_gbm_dsc_dro_cache: Dict[str, GBMDSCDROData] = {}
 
 
-def _parse_tcia_config_name(name: str) -> TCIAConfig:
-    """Parse TCIAConfig from standardized directory name.
+def _parse_gbm_dsc_config_name(name: str) -> GBMDSCDROConfig:
+    """Parse GBMDSCDROConfig from standardized directory name.
 
     Example: b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg
     """
@@ -556,12 +553,12 @@ def _parse_tcia_config_name(name: str) -> TCIAConfig:
     fa_match = re.search(r"FA(\d+)deg", name)
 
     if not all([b0_match, pre_match, bolus_match, tr_match, te_match, fa_match]):
-        raise ValueError(f"Cannot parse TCIA config name: {name}")
+        raise ValueError(f"Cannot parse GBM-DSC-MRI-DRO config name: {name}")
 
     b0_int = int(b0_match.group(1))
     b0_tesla = b0_int / 10.0 if b0_int > 10 else float(b0_int)
 
-    return TCIAConfig(
+    return GBMDSCDROConfig(
         name=name,
         tr_ms=float(tr_match.group(1)),
         te_ms=float(te_match.group(1)),
@@ -572,8 +569,8 @@ def _parse_tcia_config_name(name: str) -> TCIAConfig:
     )
 
 
-def load_tcia_dro(config_name: str) -> TCIADROData:
-    """Load converted TCIA DRO data with caching.
+def load_gbm_dsc_dro(config_name: str) -> GBMDSCDROData:
+    """Load converted GBM-DSC-MRI-DRO data with caching.
 
     Parameters
     ----------
@@ -583,23 +580,23 @@ def load_tcia_dro(config_name: str) -> TCIADROData:
 
     Returns
     -------
-    TCIADROData
-        TCIADROData with all arrays, metadata, and config.
+    GBMDSCDROData
+        GBMDSCDROData with all arrays, metadata, and config.
 
     Raises
     ------
     FileNotFoundError
         If converted NPZ files don't exist.
     """
-    if config_name in _tcia_dro_cache:
-        return _tcia_dro_cache[config_name]
+    if config_name in _gbm_dsc_dro_cache:
+        return _gbm_dsc_dro_cache[config_name]
 
-    config_dir = TCIA_DRO_ROOT / config_name
+    config_dir = GBM_DSC_DRO_ROOT / config_name
     conc_file = config_dir / "concentration.npz"
 
     if not conc_file.exists():
         raise FileNotFoundError(
-            f"TCIA DRO data not found for {config_name}: {conc_file}"
+            f"GBM-DSC-MRI-DRO data not found for {config_name}: {conc_file}"
         )
 
     conc = np.load(conc_file)
@@ -609,7 +606,7 @@ def load_tcia_dro(config_name: str) -> TCIADROData:
     with open(config_dir / "metadata.json") as f:
         metadata = json.load(f)
 
-    config = _parse_tcia_config_name(config_name)
+    config = _parse_gbm_dsc_config_name(config_name)
 
     roi_masks = {
         "tumor_leak": mask_data["tumor_leak"].astype(bool),
@@ -618,7 +615,7 @@ def load_tcia_dro(config_name: str) -> TCIADROData:
         "aif_region": mask_data["aif_region"].astype(bool),
     }
 
-    data = TCIADROData(
+    data = GBMDSCDROData(
         delta_r2=conc["delta_r2"].astype(np.float64),
         baseline=conc["baseline"].astype(np.float64),
         aif=aif_data["aif_delta_r2"].astype(np.float64),
@@ -629,30 +626,24 @@ def load_tcia_dro(config_name: str) -> TCIADROData:
         metadata=metadata,
     )
 
-    _tcia_dro_cache[config_name] = data
+    _gbm_dsc_dro_cache[config_name] = data
     return data
 
 
 # Default consensus config name
-TCIA_CONSENSUS_15T = "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg"
-TCIA_CONSENSUS_3T = "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg"
-
-skip_no_tcia_dro = pytest.mark.skipif(
-    not (TCIA_DRO_ROOT / TCIA_CONSENSUS_15T / "concentration.npz").exists(),
-    reason="TCIA GBM-DSC-MRI-DRO data not converted "
-    f"(expected at {TCIA_DRO_ROOT / TCIA_CONSENSUS_15T / 'concentration.npz'})",
-)
+GBM_DSC_CONSENSUS_15T = "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg"
+GBM_DSC_CONSENSUS_3T = "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg"
 
 # Preload config constants (explicit names, no auto-discovery)
-# TCIA DRO dosing: pre_none/bolus_full, pre_quarter/bolus_full,
+# GBM-DSC-MRI-DRO dosing: pre_none/bolus_full, pre_quarter/bolus_full,
 # pre_half/bolus_half, pre_full/bolus_full
-TCIA_PRELOAD_CONFIGS_15T = [
+GBM_DSC_PRELOAD_CONFIGS_15T = [
     "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
     "b0_15T_pre_quarter_bolus_full_TR1500ms_TE30ms_FA60deg",
     "b0_15T_pre_half_bolus_half_TR1500ms_TE30ms_FA60deg",
     "b0_15T_pre_full_bolus_full_TR1500ms_TE30ms_FA60deg",
 ]
-TCIA_PRELOAD_CONFIGS_3T = [
+GBM_DSC_PRELOAD_CONFIGS_3T = [
     "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
     "b0_30T_pre_quarter_bolus_full_TR1500ms_TE30ms_FA60deg",
     "b0_30T_pre_half_bolus_half_TR1500ms_TE30ms_FA60deg",
@@ -660,47 +651,31 @@ TCIA_PRELOAD_CONFIGS_3T = [
 ]
 
 # TR config constants (no preload, full bolus, consensus TE/FA)
-TCIA_TR_CONFIGS_15T = [
+GBM_DSC_TR_CONFIGS_15T = [
     "b0_15T_pre_none_bolus_full_TR1000ms_TE30ms_FA60deg",
     "b0_15T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
     "b0_15T_pre_none_bolus_full_TR2000ms_TE30ms_FA60deg",
 ]
-TCIA_TR_CONFIGS_3T = [
+GBM_DSC_TR_CONFIGS_3T = [
     "b0_30T_pre_none_bolus_full_TR1000ms_TE30ms_FA60deg",
     "b0_30T_pre_none_bolus_full_TR1500ms_TE30ms_FA60deg",
     "b0_30T_pre_none_bolus_full_TR2000ms_TE30ms_FA60deg",
 ]
 
-skip_no_tcia_preload = pytest.mark.skipif(
-    not all(
-        (TCIA_DRO_ROOT / c / "concentration.npz").exists()
-        for c in TCIA_PRELOAD_CONFIGS_15T
-    ),
-    reason="TCIA preload configs not converted (run conversion with --all)",
-)
 
-skip_no_tcia_tr = pytest.mark.skipif(
-    not all(
-        (TCIA_DRO_ROOT / c / "concentration.npz").exists()
-        for c in TCIA_TR_CONFIGS_15T
-    ),
-    reason="TCIA TR configs not converted (run conversion with --all)",
-)
-
-
-def deconvolve_tcia_regions(
-    dro: TCIADROData,
+def deconvolve_gbm_dsc_regions(
+    dro: GBMDSCDROData,
     method: str,
 ) -> Dict[str, Dict[str, float]]:
-    """Deconvolve all TCIA ROI regions against the explicit AIF.
+    """Deconvolve GBM-DSC-MRI-DRO tissue regions against the explicit AIF.
 
     Extracts voxels from each tissue ROI mask, deconvolves against the
     provided AIF, and returns per-region median perfusion parameters.
 
     Parameters
     ----------
-    dro : TCIADROData
-        Loaded TCIA DRO data.
+    dro : GBMDSCDROData
+        Loaded GBM-DSC-MRI-DRO data.
     method : str
         Deconvolution method ("ssvd", "osvd", "tikhonov").
 

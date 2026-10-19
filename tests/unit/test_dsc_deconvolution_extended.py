@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from tests.dsc_accuracy import P2_NO_CORNER
+from tests.dsc_accuracy import AccuracyTargetError, P2_NO_CORNER
 
 from pmriprep.utils.dsc_deconvolution import (
     TikhonovSelection,
@@ -265,7 +265,10 @@ class TestTikhonovSingleVoxel:
         true_cbf = 2.0
         aif, tissue, _, _ = _make_synthetic_data(true_cbf=true_cbf)
         result = tikhonov_deconvolve(tissue, aif, dt=1.5)
-        assert result.cbf == pytest.approx(true_cbf, rel=0.5)
+        assert result.selection_status == TikhonovSelection.UPPER_ENDPOINT
+        assert np.isfinite(result.cbf) and result.cbf > 0
+        if result.cbf != pytest.approx(true_cbf, rel=0.5):
+            raise AccuracyTargetError(f"CBF {result.cbf} outside 50% of {true_cbf}")
 
     def test_tikhonov_lcurve_result_finite(self) -> None:
         """L-curve result fields are finite and consistent."""

@@ -9,9 +9,10 @@ import numpy as np
 import pytest
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
-from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER
+from tests.dsc_accuracy import OSVD_RESIDUE_MTT, P2_NO_CORNER, assert_accuracy
 
 from pmriprep.utils.dsc_deconvolution import (
+    TikhonovSelection,
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
     tikhonov_deconvolve,
@@ -59,13 +60,14 @@ def test_osvd_recovers_independent_tissue(
     tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
 
     res = svd_deconvolve_oscillation(tissue, aif, dt=dt)
+    assert np.all(np.isfinite([res.cbf, res.mtt])) and res.cbf > 0 and res.mtt > 0
 
     if metric == "cbf":
         cbf_err = (res.cbf - cbf_true) / cbf_true
         assert -0.25 < cbf_err < 0.10, f"{name} oSVD CBF error {cbf_err:.1%}"
     else:
         mtt_err = (res.mtt - mtt_true) / mtt_true
-        assert -0.20 < mtt_err < 0.10, f"{name} oSVD residue-MTT error {mtt_err:.1%}"
+        assert_accuracy(mtt_err, 0.10, lower=-0.20, label=f"{name} oSVD residue-MTT")
 
 
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
@@ -94,9 +96,11 @@ def test_tikhonov_recovers_independent_tissue(name, cbf_true, mtt_true):
     tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
 
     res = tikhonov_deconvolve(tissue, aif, dt=dt)
+    assert res.selection_status == TikhonovSelection.UPPER_ENDPOINT
+    assert np.isfinite(res.cbf) and res.cbf > 0
 
     cbf_err = (res.cbf - cbf_true) / cbf_true
-    assert -0.15 < cbf_err < 0.10, f"{name} Tikhonov CBF error {cbf_err:.1%}"
+    assert_accuracy(cbf_err, 0.10, lower=-0.15, label=f"{name} Tikhonov CBF")
 
 
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
