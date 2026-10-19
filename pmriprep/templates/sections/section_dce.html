@@ -87,7 +87,7 @@
                 <div class="metric-value {{ dce.display_status.b1_correction }}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined %}
+            {% if not (dce.qc_metrics.b1_mapping.skipped | default(false)) and dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined %}
             <div class="metric">
                 <div class="metric-label">Missing B1 in DCE Space</div>
                 <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.b1_missing_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.b1_missing_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.b1_missing_fraction * 100) }}%){% endif %}</div>
@@ -128,23 +128,18 @@
                 <div class="metric-value{% if not (dce.qc_metrics.t1_mapping.skipped | default(false)) %} {{ dce.qc_metrics.t1_mapping.t1_status | lower }}{% endif %}">{{ dce.qc_metrics.t1_mapping.t1_status }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.t1_mapping.assumed_t1_ms is defined and dce.qc_metrics.t1_mapping.assumed_t1_ms is not none %}
-            <div class="metric">
-                <div class="metric-label">T1 Value Used</div>
-                <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.t1_mapping.assumed_t1_ms) }} ms</div>
-            </div>
-            <div class="metric">
-                <div class="metric-label">T1 Policy</div>
-                <div class="metric-value">Uniform field-strength assumption</div>
-            </div>
-            {% endif %}
             {% if dce.qc_metrics.t1_mapping.t1_method is defined %}
             <div class="metric">
                 <div class="metric-label">T1 Method</div>
                 <div class="metric-value">{{ t1_method_labels.get(dce.qc_metrics.t1_mapping.t1_method, dce.qc_metrics.t1_mapping.t1_method | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.t1_mapping.t1_correction is defined and dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
+            {% if dce.qc_metrics.t1_mapping.method == 'external' %}
+            <div class="metric">
+                <div class="metric-label">T1 Source</div>
+                <div class="metric-value">Supplied map</div>
+            </div>
+            {% elif dce.qc_metrics.t1_mapping.t1_correction is defined and dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
             <div class="metric">
                 <div class="metric-label">T1 Source</div>
                 <div class="metric-value">
@@ -362,7 +357,7 @@
             {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
             <div class="metric">
                 <div class="metric-label">Mean tSNR</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
+                <div class="metric-value {{ dce.display_status.baseline_tsnr }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.mean_cnr is defined %}
@@ -375,12 +370,6 @@
             <div class="metric">
                 <div class="metric-label">Baseline Frames</div>
                 <div class="metric-value">{{ dce.qc_metrics.preprocessing.baseline_frames }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
-            <div class="metric">
-                <div class="metric-label">Mean Baseline tSNR</div>
-                <div class="metric-value {{ dce.display_status.baseline_tsnr }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.signal_conversion is defined %}
@@ -424,10 +413,10 @@
                 <div class="metric-value">{{ used }} / {{ used + (dce.qc_metrics.aif_detection.n_aif_voxels_filtered_out | default(0)) }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.aif_detection.quality_score is defined %}
+            {% if aif.detection_method == 'population' or aif.quality_score is defined %}
             <div class="metric">
                 <div class="metric-label">Quality Score</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.quality_score) }}</div>
+                <div class="metric-value{% if aif.detection_method == 'population' %} na{% endif %}">{% if aif.detection_method == 'population' %}Not applicable{% else %}{{ "%.2f"|format(aif.quality_score) }}{% endif %}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.cnr_mean is defined %}
@@ -582,26 +571,20 @@
             </div>
             {% endif %}
             {% set va = dce.qc_metrics.pk_modeling.voxel_accounting %}
-            {% if va is defined %}
             {% for stage_key, stage_label in [
-                ('brain_mask', 'Brain Mask Voxels'),
-                ('fitting_eligible', 'Fitting Eligible'),
                 ('attempted', 'Fits Attempted'),
-                ('optimizer_converged', 'Optimizer Converged'),
-                ('prefit_rejected', 'Pre-fit Rejected'),
-                ('execution_exception', 'Execution Exceptions'),
-                ('fit_unsuccessful', 'Unsuccessful Fits'),
-                ('retained_nondegenerate', 'Retained Nondegenerate'),
-                ('quantitative_qc_accepted', 'Quantitative QC Accepted')
+                ('retained_nondegenerate', 'Fits Retained'),
+                ('quantitative_qc_accepted', 'QC Accepted')
             ] %}
-            {% if va[stage_key] is defined and va[stage_key].count is defined %}
             <div class="metric">
                 <div class="metric-label">{{ stage_label }}</div>
+                {% if va[stage_key] is defined and va[stage_key].count is defined and va[stage_key].count is not none %}
                 <div class="metric-value">{{ "{:,}".format(va[stage_key].count) }}{% if va[stage_key].fraction_of_attempted is defined %} ({{ "%.1f"|format(va[stage_key].fraction_of_attempted * 100) }}%){% elif va[stage_key].fraction_of_brain is defined %} ({{ "%.1f"|format(va[stage_key].fraction_of_brain * 100) }}%){% endif %}</div>
+                {% else %}
+                <div class="metric-value na">Unavailable</div>
+                {% endif %}
             </div>
-            {% endif %}
             {% endfor %}
-            {% endif %}
             {% if dce.qc_metrics.pk_modeling.ktrans_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median Ktrans</div>
@@ -755,8 +738,9 @@
                 <div class="metric-label">Constraint</div>
                 <div class="metric-value
                     {%- if cbv_c.mode == 'soft' %} pass
+                    {%- elif cbv_c.mode == 'skip' and cbv_c.skip_reason in ['nlls_constraint_unsupported', 'disabled_by_configuration', 'model_without_vp'] %} na
                     {%- elif cbv_c.mode == 'skip' %} warn
-                    {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
+                    {%- else %} unknown{% endif %}">{{ 'Not applied' if cbv_c.mode == 'skip' else cbv_c.mode }}</div>
             </div>
             {% if cbv_c.mode == 'soft' and cbv_c.vp_uncertainty is defined %}
             <div class="metric">

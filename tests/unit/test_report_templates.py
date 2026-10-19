@@ -170,12 +170,19 @@ def test_dce_signal_conversion_qc_renders(env):
         "qc_metrics": {
             "preprocessing": {},
             "b1_mapping": {"method": "afi"},
-            "t1_mapping": {"t1_method": "vfa"},
+            "t1_mapping": {
+                "method": "external",
+                "external_alignment": {
+                    "brain_support_fraction": 0.994,
+                    "gradient_magnitude_ncc": 0.8,
+                },
+            },
             "signal_conversion": {
                 "t1_invalid_voxels": 12,
                 "t1_invalid_fraction": 0.006,
                 "b1_missing_voxels": 34,
                 "b1_missing_fraction": 0.017,
+                "b1_correction_applied": False,
                 "e1_bounded_fraction": 0.00125,
             },
         },
@@ -183,6 +190,12 @@ def test_dce_signal_conversion_qc_renders(env):
         "display_status": {},
     }
     rendered = template.render(dce=dce)
+    _assert_in_order(
+        rendered, "T1 Source", "Supplied map", "External T1 Brain Support",
+        "External T1 Edge Agreement", "Invalid T1 in DCE Space",
+    )
+    assert ">99.40%<" in rendered
+    assert ">0.800<" in rendered
     assert "Invalid T1 in DCE Space" in rendered
     assert ">12 (0.60%)<" in rendered
     assert "Missing B1 in DCE Space" in rendered
@@ -250,6 +263,11 @@ def test_dce_disabled_b1_is_reported_without_figure(env):
                 "b1_status": "Skipped by configuration",
                 "skipped": True,
             },
+            "signal_conversion": {
+                "b1_missing_voxels": 0,
+                "b1_missing_fraction": 0.0,
+                "b1_correction_applied": False,
+            },
         },
         "images": {},
         "display_status": {},
@@ -260,6 +278,7 @@ def test_dce_disabled_b1_is_reported_without_figure(env):
     assert "B1+ Mapping Quality" in rendered
     assert "Skipped by configuration" in rendered
     assert "B1+ Mapping QC" not in rendered
+    assert "Missing B1 in DCE Space" not in rendered
 
 
 def test_dce_preprocessing_cards_align_with_dsc_order(env):
@@ -282,7 +301,7 @@ def test_dce_preprocessing_cards_align_with_dsc_order(env):
     dce = {
         "qc_metrics": {"preprocessing": preprocessing},
         "images": {"preprocessing_qc": "preproc.png"},
-        "display_status": {},
+        "display_status": {"baseline_tsnr": "warn"},
     }
     rendered = template.render(dce=dce)
     _assert_in_order(
@@ -298,8 +317,9 @@ def test_dce_preprocessing_cards_align_with_dsc_order(env):
         "Mean tSNR",
         "Mean CNR",
         "Baseline Frames",
-        "Mean Baseline tSNR",
     )
+    assert rendered.count(">25.0</div>") == 1
+    assert 'class="metric-value warn">25.0</div>' in rendered
     assert rendered.index("Baseline Frames") > rendered.index("DCE Preprocessing QC")
 
 
@@ -455,9 +475,11 @@ def test_dce_no_t1_assumption_renders_without_wm_statistics(env):
     rendered = template.render(dce=dce)
 
     assert "Skipped by configuration" in rendered
-    assert "T1 Value Used" in rendered
-    assert "1200 ms" in rendered
+    assert "T1 Status" in rendered
+    assert "T1 Source" in rendered
     assert "Uniform (1200 ms)" in rendered
+    assert rendered.count('class="metric-label"') == 2
+    assert rendered.count("1200 ms") == 1
 
 
 def test_dce_skipped_t1_with_incomplete_qc_renders_safely(env):
@@ -529,7 +551,7 @@ def test_dce_aif_peak_scaling_qc_renders(env):
 
 
 def test_dce_voxel_accounting_renders(env):
-    """Named fitting stages and denominators reach the DCE HTML report."""
+    """The PK summary has a fixed order and retains attempted-fit percentages."""
     template = env.get_template("sections/section_dce.html")
     dce = {
         "qc_metrics": {
@@ -573,28 +595,25 @@ def test_dce_voxel_accounting_renders(env):
         "display_status": {},
     }
     rendered = template.render(dce=dce)
-    assert "Brain Mask Voxels" in rendered
-    assert "Fitting Eligible" in rendered
-    assert "Optimizer Converged" in rendered
-    assert "Pre-fit Rejected" in rendered
-    assert "Execution Exceptions" in rendered
-    assert "Unsuccessful Fits" in rendered
-    assert "Retained Nondegenerate" in rendered
-    assert "Quantitative QC Accepted" in rendered
-    assert "70 (87.5%)" in rendered
-    assert "80 (80.0%)" in rendered
-    assert "of attempted" not in rendered
-    assert "of brain" not in rendered
+    _assert_in_order(rendered, ">Model</div>", "Fits Attempted", "Fits Retained", "QC Accepted")
+    assert rendered.count('class="metric-label"') == 4
+    assert '>80</div>' in rendered
+    assert "65 (81.2%)" in rendered
+    assert "50 (62.5%)" in rendered
 
 
-def test_dce_incomplete_voxel_accounting_stage_is_skipped(env):
-    """A present but incomplete accounting stage cannot abort rendering."""
+def test_dce_voxel_accounting_keeps_zero_and_unavailable_cards(env):
+    """Zero outcomes and unavailable counts preserve the same PK layout."""
     template = env.get_template("sections/section_dce.html")
     dce = {
         "qc_metrics": {
             "pk_modeling": {
                 "model": "tofts",
-                "voxel_accounting": {"attempted": {}},
+                "voxel_accounting": {
+                    "attempted": {},
+                    "retained_nondegenerate": {"count": 0, "fraction_of_attempted": 0.0},
+                    "quantitative_qc_accepted": {"count": 0, "fraction_of_attempted": 0.0},
+                },
             },
         },
         "images": {},
@@ -603,7 +622,10 @@ def test_dce_incomplete_voxel_accounting_stage_is_skipped(env):
 
     rendered = template.render(dce=dce)
 
-    assert "Fits Attempted" not in rendered
+    _assert_in_order(rendered, ">Model</div>", "Fits Attempted", "Fits Retained", "QC Accepted")
+    assert rendered.count('class="metric-label"') == 4
+    assert '<div class="metric-value na">Unavailable</div>' in rendered
+    assert rendered.count("0 (0.0%)") == 2
 
 
 def test_dce_two_cxm_suitability_warning_renders(env):
@@ -979,6 +1001,7 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
     dsc = {
         "qc_metrics": {
             "preprocessing": {
+                "motion_status": "PASS",
                 "tr_ms": 1500.0,
                 "te_ms": 30.0,
                 "n_volumes": 60,
@@ -1000,8 +1023,8 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
                     "ph": 40.0,
                     "fwhm": 6.0,
                     "ttp": 14.0,
-                    "psr": 0.8,
-                    "brr": 0.9,
+                    "psr": 95.4,
+                    "brr": 6.5,
                 },
             },
         },
@@ -1010,6 +1033,9 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
     }
     rendered = template.render(dsc=dsc)
     assert 'class="metric-value pass">PASS' in rendered
+    assert rendered.count(">60</div>") == 1
+    assert ">95.4%</div>" in rendered
+    assert ">6.5%</div>" in rendered
     _assert_in_order(
         rendered,
         "DSC Preprocessing QC",
@@ -1027,11 +1053,11 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
         "AIF Voxels",
         "Baseline Frames",
         "Arrival Time",
-        "Peak Concentration",
+        "Peak ΔR2*",
         "Peak Height",
         "FWHM",
         "TTP",
-        "Peak Signal Ratio",
+        "Signal Recovery (PSR)",
         "Baseline Return Ratio",
     )
 
@@ -1052,7 +1078,7 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
             "nawm": {
                 "compartment_label": "infratentorial",
                 "selected_hemisphere": "both",
-                "n_voxels": 1000,
+                "n_voxels": 1000.0,
                 "volume_ml": 2.0,
                 "valid": True,
                 "atlas_used": True,
@@ -1064,6 +1090,7 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
         "images": {},
     }
     rendered = template.render(tumor_seg=tumor_seg)
+    assert ">1,000</div>" in rendered
     _assert_in_order(
         rendered,
         "Tumor Detected",
@@ -1106,10 +1133,20 @@ def test_aif_detection_outcome_is_separate_from_used_source(env, modality, sourc
                 failure_reason="user_mask_exhausted", failure_detail="empty_user_mask",
                 aif_status="FAIL",
             )
+    if modality == "dce":
+        context["qc_metrics"]["aif_detection"]["quality_score"] = (
+            0.5 if source == "population" else 0.8
+        )
     rendered = env.get_template(f"sections/section_{modality}.html").render(**{modality: context})
     assert "AIF Detection" in rendered
     assert "AIF Used" in rendered
     assert f">{label}</div>" in rendered
+    if modality == "dce":
+        assert "Quality Score" in rendered
+        if source == "population":
+            assert 'class="metric-value na">Not applicable</div>' in rendered
+        else:
+            assert ">0.80</div>" in rendered
     if outcome == "failed":
         assert 'class="metric-value poor">FAILED' in rendered
         assert "Empty search mask" in rendered

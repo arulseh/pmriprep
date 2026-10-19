@@ -150,6 +150,9 @@ def generate_preprocessing_qc_plot(
         Row 1: Signal Intensity Histogram (0-1) | Baseline tSNR Map (2) |
                Enhancement CNR at the global peak frame (3)
 
+    The intensity histogram compares the voxelwise baseline mean with the
+    signal at the global peak frame.
+
     FD and summary text are omitted — FD is shown in the dedicated
     motion_qc.png, and summary stats are rendered as HTML metric boxes.
 
@@ -245,7 +248,8 @@ def generate_preprocessing_qc_plot(
 
     # --- (0, 3) Enhancement Map (%) ---
     ax = fig.add_subplot(gs[0, 3])
-    baseline_vol = np.mean(dce_signal_4d[..., :max(1, baseline_frames)], axis=3)
+    n_baseline = min(max(1, baseline_frames), n_volumes)
+    baseline_vol = np.mean(dce_signal_4d[..., :n_baseline], axis=3)
     with np.errstate(divide="ignore", invalid="ignore"):
         enhancement = np.where(
             baseline_vol > 1.0,
@@ -261,7 +265,7 @@ def generate_preprocessing_qc_plot(
 
     # --- (1, 0-1) Signal Intensity Histogram ---
     ax = fig.add_subplot(gs[1, 0:2])
-    baseline_vals = dce_signal_4d[..., 0][mask_bool]
+    baseline_vals = baseline_vol[mask_bool]
     peak_vals = dce_signal_4d[..., peak_frame][mask_bool]
     all_vals = np.concatenate([baseline_vals, peak_vals])
     hist_min = float(np.percentile(all_vals, 1))
@@ -272,7 +276,8 @@ def generate_preprocessing_qc_plot(
         hist_max += half_width
     bins = np.linspace(hist_min, hist_max, 80).tolist()
     ax.hist(baseline_vals, bins=bins, alpha=0.5, density=True,
-            color=COLORBLIND_PALETTE.primary, label="Baseline (frame 0)")
+            color=COLORBLIND_PALETTE.primary,
+            label=f"Baseline mean ({n_baseline} frames)")
     ax.hist(peak_vals, bins=bins, alpha=0.5, density=True,
             color=COLORBLIND_PALETTE.error, label=f"Peak (frame {peak_frame})")
     ax.set_title("Signal Intensity Distribution", fontsize=10)
@@ -283,7 +288,6 @@ def generate_preprocessing_qc_plot(
     # --- (1, 2) Baseline tSNR Map ---
     ax = fig.add_subplot(gs[1, 2])
 
-    n_baseline = min(max(1, baseline_frames), n_volumes)
     if n_baseline >= 2:
         baseline_data = dce_signal_4d[..., :n_baseline]
         with np.errstate(divide="ignore", invalid="ignore"):

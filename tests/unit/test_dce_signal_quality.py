@@ -393,16 +393,26 @@ class TestB1BiasGating:
         assert result["recommendation"]["action"] == QCAction.REVIEW
 
 
-def test_displayed_tsnr_uses_only_precontrast_frames(tmp_path) -> None:
-    """Enhancement dynamics do not enter the displayed DCE tSNR denominator."""
+def test_displayed_baseline_uses_precontrast_frames(tmp_path, monkeypatch) -> None:
+    """The histogram and tSNR use the precontrast window."""
     import matplotlib
     import numpy as np
 
     matplotlib.use("Agg")
 
+    from matplotlib.axes import Axes
+
     from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
 
-    curve = np.array([100.0, 102.0, 98.0, 150.0, 200.0])
+    original_hist = Axes.hist
+    histograms = {}
+
+    def record_hist(ax, values, **kwargs):
+        histograms[kwargs["label"]] = np.asarray(values).copy()
+        return original_hist(ax, values, **kwargs)
+
+    monkeypatch.setattr(Axes, "hist", record_hist)
+    curve = np.array([102.0, 100.0, 98.0, 150.0, 200.0])
     signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
     mask = np.ones((3, 3, 3), dtype=bool)
 
@@ -416,6 +426,8 @@ def test_displayed_tsnr_uses_only_precontrast_frames(tmp_path) -> None:
     )
 
     assert stats["baseline_tsnr"] == pytest.approx(50.0)
+    np.testing.assert_array_equal(histograms["Baseline mean (3 frames)"], np.full(27, 100.0))
+    np.testing.assert_array_equal(histograms["Peak (frame 4)"], np.full(27, 200.0))
 
 
 def test_preprocessing_qc_omits_bolus_contaminated_cov(

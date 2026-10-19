@@ -126,14 +126,28 @@ def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(
     from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
     original_axvline = Axes.axvline
+    original_axvspan = Axes.axvspan
+    original_hist = Axes.hist
     markers = []
+    spans = []
+    histograms = {}
 
     def record_axvline(ax, x=0, **kwargs):
-        markers.append((x, kwargs.get("label")))
+        markers.append((x, kwargs.get("label"), kwargs.get("linestyle")))
         return original_axvline(ax, x, **kwargs)
 
+    def record_axvspan(ax, xmin, xmax, **kwargs):
+        spans.append((xmin, xmax, kwargs.get("label")))
+        return original_axvspan(ax, xmin, xmax, **kwargs)
+
+    def record_hist(ax, values, **kwargs):
+        histograms[kwargs["label"]] = np.asarray(values).copy()
+        return original_hist(ax, values, **kwargs)
+
     monkeypatch.setattr(Axes, "axvline", record_axvline)
-    curve = np.array([100.0, 102.0, 98.0, 104.0, 96.0, 75.0, 85.0])
+    monkeypatch.setattr(Axes, "axvspan", record_axvspan)
+    monkeypatch.setattr(Axes, "hist", record_hist)
+    curve = np.array([102.0, 100.0, 98.0, 104.0, 96.0, 75.0, 85.0])
     signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
     signal[0, ..., 5:] = [90.0, 95.0]
     mask = np.ones((3, 3, 3), dtype=bool)
@@ -156,9 +170,14 @@ def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(
     assert stats["mean_tsnr"] == round(float(np.nanmean(maps.tsnr[mask])), 1)
     assert stats["mean_cnr"] == round(float(np.nanmean(maps.cnr[mask])), 1)
     assert stats["fraction_cnr_gt_4"] == round(float(np.mean(maps.cnr[mask] > 4)), 3)
-    assert markers == (
-        [] if analysis_baseline_frames is None
-        else [(6.75, "Analysis baseline end (5 frames)")]
+    assert markers == [(3.75, "Initial baseline", ":")]
+    assert spans == [(0, 3.75 if analysis_baseline_frames is None else 6.75, "Baseline")]
+    frame_count = analysis_baseline_frames or 3
+    np.testing.assert_array_equal(
+        histograms[f"Baseline mean ({frame_count} frames)"], np.full(27, 100.0),
+    )
+    np.testing.assert_array_equal(
+        histograms["Minimum (frame 5)"], np.repeat([90.0, 75.0], [9, 18]),
     )
 
 

@@ -112,6 +112,9 @@ def generate_dsc_preprocessing_qc_plot(
         Row 0: Global Signal Time Course (0-1) | Minimum Signal (2) | Signal Drop Map (3)
         Row 1: Signal Intensity Histogram (0-1) | tSNR Map (2) | CNR Map (3)
 
+    The intensity histogram compares the voxelwise baseline mean with the
+    signal at the global minimum frame.
+
     Parameters
     ----------
     dsc_signal_4d : npt.NDArray[Any]
@@ -119,7 +122,7 @@ def generate_dsc_preprocessing_qc_plot(
     brain_mask : npt.NDArray[Any]
         3D boolean brain mask.
     baseline_frames : int
-        Initial S0 estimation frame count marked on the plot. Also used for
+        Initial baseline frame count marked by a dotted vertical line. Also used for
         signal metrics when ``analysis_baseline_frames`` is omitted.
     volume_tr_s : float
         Temporal resolution between volumes in seconds.
@@ -135,8 +138,8 @@ def generate_dsc_preprocessing_qc_plot(
         Three spatial voxel dimensions in millimeters for the returned metadata.
     analysis_baseline_frames : int, optional
         Finalized baseline frame count used for leakage correction and DSC map
-        calculation. Used for the displayed signal metrics, with its end marked
-        on the global signal time course.
+        calculation. Used for the displayed signal metrics and shaded on the
+        global signal time course.
 
     Returns
     -------
@@ -174,16 +177,14 @@ def generate_dsc_preprocessing_qc_plot(
     ])
     time_s = np.arange(n_volumes) * volume_tr_s
     ax.plot(time_s, global_signal, color=COLORBLIND_PALETTE.primary, linewidth=1.2)
-    # S0 estimation window shading
+    # Finalized baseline shading and initial baseline boundary
+    ax.axvspan(0, (baseline_end - 0.5) * volume_tr_s, alpha=0.15,
+               color=COLORBLIND_PALETTE.success, label="Baseline")
     if baseline_frames > 0:
-        ax.axvspan(0, (baseline_frames - 0.5) * volume_tr_s, alpha=0.15,
-                   color=COLORBLIND_PALETTE.success,
-                   label=f"S0 estimation ({baseline_frames} frames)")
-    if analysis_baseline_frames is not None and analysis_baseline_frames > 0:
         ax.axvline(
-            (analysis_baseline_frames - 0.5) * volume_tr_s,
-            color=COLORBLIND_PALETTE.secondary, linestyle="--", linewidth=1.5,
-            label=f"Analysis baseline end ({analysis_baseline_frames} frames)",
+            (baseline_frames - 0.5) * volume_tr_s,
+            color="gray", linestyle=":", linewidth=0.8,
+            label="Initial baseline",
         )
     # Peak signal drop annotation
     baseline_mean = np.mean(global_signal[:baseline_end])
@@ -230,14 +231,15 @@ def generate_dsc_preprocessing_qc_plot(
 
     # --- (1, 0-1) Signal Intensity Histogram ---
     ax = fig.add_subplot(gs[1, 0:2])
-    baseline_vals = dsc_signal_4d[..., 0][mask_bool]
+    baseline_vals = baseline_vol[mask_bool]
     min_vals = dsc_signal_4d[..., min_frame][mask_bool]
     all_vals = np.concatenate([baseline_vals, min_vals])
     hist_min = float(np.percentile(all_vals, 1))
     hist_max = float(np.percentile(all_vals, 99))
     bins = np.linspace(hist_min, hist_max, 80).tolist()
     ax.hist(baseline_vals, bins=bins, alpha=0.5, density=True,
-            color=COLORBLIND_PALETTE.primary, label="Baseline (frame 0)")
+            color=COLORBLIND_PALETTE.primary,
+            label=f"Baseline mean ({baseline_end} frames)")
     ax.hist(min_vals, bins=bins, alpha=0.5, density=True,
             color=COLORBLIND_PALETTE.error, label=f"Minimum (frame {min_frame})")
     ax.set_title("Signal Intensity Distribution", fontsize=10)

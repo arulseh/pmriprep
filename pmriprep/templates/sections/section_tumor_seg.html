@@ -74,7 +74,7 @@
             {% if tumor_seg.qc_metrics.nawm.n_voxels is defined %}
             <div class="metric">
                 <div class="metric-label">NAWM Voxels</div>
-                <div class="metric-value">{{ tumor_seg.qc_metrics.nawm.n_voxels }}</div>
+                <div class="metric-value">{{ "{:,}".format(tumor_seg.qc_metrics.nawm.n_voxels | int) }}</div>
             </div>
             {% endif %}
             {% if tumor_seg.qc_metrics.nawm.volume_ml is defined %}
