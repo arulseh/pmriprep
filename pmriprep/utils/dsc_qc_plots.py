@@ -119,7 +119,8 @@ def generate_dsc_preprocessing_qc_plot(
     brain_mask : npt.NDArray[Any]
         3D boolean brain mask.
     baseline_frames : int
-        Initial S0 estimation frame count used for the displayed signal metrics.
+        Initial S0 estimation frame count marked on the plot. Also used for
+        signal metrics when ``analysis_baseline_frames`` is omitted.
     volume_tr_s : float
         Temporal resolution between volumes in seconds.
     te_s : float, optional
@@ -134,7 +135,8 @@ def generate_dsc_preprocessing_qc_plot(
         Three spatial voxel dimensions in millimeters for the returned metadata.
     analysis_baseline_frames : int, optional
         Finalized baseline frame count used for leakage correction and DSC map
-        calculation. Its end is marked on the global signal time course.
+        calculation. Used for the displayed signal metrics, with its end marked
+        on the global signal time course.
 
     Returns
     -------
@@ -150,6 +152,10 @@ def generate_dsc_preprocessing_qc_plot(
 
     mask_bool = brain_mask > 0.5
     n_volumes = dsc_signal_4d.shape[3]
+    metric_baseline_frames = (
+        baseline_frames if analysis_baseline_frames is None else analysis_baseline_frames
+    )
+    baseline_end = min(max(1, metric_baseline_frames), n_volumes - 1)
 
     fig = plt.figure(figsize=(20, 8))
     gs = GridSpec(2, 4, figure=fig, wspace=0.30, hspace=0.35)
@@ -180,7 +186,7 @@ def generate_dsc_preprocessing_qc_plot(
             label=f"Analysis baseline end ({analysis_baseline_frames} frames)",
         )
     # Peak signal drop annotation
-    baseline_mean = np.mean(global_signal[:max(1, baseline_frames)])
+    baseline_mean = np.mean(global_signal[:baseline_end])
     min_val = np.min(global_signal)
     peak_drop_pct = (baseline_mean - min_val) / max(baseline_mean, 1e-6) * 100.0
     ax.set_title("Global Signal Time Course", fontsize=10)
@@ -208,7 +214,6 @@ def generate_dsc_preprocessing_qc_plot(
 
     # --- (0, 3) Signal Drop Map (%) ---
     ax = fig.add_subplot(gs[0, 3])
-    baseline_end = min(max(1, baseline_frames), n_volumes - 1)
     baseline_vol = np.mean(dsc_signal_4d[..., :baseline_end], axis=3)
     with np.errstate(divide="ignore", invalid="ignore"):
         signal_drop = np.where(

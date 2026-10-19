@@ -1160,7 +1160,8 @@ def _generate_dsc_preprocessing_qc(
     brain_mask_file : str
         Path to brain mask NIfTI.
     baseline_frames : int
-        Initial S0 estimation frame count used for the displayed signal metrics.
+        Initial S0 estimation frame count marked on the plot. Also used for
+        signal metrics when ``analysis_baseline_frames`` is omitted.
     tr : float
         Repetition time in seconds.
     te : float, optional
@@ -1170,7 +1171,8 @@ def _generate_dsc_preprocessing_qc(
     session_id : str, optional
         Session identifier.
     analysis_baseline_frames : int, optional
-        Finalized baseline frame count to mark on the global signal time course.
+        Finalized baseline frame count used for signal metrics and marked on
+        the global signal time course.
 
     Returns
     -------

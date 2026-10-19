@@ -112,12 +112,18 @@ class TestSelectDSCQCVoxelTiers:
         assert brain_mask[coord]
 
 
-@pytest.mark.parametrize("analysis_baseline_frames", [None, 4])
+@pytest.mark.parametrize(
+    "analysis_baseline_frames, expected_tsnr, expected_cnr, expected_coverage",
+    [(None, 50.0, 10.0, 1.0), (5, 31.6, 6.3, 0.667)],
+)
 def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(
-    tmp_path, monkeypatch, analysis_baseline_frames,
+    tmp_path, monkeypatch, analysis_baseline_frames, expected_tsnr,
+    expected_cnr, expected_coverage,
 ) -> None:
-    """The analysis baseline marker is independent of the S0-based QC metrics."""
+    """QC metrics use the same analysis baseline as exported quality maps."""
     from matplotlib.axes import Axes
+
+    from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
     original_axvline = Axes.axvline
     markers = []
@@ -127,8 +133,9 @@ def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(
         return original_axvline(ax, x, **kwargs)
 
     monkeypatch.setattr(Axes, "axvline", record_axvline)
-    curve = np.array([100.0, 102.0, 98.0, 75.0, 85.0])
+    curve = np.array([100.0, 102.0, 98.0, 104.0, 96.0, 75.0, 85.0])
     signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
+    signal[0, ..., 5:] = [90.0, 95.0]
     mask = np.ones((3, 3, 3), dtype=bool)
 
     _, stats = generate_dsc_preprocessing_qc_plot(
@@ -140,12 +147,18 @@ def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(
         analysis_baseline_frames=analysis_baseline_frames,
     )
 
-    assert stats["mean_tsnr"] == pytest.approx(50.0)
-    assert stats["mean_cnr"] == pytest.approx(12.5)
-    assert stats["fraction_cnr_gt_4"] == 1.0
+    assert stats["mean_tsnr"] == pytest.approx(expected_tsnr)
+    assert stats["mean_cnr"] == pytest.approx(expected_cnr)
+    assert stats["fraction_cnr_gt_4"] == pytest.approx(expected_coverage)
+    maps = ComputeDSCMaps()._compute_quality_maps(
+        signal, analysis_baseline_frames or 3, mask.shape, mask,
+    )
+    assert stats["mean_tsnr"] == round(float(np.nanmean(maps.tsnr[mask])), 1)
+    assert stats["mean_cnr"] == round(float(np.nanmean(maps.cnr[mask])), 1)
+    assert stats["fraction_cnr_gt_4"] == round(float(np.mean(maps.cnr[mask] > 4)), 3)
     assert markers == (
         [] if analysis_baseline_frames is None
-        else [(5.25, "Analysis baseline end (4 frames)")]
+        else [(6.75, "Analysis baseline end (5 frames)")]
     )
 
 

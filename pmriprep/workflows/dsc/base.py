@@ -1210,7 +1210,7 @@ def init_dsc_qc_wf(
     aif_source : str
         AIF provenance label for the merged QC ("external", "auto").
     baseline_frames : int
-        Initial S0 estimation frame count used for preprocessing QC metrics.
+        Initial S0 estimation frame count marked in the preprocessing QC plot.
     deconvolution_method : str
         Method used to label the timing map in the parameter-map report.
     name : str
@@ -1228,7 +1228,8 @@ def init_dsc_qc_wf(
     prebolus_mean_file, dsc_moco, registered_t1w, brain_mask_file
         Images for the registration / preprocessing / brain-mask filmstrips.
     analysis_baseline_frames
-        Finalized baseline frame count marked on the global signal time course.
+        Finalized baseline frame count used for preprocessing QC metrics and
+        marked on the global signal time course.
     out_aif_curve, out_aif_mask, out_gamma_aif_curve, out_rejected_aif_curve, out_rejected_aif_mask, concentration_file, corrected_concentration_file
         AIF, concentration, and leakage-QC inputs.
     rel_cbf, rel_cbv_auc, mtt, tmax, psr, ttp, k2, auc_raw, auc_corr, auc_diff, qc_fit_data
