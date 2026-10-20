@@ -68,10 +68,14 @@ def _assert_in_order(rendered: str, *labels: str) -> None:
     assert positions == sorted(positions)
 
 
-def test_parent_render_hides_dsc_blocks_when_no_dsc(env):
+@pytest.mark.parametrize(
+    "skip_reason", ["no_dsc_run", "model_without_vp", "disabled_by_configuration"],
+)
+def test_parent_render_hides_dsc_blocks_when_no_dsc(env, skip_reason):
     """DCE-only reports omit the DSC prior and vascular-concordance panels."""
     template = env.get_template("report_unified.html")
     ctx = _minimal_parent_ctx(dsc=None, dce=_dce_ctx_with_dsc_blocks())
+    ctx["dce"]["qc_metrics"]["pk_modeling"]["dsc_cbv_constraint"]["skip_reason"] = skip_reason
     rendered = template.render(**ctx)
     assert "<h3>DSC CBV Constraint</h3>" not in rendered
     assert "<h3>NAWM-Normalized vp–nCBV Concordance</h3>" not in rendered
@@ -98,11 +102,15 @@ def test_registration_description_is_concise(env, template_name, modality):
     assert f"Multi-slice overlay showing {modality}-T1w registration." in rendered
 
 
-def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
+@pytest.mark.parametrize("dsc", [{"present": True}, None], ids=["live", "cached"])
+def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env, dsc):
     """A DSC-informed vp fit is explicitly reported as non-independent."""
     template = env.get_template("sections/section_dce.html")
     dce = {
         "qc_metrics": {
+            "pk_modeling": {
+                "dsc_cbv_constraint": {"mode": "soft", "vp_uncertainty": 0.5},
+            },
             "dsc_dce_validation": {
                 "status": "PRIOR_INFORMED",
                 "prior_informed": True,
@@ -129,8 +137,10 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
         "display_status": {},
     }
 
-    rendered = template.render(dce=dce, dsc={"present": True})
+    rendered = template.render(dce=dce, dsc=dsc)
 
+    assert "<h3>DSC CBV Constraint</h3>" in rendered
+    assert "Relative Constraint Width" in rendered
     assert "DSC-Informed vp Prior Diagnostics" in rendered
     assert "Prior Informed" in rendered
     assert "PRIOR_INFORMED" not in rendered
@@ -161,6 +171,38 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
         '<div class="metric-label">Median Absolute Prior Departure</div>',
     )
     assert '<div class="metric-label">Interpretation</div>' not in rendered
+
+
+@pytest.mark.parametrize(
+    ("constraint", "validation"),
+    [
+        (
+            {"mode": "skip", "skip_reason": "disabled_by_configuration"},
+            {"status": "INDEPENDENT", "skipped": False},
+        ),
+        (
+            {"mode": "skip", "skip_reason": "cross_modal_registration_qc",
+             "reason": "Cross-modal registration QC is unavailable."},
+            {"status": "SKIPPED", "skipped": True,
+             "reason": "Cross-modal registration QC is unavailable."},
+        ),
+    ],
+    ids=["independent-comparison", "withheld-prior"],
+)
+def test_cached_dsc_evidence_shows_constraint_and_concordance(
+    env, constraint, validation,
+):
+    """Cached DSC assessments remain visible when the prior is not applied."""
+    dce = _dce_ctx_with_dsc_blocks()
+    dce["qc_metrics"]["pk_modeling"]["dsc_cbv_constraint"] = constraint
+    dce["qc_metrics"]["dsc_dce_validation"] = validation
+    rendered = env.get_template("report_unified.html").render(
+        **_minimal_parent_ctx(dce=dce),
+    )
+    assert "<h3>DSC CBV Constraint</h3>" in rendered
+    assert "<h3>NAWM-Normalized vp–nCBV Concordance</h3>" in rendered
+    if validation["skipped"]:
+        assert validation["reason"] in rendered
 
 
 def test_dce_signal_conversion_qc_renders(env):

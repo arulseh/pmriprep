@@ -727,9 +727,15 @@
     </div>
     {% endif %}
 
-    <!-- CBV Constraint (suppressed on DCE-only runs where no DSC was processed) -->
-    {% if dsc and dce.qc_metrics.pk_modeling is defined and dce.qc_metrics.pk_modeling.dsc_cbv_constraint is defined %}
-    {% set cbv_c = dce.qc_metrics.pk_modeling.dsc_cbv_constraint %}
+    {% set cbv_c = dce.qc_metrics.pk_modeling.dsc_cbv_constraint|default({}) %}
+    {% set xval = dce.qc_metrics.dsc_dce_validation|default({}) %}
+    {% set has_dsc_evidence = dsc or cbv_c.mode|default('') == 'soft'
+        or (cbv_c.skip_reason is defined and cbv_c.skip_reason not in
+            ['no_dsc_run', 'model_without_vp', 'disabled_by_configuration'])
+        or (xval and not xval.skipped|default(false)) %}
+
+    <!-- DSC inputs may come from the current run or a saved checkpoint. -->
+    {% if has_dsc_evidence %}
     {% if cbv_c.mode is defined %}
     <div class="section">
         <h3>DSC CBV Constraint</h3>
@@ -759,9 +765,8 @@
     {% endif %}
     {% endif %}
 
-    <!-- DSC-DCE vascular concordance (suppressed on DCE-only runs) -->
-    {% if dsc and dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation %}
-    {% set xval = dce.qc_metrics.dsc_dce_validation %}
+    <!-- DSC-DCE vascular concordance -->
+    {% if has_dsc_evidence and xval %}
     {% if xval.skipped|default(false) %}
     <div class="section">
         <h3>{% if xval.prior_informed|default(false) %}DSC-Informed vp Prior Diagnostics{% else %}NAWM-Normalized vp–nCBV Concordance{% endif %}</h3>

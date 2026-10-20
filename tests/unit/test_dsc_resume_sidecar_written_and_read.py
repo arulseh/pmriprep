@@ -141,13 +141,29 @@ class TestRoundTripViaResumeHelper:
 
         assert recovered["dsc_to_t1w_xfm"] == str(xfm)
 
-    @pytest.mark.parametrize("registration_status", ["PASS", "POOR", None])
+    @pytest.mark.parametrize(
+        ("registration_status", "preload_source", "dose", "configured"),
+        [
+            ("PASS", "user_specified", 0.75, True),
+            ("POOR", "user_specified", 0.0, True),
+            (None, "unknown", None, False),
+            ("PASS", None, None, None),
+        ],
+    )
     def test_resume_recovers_verbatim_dicts(
         self, tmp_path: Path, representative_qc_dicts: Any,
         registration_status: str | None,
+        preload_source: str | None, dose: float | None, configured: bool | None,
     ) -> None:
         """An nCBV-only cache supplies its actual QC to the existing prior gate."""
         aif_qc, preload_qc, preprocessing_stats = representative_qc_dicts
+        if preload_source is None:
+            preload_qc.pop("preload_source")
+            preload_qc.pop("preload_administered_dose_fraction")
+        else:
+            preload_qc.update(
+                preload_source=preload_source, preload_administered_dose_fraction=dose,
+            )
         # Qualifying tissue measurements isolate the registration decision.
         preprocessing_stats = dict(
             preprocessing_stats, fraction_cnr_gt_4=0.99, mean_cnr=10.0,
@@ -190,13 +206,16 @@ class TestRoundTripViaResumeHelper:
             dsc_cbv_file=None, dsc_ncbv_file=None, dsc_registration_qc={},
         )
         pk = SimpleNamespace()
+        validation = SimpleNamespace(dsc_preload_configured=None)
         dce = SimpleNamespace(inputs=SimpleNamespace(
             inputnode=inputs,
             dce_pk_modeling_wf=SimpleNamespace(pk_modeling=pk),
+            dce_dsc_validation_wf=SimpleNamespace(inputnode=validation),
         ))
         _connect_master_dsc_to_dce(
             workflow=SimpleNamespace(), dsc_wf=None, dce_wf=dce,
-            dsc_config=DSCConfig(), dce_config=DCEConfig(model="patlak", inference="vi"),
+            dsc_config=DSCConfig(preload="unknown" if configured else 0.5),
+            dce_config=DCEConfig(model="patlak", inference="vi"),
             output_dir=tmp_path, work_dir=tmp_path, subject_id="X", session_id="Y",
         )
         assert inputs.dsc_ncbv_file == str(ncbv)
@@ -206,6 +225,7 @@ class TestRoundTripViaResumeHelper:
         assert pk.dsc_aif_qc == aif_qc
         assert pk.dsc_preload_qc == preload_qc
         assert pk.dsc_preprocessing_stats == preprocessing_stats
+        assert validation.dsc_preload_configured is configured
         interface = ComputeDCEMaps(
             dsc_ncbv_file=inputs.dsc_ncbv_file, brain_mask_file=str(mask),
             dsc_aif_qc=pk.dsc_aif_qc,

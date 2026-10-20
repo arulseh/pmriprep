@@ -2204,6 +2204,12 @@ def _connect_master_dsc_to_dce(
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
             if prev_dsc.get("preload_qc"):
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
+                preload_qc = prev_dsc["preload_qc"]
+                if isinstance(preload_qc, dict):
+                    dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured = {
+                        "user_specified": True,
+                        "unknown": False,
+                    }.get(preload_qc.get("preload_source", ""))
             if prev_dsc.get("preprocessing_stats"):
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
         elif prior_requested:
