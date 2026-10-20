@@ -2153,7 +2153,7 @@ def _connect_master_dsc_to_dce(
                     ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                     ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ("outputnode.registration_qc", "inputnode.dsc_registration_qc"),
-                    # AIF QC is a JSON file, no spatial resampling needed
+                    # QC dictionaries accompany the spatial map inputs.
                     ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
                     ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
                     # CNR coverage for CBV quality assessment

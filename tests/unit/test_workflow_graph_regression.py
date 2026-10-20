@@ -506,9 +506,8 @@ _ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "t1w_subtraction", "flair_precon"
 # Each row exercises >= 1 verified construction-gating branch. Non-topological
 # axes (DCE mask presence; DSC method/registration/leakage/aif/inference) are
 # deliberately absent -- their static values are covered by the node_params tier.
-# The arterial-atlas-cascade gates (dce/base.py:817, dsc/base.py:2737) are held
-# constant by the 3-tier bundled atlas data, so the recorded baseline is the
-# populated branch; the <2-tier partial-install branch is out of scope.
+# Snapshots use the bundled atlas cascade. Missing DSC atlas resources are
+# exercised separately by the focused construction test below.
 Builder = Callable[[Path], pe.Workflow]
 
 DCE_MATRIX: list[tuple[str, Builder]] = [
@@ -636,6 +635,59 @@ def test_graph_matches_baseline(name: str, builder: Builder, bids: Path) -> None
     assert expected["public_outputnode_fields"] == sig["public_outputnode_fields"], (
         f"{name}: public outputnode field contract changed"
     )
+
+
+@pytest.mark.parametrize(
+    ("mode", "full_atlas_available"),
+    [("automatic", False), ("user_mask", True), ("time_series", False)],
+)
+def test_dsc_missing_atlas_keeps_available_aif_inputs(
+    bids: Path, monkeypatch: pytest.MonkeyPatch, mode: str, full_atlas_available: bool,
+) -> None:
+    """Missing arterial resources preserve the remaining AIF input connections."""
+    import nibabel as nib
+    import numpy as np
+
+    mask = bids / "aif_mask.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4)), mask)
+    aif = bids / "aif.txt"
+    np.savetxt(aif, [0., 0., 1., 3., 1., 0.5])
+
+    def available_atlas(resolution: str, dilation: str) -> Path:
+        if full_atlas_available and dilation == "":
+            return mask
+        raise FileNotFoundError("Arterial atlas unavailable")
+
+    monkeypatch.setattr(
+        "pmriprep.workflows.dsc.base.get_arterial_atlas_cascade", lambda _: [],
+    )
+    monkeypatch.setattr(
+        "pmriprep.workflows.dsc.base.get_arterial_atlas", available_atlas,
+    )
+    supplied = (
+        {"aif_mask_file": mask} if mode == "user_mask"
+        else {"aif_file": aif} if mode == "time_series" else {}
+    )
+    workflow = _dsc(bids, **supplied)
+    assert workflow.get_node("transform_atlas") is None
+    full = workflow.get_node("transform_full_atlas")
+    assert (full is not None) is full_atlas_available
+    if full is not None:
+        assert full.inputs.in_file == str(mask)
+    detector = workflow.get_node("dsc_conc_aif_wf.aif_detect")
+    assert detector is not None
+    if mode == "user_mask":
+        assert detector.inputs.aif_mask_file == str(mask)
+    elif mode == "time_series":
+        assert detector.inputs.external_aif_file == str(aif)
+    graph = flatten_collapsed_graph(workflow)
+    flat_detector = next(node for node in graph if node.name == "aif_detect")
+    incoming = [
+        target for _, _, data in graph.in_edges(flat_detector, data=True)
+        for _, target in data["connect"]
+    ]
+    assert "atlas_mask_file" not in incoming
+    assert ("full_atlas_mask_file" in incoming) is full_atlas_available
 
 
 def test_regen_flag_not_set_in_normal_run() -> None:

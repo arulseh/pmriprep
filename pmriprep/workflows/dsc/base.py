@@ -2364,17 +2364,13 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # Step 4: Transform arterial atlas from MNI to DSC space
-    # Use pre-bolus mean as reference for output geometry
-    workflow.connect([
-        (registration_wf, transform_atlas, [("outputnode.mni_to_dsc_matrix", "in_matrix_file")]),
-        (motion_wf, transform_atlas, [("outputnode.prebolus_mean_file", "reference")]),
-    ])
-
-    # Connect transformed atlas to AIF detection
-    workflow.connect([
-        (transform_atlas, conc_aif_wf, [("out_file", "inputnode.atlas_mask_file")]),
-    ])
+    # Transform an available arterial atlas using the pre-bolus reference.
+    if isdefined(transform_atlas.inputs.in_file):
+        workflow.connect([
+            (registration_wf, transform_atlas, [("outputnode.mni_to_dsc_matrix", "in_matrix_file")]),
+            (motion_wf, transform_atlas, [("outputnode.prebolus_mean_file", "reference")]),
+            (transform_atlas, conc_aif_wf, [("out_file", "inputnode.atlas_mask_file")]),
+        ])
 
     # Transform + connect full atlas (posterior circulation tier)
     if isdefined(transform_full_atlas.inputs.in_file):
