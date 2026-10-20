@@ -496,11 +496,11 @@ def prepare_vp_constraint_from_data(
 
     result = VpConstraintResult()
 
-    # Missing-NAWM handling: if no nCBV file available, cleanly SKIP.
+    # The prior requires an available NAWM-normalized CBV map.
     if ncbv_file is None or not Path(str(ncbv_file)).is_file():
         logger.info(
-            "vp constraint skipped: nCBV unavailable (no NAWM reference "
-            "mask). DCE fitting uses the model's ordinary priors and bounds."
+            "vp constraint skipped: NAWM-normalized CBV map unavailable. "
+            "DCE fitting uses the model's ordinary priors and bounds."
         )
         reason = (
             "Automatically generated NAWM was retained for QC but excluded "

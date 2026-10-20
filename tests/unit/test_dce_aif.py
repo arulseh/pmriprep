@@ -1,5 +1,6 @@
 """Unit tests for DCE AIF detection, averaging, gates, and atlas cascade."""
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1043,22 +1044,27 @@ class TestAnchorGateInCascade:
         assert n_attempted == 10
         assert candidates == []
 
-    def test_filter_venous_all_flagged_fails_tier(self) -> None:
+    def test_filter_venous_all_flagged_fails_tier(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """`_filter_venous_candidates` returns empty when all flagged venous."""
         cands = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
         scores = [0.7, 0.6, 0.55]
         metrics = [{"is_likely_venous": True}] * 3
-        out_c, out_s, out_m = AIFDetection._filter_venous_candidates(
-            cands, scores, metrics, min_non_venous=3,
-        )
+        with caplog.at_level(logging.INFO, logger="pmriprep.interfaces.dce_aif"):
+            out_c, out_s, out_m = AIFDetection._filter_venous_candidates(
+                cands, scores, metrics, min_non_venous=3,
+            )
         assert out_c == []
         assert out_s == []
         assert out_m == []
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.INFO
 
-    def test_filter_venous_drops_venous_keeps_one_survivor(self) -> None:
-        """When < min_non_venous survive but ≥ 1 does, drop venous and
-        keep survivors. Cascade Pass-2 will handle the count.
-        """
+    def test_filter_venous_drops_venous_keeps_one_survivor(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Retain arterial survivors and report the reduced tier count at INFO."""
         cands = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
         scores = [0.7, 0.6, 0.55]
         metrics = [
@@ -1066,12 +1072,15 @@ class TestAnchorGateInCascade:
             {"is_likely_venous": True},
             {"is_likely_venous": True},
         ]
-        out_c, out_s, out_m = AIFDetection._filter_venous_candidates(
-            cands, scores, metrics, min_non_venous=3,
-        )
+        with caplog.at_level(logging.INFO, logger="pmriprep.interfaces.dce_aif"):
+            out_c, out_s, out_m = AIFDetection._filter_venous_candidates(
+                cands, scores, metrics, min_non_venous=3,
+            )
         assert out_c == [(0, 0, 0)]
         assert out_s == [0.7]
         assert out_m == [{"is_likely_venous": False}]
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.INFO
 
 
 class TestInflowExclusionHelper:

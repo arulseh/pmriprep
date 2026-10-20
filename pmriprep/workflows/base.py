@@ -341,21 +341,37 @@ def _resolve_anat_subtraction_policy(
     decision: PipelineDecision,
     dsc_config: DSCConfig,
     dce_config: DCEConfig,
-    sequence_compatible: Optional[bool] = None,
+    sequence_mismatches: tuple[str, ...] = (),
 ) -> AnatConfig:
-    """Resolve subtraction requests against underlays and sequence pairing."""
+    """Resolve subtraction and report T1w mismatches for enabled consumers.
+
+    Acquisition mismatches skip requested subtraction. They are warnings when
+    subtraction is requested or tumor segmentation will run, and informational
+    otherwise. Tumor segmentation proceeds with its existing eligibility decision.
+    """
     requested = (
         decision.run_dsc and "t1w_subtraction" in dsc_config.underlays
     ) or (
         decision.run_dce and "t1w_subtraction" in dce_config.underlays
     )
     create_subtraction = config.create_subtraction or requested
-    if create_subtraction and sequence_compatible is False:
-        logging.getLogger("pmriprep.workflows").warning(
-            "Skipping T1w subtraction because the selected pre- and "
-            "postcontrast images are not from compatible sequences."
+    if sequence_mismatches:
+        level = (
+            logging.WARNING
+            if create_subtraction or decision.run_tumor_seg
+            else logging.INFO
         )
-        create_subtraction = False
+        consequences = ["Acquisition differences may mimic or mask enhancement."]
+        if decision.run_tumor_seg:
+            consequences.append("Tumor segmentation will proceed.")
+        if create_subtraction:
+            consequences.append("Skipping T1w subtraction.")
+            create_subtraction = False
+        logging.getLogger("pmriprep.workflows").log(
+            level,
+            "Pre- and post-contrast T1w differ in %s. %s",
+            "; ".join(sequence_mismatches), " ".join(consequences),
+        )
     if create_subtraction != config.create_subtraction:
         return dataclasses.replace(config, create_subtraction=create_subtraction)
     return config
@@ -1025,14 +1041,6 @@ def _find_previous_dsc_outputs(
                 outputs["rel_cbv_map"] = str(f)
         for f in perf_dir.glob("*desc-dscNawmNormCbv_stat.nii.gz"):
             outputs["ncbv_map"] = str(f)
-        if outputs["rel_cbv_map"] is not None and outputs["ncbv_map"] is None:
-            logging.getLogger("pmriprep.workflows").warning(
-                "Found previous DSC outputs for sub-%s without a NAWM-"
-                "normalized CBV map (no *desc-dscNawmNormCbv_stat.nii.gz "
-                "in %s). DCE vp constraint will SKIP. Re-run DSC to "
-                "obtain nCBV.",
-                subject_id, perf_dir,
-            )
 
     # DSC→T1w transform and resume checkpoint: read from work/ directory
     if work_dir is not None:
@@ -1065,10 +1073,7 @@ def _find_previous_dsc_outputs(
                     outputs["preload_qc"] = data["preload_qc"]
                 if isinstance(data.get("preprocessing_stats"), dict):
                     outputs["preprocessing_stats"] = data["preprocessing_stats"]
-        # A missing checkpoint leaves aif_qc/preload_qc/preprocessing_stats at
-        # their None default; the caller reports the user-facing consequence
-        # (no previous DSC CBV/transform -> vp constraint skipped, or QC
-        # defaults used) with the full context this helper lacks.
+        # Missing checkpoint entries remain None for downstream QC assessment.
 
     return outputs
 
@@ -2130,9 +2135,7 @@ def _connect_master_dsc_to_dce(
             dsc_config.agent_standard_dose
         )
 
-    # Connect DSC CBV for vp constraint in DCE PK modeling.
-    # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
-    # Other models with vp (patlak) fit freely, cross-validate post-hoc.
+    # Route DSC maps and QC to DCE prior preparation and concordance assessment.
     if dsc_wf is not None:
         _assign_dsc_dose()
         # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
@@ -2156,9 +2159,7 @@ def _connect_master_dsc_to_dce(
                 ]),
             ])
 
-        # Cross-validation: Patlak fits vp freely and cross-validates post-hoc.
-        # CBV is resampled inside DCE workflow via resample_dsc_cbv node.
-        # Only need to connect if not already connected by the constraint block above.
+        # Patlak receives the maps and transform used for concordance assessment.
         if dce_config.model == "patlak":
             workflow.connect([
                 (dsc_wf, dce_wf, [
@@ -2176,6 +2177,10 @@ def _connect_master_dsc_to_dce(
 
     elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
         # DSC skipped but DCE needs CBV: look for previous DSC outputs
+        prior_requested = (
+            dce_config.inference != "nlls"
+            and dce_config.cbv_constraint_mode != "skip"
+        )
         prev_dsc = _find_previous_dsc_outputs(
             Path(output_dir), subject_id, session_id,
             work_dir=Path(work_dir) if work_dir else None,
@@ -2189,12 +2194,10 @@ def _connect_master_dsc_to_dce(
                 _log.info(
                     "skip-dsc: loaded DSC nCBV from %s", prev_dsc["ncbv_map"]
                 )
-            else:
+            elif prior_requested:
                 _log.warning(
-                    "skip-dsc: nCBV not found in previous DSC outputs "
-                    "(older run or no NAWM mask); vp constraint will "
-                    "cleanly SKIP. Use --no-dsc-validation to avoid "
-                    "cross-validation noise if this is unexpected."
+                    "DSC-informed vp prior unavailable: no cached "
+                    "NAWM-normalized CBV map was found."
                 )
             _log.info(
                 "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
@@ -2205,17 +2208,14 @@ def _connect_master_dsc_to_dce(
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
             if prev_dsc.get("preprocessing_stats"):
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
-            if not prev_dsc["aif_qc"]:
-                _log.warning(
-                    "skip-dsc: AIF QC not found in previous DSC outputs; "
-                    "constraint quality assessment will use defaults"
-                )
-        else:
+        elif prior_requested:
             _log.warning(
-                "skip-dsc: no previous DSC CBV/transform found in %s; "
-                "DCE vp constraint will be skipped",
+                "DSC-informed vp prior unavailable: no reusable DSC "
+                "CBV/transform pair was found in %s.",
                 output_dir,
             )
+        else:
+            _log.info("No reusable DSC CBV/transform pair found in %s.", output_dir)
 
 @dataclass(frozen=True)
 class _MasterDCEInitialization:
@@ -3469,13 +3469,16 @@ def _prepare_master_workflow_context(
     )
     resolved_dsc_config = copy.deepcopy(dsc_config) if dsc_config is not None else DSCConfig()
     resolved_dce_config = copy.deepcopy(dce_config) if dce_config is not None else DCEConfig()
-    resolved_anat_config = _resolve_anat_brain_extraction_tool(
-        resolved_anat_config
-    )
-
     session_data = discover_session_data(
         resolved_bids_dir, subject_id, session_id, layout=layout
     )
+    decision = decide_pipelines(
+        session_data, resolved_skip_flags, resolved_tumor_seg_config
+    )
+    if decision.run_anat:
+        resolved_anat_config = _resolve_anat_brain_extraction_tool(
+            resolved_anat_config
+        )
     has_t1w_pre = bool(session_data.modalities.t1w_pre)
     has_t1w_postcon = bool(session_data.modalities.t1w_ce_gad)
 
@@ -3496,10 +3499,12 @@ def _prepare_master_workflow_context(
     if not cli_log.handlers:
         cli_log = logging.getLogger("pmriprep.workflows")
     system_ram = _system_ram_gb()
-    for label, raw, capped in (
-        ("DSC", dsc_mem_raw, dsc_mem_gb),
-        ("DCE", dce_mem_raw, dce_mem_gb),
+    for label, enabled, raw, capped in (
+        ("DSC", decision.run_dsc, dsc_mem_raw, dsc_mem_gb),
+        ("DCE", decision.run_dce, dce_mem_raw, dce_mem_gb),
     ):
+        if not enabled:
+            continue
         if mem_limit_gb is not None and capped >= mem_limit_gb * 0.9:
             cli_log.warning(
                 "%s processing needs ~%.1f GB but --mem-gb is %.1f GB. "
@@ -3513,15 +3518,12 @@ def _prepare_master_workflow_context(
                 label, raw, system_ram,
             )
 
-    decision = decide_pipelines(
-        session_data, resolved_skip_flags, resolved_tumor_seg_config
-    )
     resolved_anat_config = _resolve_anat_subtraction_policy(
         resolved_anat_config,
         decision=decision,
         dsc_config=resolved_dsc_config,
         dce_config=resolved_dce_config,
-        sequence_compatible=session_data.modalities.t1w_subtraction_compatible,
+        sequence_mismatches=session_data.modalities.t1w_sequence_mismatches,
     )
     return _MasterWorkflowContext(
         bids_dir=resolved_bids_dir,
@@ -3955,8 +3957,6 @@ def get_pipeline_summary(workflow: pe.Workflow) -> str:
     # DCE
     if decision.run_dce:
         lines.append("DCE perfusion: WILL RUN")
-        if decision.run_dsc:
-            lines.append("  (DCE will use DSC CBV for vp constraint)")
     else:
         lines.append(f"DCE perfusion: SKIPPED ({decision.dce_reason})")
 

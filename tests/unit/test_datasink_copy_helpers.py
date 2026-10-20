@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
@@ -405,15 +406,20 @@ def test_perf_map_missing_input_writes_nothing(
     tmp_path: Path,
     modality: str,
     missing: Any,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     copy_map, desc, suffix, _ = _perf_map_contract(modality)
-    out = copy_map(
-        in_file=missing, output_dir=str(tmp_path), subject="X", session="Y",
-        desc=desc, suffix=suffix, meta_dict={},
-    )
+    with caplog.at_level(logging.DEBUG, logger="nipype.workflow"):
+        out = copy_map(
+            in_file=missing, output_dir=str(tmp_path), subject="X", session="Y",
+            desc=desc, suffix=suffix, meta_dict={},
+        )
     assert out == ""
     assert not list(tmp_path.rglob("*.nii.gz"))
     assert not list(tmp_path.rglob("*.json"))
+    records = [record for record in caplog.records if "derivative omitted" in record.message]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
 
 
 @pytest.mark.parametrize("modality", ["dsc", "dce"])

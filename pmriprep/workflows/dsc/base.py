@@ -2134,7 +2134,7 @@ def init_dsc_preproc_wf(
     except (FileNotFoundError, IndexError):
         import logging as _logging
         _logging.getLogger("pmriprep.workflows.dsc").warning(
-            "Arterial atlas not found. AIF detection will use whole-brain search."
+            "The arterial atlas is unavailable for the DSC AIF search."
         )
 
     # Transform full arterial atlas (undilated, incl. posterior circulation)

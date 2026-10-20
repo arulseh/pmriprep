@@ -648,14 +648,15 @@ class B1Mapping(SimpleInterface):
         n_signal = max(n_signal_actual, 1)
         if n_extreme_low > 0:
             logger.info(
-                "%.1f%% of brain has B1+ < %.2f (expected in temporal lobes at %.1fT)",
+                "%.1f%% of signal-supported voxels have B1+ < %.2f at %.1f T.",
                 100.0 * n_extreme_low / n_signal,
                 b1_thresh.extreme_low,
                 field_strength,
             )
         if n_extreme_high > 0:
             logger.warning(
-                "%.1f%% of brain has B1+ > %.2f (check for dielectric effects at %.1fT)",
+                "%.1f%% of signal-supported voxels have B1+ > %.2f at %.1f T. "
+                "Review B1+ QC.",
                 100.0 * n_extreme_high / n_signal,
                 b1_thresh.extreme_high,
                 field_strength,
@@ -734,8 +735,7 @@ class B1Mapping(SimpleInterface):
         b1_map = b1_map.astype(np.float32)
 
         # -----------------------------------------------------------------
-        # Flag spatially uniform B1+ maps.
-        # If all brain voxels are zero or all ones, the map is unusable.
+        # Flag empty or near-unity uniform B1+ maps.
         # -----------------------------------------------------------------
         uniform_detected = False
         b1_unique = np.unique(b1_map[signal_mask])
@@ -745,7 +745,7 @@ class B1Mapping(SimpleInterface):
                 b1_map = np.zeros(shape, dtype=np.float32)
                 uniform_detected = True
             elif np.isclose(b1_unique[0], 1.0, atol=1e-3):
-                logger.info("B1+ map is all ones (no correction needed)")
+                logger.info("B1+ map is spatially uniform and near unity.")
                 uniform_detected = True
 
         # Calculate QC metrics within measured brain support.
@@ -970,14 +970,6 @@ class B1Mapping(SimpleInterface):
                 f"{b1_res.resolved_encoding.value}. Check that this is the correct "
                 "B1+ map file and that its encoding is set correctly."
             )
-        if p99 > full_scale * 2.0:
-            logger.warning(
-                "Pre-computed B1+ map pixel p99=%.0f exceeds 2× nominal "
-                "(%.0f). Some voxels have B1+ ratio > 2.0 — likely edge/artifact "
-                "voxels that will be clipped.",
-                p99, full_scale * 2.0,
-            )
-
         # Create valid mask (non-zero pixels)
         valid_mask = raw_support
 
@@ -990,6 +982,12 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
+        if p99 > full_scale * 2.0:
+            logger.warning(
+                "Precomputed B1+ ratio p99=%.2f exceeds 2.0; processing bounds "
+                "at %.1f T are [%.2f, %.2f]. Review B1+ QC.",
+                p99 / full_scale, field_strength, b1_thresh.clip_low, b1_thresh.clip_high,
+            )
         b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
         b1_map[~valid_mask] = 0.0  # Preserve missing B1+ support in the derivative
 
@@ -999,14 +997,15 @@ class B1Mapping(SimpleInterface):
         n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & valid_mask))
         if n_extreme_low > 0:
             logger.info(
-                "%.1f%% of brain has B1+ < %.2f (expected in temporal lobes at %.1fT)",
+                "%.1f%% of measured voxels have B1+ < %.2f at %.1f T.",
                 100.0 * n_extreme_low / n_valid,
                 b1_thresh.extreme_low,
                 field_strength,
             )
         if n_extreme_high > 0:
             logger.warning(
-                "%.1f%% of brain has B1+ > %.2f (check for dielectric effects at %.1fT)",
+                "%.1f%% of measured voxels have B1+ > %.2f at %.1f T. "
+                "Review B1+ QC.",
                 100.0 * n_extreme_high / n_valid,
                 b1_thresh.extreme_high,
                 field_strength,
@@ -1772,15 +1771,13 @@ class T1Mapping(SimpleInterface):
             wm_probseg_arr = wm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             gm_probseg_arr = gm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
-        # A B1 map file may exist but be a synthetic uniform map (skip_b1=True,
-        # no AFI data). Check for actual spatial variation — std=0 means no
-        # real B1 correction was applied.
+        # Classify spatial variation for B1 QC.
         if isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map):
             b1_std = float(np.std(b1_map[tissue_qc_mask]))
             b1_corrected = b1_std > 1e-6
             if not b1_corrected:
                 logger.info(
-                    "B1 map provided but uniform (std=%.2e) — treating as uncorrected",
+                    "B1+ map is spatially uniform within T1 QC support (std=%.2e).",
                     b1_std,
                 )
         else:

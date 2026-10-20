@@ -2426,21 +2426,16 @@ class AIFDetection(BaseInterface):
         # uses the small rolloff exclusion. Production search uses these
         # physical margins instead of a fractional superior cut.
         #
-        # Axial-slab proxy guard: through-plane (z) thickness must be
-        # greater than in-plane voxel size for the inferior-as-inflow
-        # assumption to hold. Sagittal/coronal slabs reorient the inflow
-        # direction; in those cases we fall back to symmetric exclusion
-        # using the smaller of the two values to avoid over-rejecting
-        # valid candidates.
+        # Use RAS voxel spacing as a slab-orientation proxy. When z spacing
+        # is smaller than either in-plane spacing, use the smaller margin
+        # symmetrically to retain candidates near either slab edge.
         nz = search_mask.shape[2]
         slice_thickness = float(voxel_sizes[2]) if len(voxel_sizes) > 2 else 1.0
         in_plane_max = max(
             float(voxel_sizes[0]) if len(voxel_sizes) > 0 else 1.0,
             float(voxel_sizes[1]) if len(voxel_sizes) > 1 else 1.0,
         )
-        # Use >= so isotropic 3D-VIBE (1×1×1mm) is treated as axial under
-        # RAS+: only sagittal/coronal acquisitions have in-plane voxels
-        # strictly larger than through-plane after RAS+ reorientation.
+        # Isotropic spacing uses the asymmetric inferior/superior margins.
         is_axial_slab = slice_thickness >= in_plane_max
         effective_inferior_mm = slab_edge_inferior_mm
         effective_superior_mm = slab_edge_superior_mm
@@ -2449,9 +2444,9 @@ class AIFDetection(BaseInterface):
             effective_inferior_mm = fallback_mm
             effective_superior_mm = fallback_mm
             logger.info(
-                "Non-axial DCE acquisition (slice_thickness=%.2f mm < "
-                "in-plane=%.2f mm); falling back to symmetric slab-edge "
-                "exclusion using min=%.2f mm.",
+                "DCE RAS z spacing (%.2f mm) is smaller than the largest "
+                "in-plane spacing (%.2f mm); using symmetric slab-edge "
+                "exclusion of %.2f mm.",
                 slice_thickness, in_plane_max, fallback_mm,
             )
         if slice_thickness > 0:
@@ -2625,9 +2620,9 @@ class AIFDetection(BaseInterface):
                     n_venous, len(non_venous_indices),
                 )
             else:
-                logger.warning(
+                logger.info(
                     "Filtering %d venous candidates (keeping %d arterial; "
-                    "below min_non_venous=%d, cascade Pass 2 will handle).",
+                    "below the tier minimum of %d).",
                     n_venous, len(non_venous_indices), min_non_venous,
                 )
             return (
@@ -2636,12 +2631,10 @@ class AIFDetection(BaseInterface):
                 [metrics_list[i] for i in non_venous_indices],
             )
 
-        # All flagged venous — fail the tier. The cascade will descend or
-        # fall to Parker (venous-derived AIFs produce quantitatively
-        # biased PK estimates).
-        logger.warning(
+        # An all-venous pool fails this tier.
+        logger.info(
             "Tier rejected: %d/%d candidates flagged as likely venous "
-            "(no non-venous alternative). Cascade will descend.",
+            "(no arterial candidates remain).",
             n_venous, len(candidates),
         )
         return [], [], []

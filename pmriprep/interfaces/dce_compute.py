@@ -3749,7 +3749,7 @@ class ComputeDCEMaps(BaseInterface):
         n_voxels = len(mask_coords[0])
 
         # Fixed-model VI/MCMC fit directly on CPU. Auto mode first performs
-        # one canonical batched-NLLS BIC selection below, then refines only
+        # one canonical batched least-squares BIC selection below, then refines only
         # the selected model so inference choice cannot change model labels.
         if inference in ("vi", "mcmc") and not is_auto:
             logger.info("Batched mode with %s: falling through to CPU multiprocessing", inference)
@@ -3907,7 +3907,7 @@ class ComputeDCEMaps(BaseInterface):
                 "delta_bic": float(delta_bic[i]),
             })
 
-        # Bayesian refinement of the canonical batched-NLLS BIC winners.
+        # Bayesian refinement of the canonical batched least-squares BIC winners.
         if inference in ("vi", "map", "mcmc"):
             results = self._refine_auto_bayesian_from_batched(
                 results, voxel_data_list, init_args, n_procs,
@@ -4001,7 +4001,7 @@ class ComputeDCEMaps(BaseInterface):
     ) -> list[dict[str, Any]]:
         """Run CPU MAP fitting on all voxels.
 
-        Uses CPU MAP where it converges, falling back to batched NLLS otherwise.
+        Uses CPU MAP where it converges, falling back to batched least squares otherwise.
 
         Parameters
         ----------
@@ -4017,7 +4017,7 @@ class ComputeDCEMaps(BaseInterface):
         Returns
         -------
         list
-            Refined result dicts (CPU MAP where converged, batched NLLS otherwise).
+            Refined result dicts (CPU MAP where converged, batched least squares otherwise).
         """
         # CPU MAP refinement using multiprocessing
         _init_worker(*init_args)
@@ -4060,7 +4060,7 @@ class ComputeDCEMaps(BaseInterface):
         else:
             cpu_results = [_fit_single_voxel(vd) for vd in refinement_voxels]
 
-        # Use CPU MAP results where they converged, batched NLLS otherwise
+        # Use converged CPU MAP results, with batched least squares as fallback.
         final_results = []
         for fit_res, cpu_res in zip(batched_results, cpu_results, strict=True):
             if cpu_res.get("converged", False) and not cpu_res.get("failed", True):
@@ -4085,7 +4085,7 @@ class ComputeDCEMaps(BaseInterface):
         Parameters
         ----------
         batched_results : list of dict
-            Per-voxel batched-NLLS results carrying the selected model and
+            Per-voxel batched least-squares results carrying the selected model and
             delta-BIC margin.
         voxel_data_list : list of VoxelInput
             Voxel inputs in the same order as ``batched_results``.
@@ -4099,7 +4099,7 @@ class ComputeDCEMaps(BaseInterface):
         list of dict
             Bayesian results where refinement succeeds, with the canonical
             selected-model and delta-BIC state preserved; otherwise the
-            original batched-NLLS fallback.
+            original batched least-squares fallback.
 
         Notes
         -----
@@ -4238,7 +4238,7 @@ class ComputeDCEMaps(BaseInterface):
 
             logger.info(
                 "Completed DCE %s refinement group %d/%d: %d retained, "
-                "%d fell back to batched NLLS",
+                "%d fell back to batched least squares",
                 inference_name,
                 group_index,
                 len(selected_groups),
@@ -4248,7 +4248,7 @@ class ComputeDCEMaps(BaseInterface):
 
         logger.info(
             "DCE %s refinement finished in %.1f s: %d/%d retained, "
-            "%d fell back to batched NLLS",
+            "%d fell back to batched least squares",
             inference_name,
             time.perf_counter() - refinement_start,
             n_retained,

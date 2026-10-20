@@ -120,7 +120,9 @@ def test_discovery_marks_mismatched_t1w_pair_ineligible_for_subtraction(
 
     assert session.modalities.t1w_pre is not None
     assert session.modalities.t1w_ce_gad is not None
-    assert session.modalities.t1w_subtraction_compatible is False
+    assert session.modalities.t1w_sequence_mismatches == (
+        "acquisition label (acq-mprage vs acq-spgr)",
+    )
 
 
 @pytest.mark.parametrize(

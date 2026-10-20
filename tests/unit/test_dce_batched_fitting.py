@@ -1731,7 +1731,7 @@ class TestChunkedMultiproc:
         assert "CPU worker processes (configured: 1)" in caplog.text
         assert "DCE VI refinement group 1/2: patlak (2 voxels)" in caplog.text
         assert "DCE VI refinement finished" in caplog.text
-        assert "2/3 retained, 1 fell back to batched NLLS" in caplog.text
+        assert "2/3 retained, 1 fell back to batched least squares" in caplog.text
 
     def test_fixed_map_refinement_marks_nlls_fallback(
         self, monkeypatch: pytest.MonkeyPatch,

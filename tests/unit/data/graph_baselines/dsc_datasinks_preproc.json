@@ -929,16 +929,16 @@
     "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "mean_meta": "c3ac3b781c177b50dec5c9a48981d84936b55e91ec0d95b0f688b616fce3c91c",
-    "mean_sink": "2ef6a057ebe9808876dfb5e2f184f33b4015eb2ba7682d75138d9ed4aa5569f1",
+    "mean_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
     "moco_meta": "ed3aeaeab1cde104be2eb771d81322be077890870a47fb00c5b0416b78d4dbea",
-    "moco_sink": "2ef6a057ebe9808876dfb5e2f184f33b4015eb2ba7682d75138d9ed4aa5569f1",
+    "moco_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
     "mtt_map_meta": "6a5c62929f52e51d848d60d21ccf42635e63fc512b81c3648f6bfd41f491e85c",
-    "mtt_map_sink": "2ef6a057ebe9808876dfb5e2f184f33b4015eb2ba7682d75138d9ed4aa5569f1",
+    "mtt_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
     "psr_map_meta": "6a5c62929f52e51d848d60d21ccf42635e63fc512b81c3648f6bfd41f491e85c",
-    "psr_map_sink": "2ef6a057ebe9808876dfb5e2f184f33b4015eb2ba7682d75138d9ed4aa5569f1",
+    "psr_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
     "resume_checkpoint": "75f03da8c3c7884f258fbfc706ed795636c66c352f8fa3accbfc006ea4fddc90",
     "tmax_map_meta": "6a5c62929f52e51d848d60d21ccf42635e63fc512b81c3648f6bfd41f491e85c",
-    "tmax_map_sink": "2ef6a057ebe9808876dfb5e2f184f33b4015eb2ba7682d75138d9ed4aa5569f1"
+    "tmax_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {

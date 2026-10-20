@@ -752,10 +752,9 @@ def _copy_perf_map(
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
     if not isdefined(in_file) or not in_file:
-        logging.getLogger("nipype.workflow").warning(
-            "Skipping DSC _copy_perf_map sink (desc=%s, suffix=%s): upstream "
-            "produced no output (in_file=%r)",
-            desc, suffix, in_file,
+        logging.getLogger("nipype.workflow").debug(
+            "DSC map not produced; derivative omitted (desc=%s, suffix=%s).",
+            desc, suffix,
         )
         return ""
 

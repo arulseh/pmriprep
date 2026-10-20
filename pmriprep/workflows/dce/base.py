@@ -972,7 +972,7 @@ def init_dce_atlas_transform_wf(
     else:
         import logging as _logging
         _logging.getLogger("pmriprep.workflows.dce").warning(
-            "No arterial atlases found. AIF detection will use whole-brain search."
+            "Arterial atlases are unavailable for the DCE AIF search."
         )
     workflow.connect([
         (inputnode, transform, [

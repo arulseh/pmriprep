@@ -195,10 +195,11 @@ def test_master_omits_unused_discovered_secondary_anatomy(
 
 
 @pytest.mark.parametrize("pipeline", ["dsc", "dce"])
+@pytest.mark.parametrize("mismatches", [(), ("FlipAngle (15.0 deg vs 9.0 deg)",)])
 def test_subtraction_underlay_enables_creation_for_active_pipeline(
-    pipeline: str,
+    pipeline: str, mismatches: tuple[str, ...],
 ) -> None:
-    """Either active perfusion pipeline can imply subtraction creation."""
+    """Active underlay requests use the same sequence-compatibility policy."""
     resolved = _resolve_anat_subtraction_policy(
         AnatConfig(),
         decision=PipelineDecision(
@@ -212,8 +213,9 @@ def test_subtraction_underlay_enables_creation_for_active_pipeline(
         dce_config=DCEConfig(
             underlays=["t1w_subtraction"] if pipeline == "dce" else []
         ),
+        sequence_mismatches=mismatches,
     )
-    assert resolved.create_subtraction is True
+    assert resolved.create_subtraction is (not mismatches)
 
 
 def test_skipped_pipeline_does_not_enable_subtraction() -> None:
@@ -227,23 +229,42 @@ def test_skipped_pipeline_does_not_enable_subtraction() -> None:
     assert resolved.create_subtraction is False
 
 
-def test_sequence_mismatch_disables_requested_subtraction(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize("tumor_seg", [False, True])
+@pytest.mark.parametrize("subtraction", [False, True])
+def test_t1w_mismatch_warning_follows_enabled_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, tumor_seg: bool, subtraction: bool,
 ) -> None:
-    """Registration cannot make different T1w sequences subtractable."""
-    with caplog.at_level(logging.WARNING, logger="pmriprep.workflows"):
-        resolved = _resolve_anat_subtraction_policy(
-            AnatConfig(create_subtraction=True),
-            decision=PipelineDecision(
-                run_tumor_seg=False, run_dsc=False, run_dce=False,
-            ),
-            dsc_config=DSCConfig(),
-            dce_config=DCEConfig(),
-            sequence_compatible=False,
+    """Discovered mismatch details follow actual consumers into one log message."""
+    bids = _write_case(tmp_path, {"t1w_pre", "t1w_postcon", "t2w", "flair"})
+    anat = bids / "sub-0001" / "ses-0001" / "anat"
+    for suffix, angle in (("T1w", 15), ("ce-GAD_T1w", 9)):
+        (anat / f"sub-0001_ses-0001_{suffix}.json").write_text(
+            json.dumps({"ScanningSequence": "GR", "FlipAngle": angle})
+        )
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._check_tumor_seg_device", lambda _: (True, "")
+    )
+    monkeypatch.setattr("pmriprep.utils.mem._system_ram_gb", lambda: 128.0)
+    with caplog.at_level(logging.INFO, logger="pmriprep.workflows"):
+        context = _prepare_master_workflow_context(
+            bids_dir=bids, output_dir=tmp_path / "out",
+            subject_id="0001", session_id="0001",
+            skip_flags=PipelineSkipFlags(skip_tumor_seg=not tumor_seg),
+            anat_config=AnatConfig(tool="ants", create_subtraction=subtraction),
+            tumor_seg_config=None, dsc_config=None, dce_config=None,
+            work_dir=tmp_path / "work", mem_limit_gb=None, layout=None,
         )
 
-    assert resolved.create_subtraction is False
-    assert "not from compatible sequences" in caplog.text
+    assert context.anat_config.create_subtraction is False
+    assert context.decision.run_tumor_seg is tumor_seg
+    records = [r for r in caplog.records if "Pre- and post-contrast T1w" in r.message]
+    assert len(records) == 1
+    record = records[0]
+    assert record.levelno == (logging.WARNING if tumor_seg or subtraction else logging.INFO)
+    assert "FlipAngle (15.0 deg vs 9.0 deg)" in record.message
+    assert ("Tumor segmentation will proceed." in record.message) is tumor_seg
+    assert ("Skipping T1w subtraction." in record.message) is subtraction
 
 
 def test_requested_subtraction_underlay_builds_anatomical_node(
@@ -735,7 +756,7 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
 
 
 def test_connect_master_dsc_to_dce_ignores_dose_without_dsc_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """DSC-only dose settings do not alter a DCE-only workflow."""
     dce_input = SimpleNamespace(
@@ -774,12 +795,18 @@ def test_connect_master_dsc_to_dce_ignores_dose_without_dsc_state(
 
     assert dce_input.dsc_dose == 1.0
     assert dce_input.dsc_agent_standard_dose == 0.1
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
+@pytest.mark.parametrize(
+    ("inference", "constraint_mode", "warn"),
+    [("nlls", "auto", False), ("vi", "auto", True), ("vi", "skip", False)],
+)
 def test_connect_master_dsc_to_dce_routes_dose_with_cached_dsc(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    inference: str, constraint_mode: str, warn: bool,
 ) -> None:
-    """Reusable DSC maps carry their configured dose metadata into DCE."""
+    """Cached maps carry dose metadata; missing nCBV warns for requested priors."""
     dce_input = SimpleNamespace(
         dsc_dose=1.0,
         dsc_agent_standard_dose=0.1,
@@ -807,7 +834,10 @@ def test_connect_master_dsc_to_dce_routes_dose_with_cached_dsc(
         dsc_wf=None,
         dce_wf=dce_wf,
         dsc_config=DSCConfig(dose=0.5, agent_standard_dose=0.05),
-        dce_config=DCEConfig(model="extended_tofts"),
+        dce_config=DCEConfig(
+            model="extended_tofts", inference=inference,
+            cbv_constraint_mode=constraint_mode,
+        ),
         output_dir=tmp_path / "out",
         work_dir=tmp_path / "work",
         subject_id="0001",
@@ -817,6 +847,10 @@ def test_connect_master_dsc_to_dce_routes_dose_with_cached_dsc(
     assert dce_input.dsc_dose == 0.5
     assert dce_input.dsc_agent_standard_dose == 0.05
     assert dce_input.dsc_cbv_file == "cached_cbv.nii.gz"
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == int(warn)
+    if warn:
+        assert "no cached NAWM-normalized CBV map" in warnings[0].message
 
 
 def test_connect_master_dce_t1_b1_inputs_preserves_vfa_metadata(
@@ -940,10 +974,15 @@ def test_connect_master_dce_t1_b1_inputs_ignores_unused_vfa(
     assert connections == []
 
 
+@pytest.mark.parametrize(
+    ("run_anat", "run_dsc", "run_dce"),
+    [(True, False, True), (False, True, False), (False, False, False)],
+)
 def test_prepare_master_context_resolves_session_policy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    run_anat: bool, run_dsc: bool, run_dce: bool,
 ) -> None:
-    """Session preparation preserves defaults, memory buffers, and skip decisions."""
+    """Resource estimates are retained; warnings follow the enabled pipelines."""
     session_data = SessionData(
         subject="0001",
         session="0001",
@@ -965,19 +1004,22 @@ def test_prepare_master_context_resolves_session_policy(
     )
     monkeypatch.setattr("pmriprep.utils.mem.estimate_4d_mem_gb", _estimate)
     monkeypatch.setattr("pmriprep.utils.mem._system_ram_gb", lambda: 128.0)
+    monkeypatch.setattr("pmriprep.workflows.base.shutil.which", lambda _: None)
 
     context = _prepare_master_workflow_context(
         bids_dir=tmp_path / "bids" / ".." / "bids",
         output_dir=tmp_path / "out",
         subject_id="0001",
         session_id="0001",
-        skip_flags=PipelineSkipFlags(skip_dsc=True),
-        anat_config=None,
+        skip_flags=PipelineSkipFlags(
+            skip_anat=not run_anat, skip_dsc=not run_dsc, skip_dce=not run_dce,
+        ),
+        anat_config=AnatConfig(tool="hdbet"),
         tumor_seg_config=None,
         dsc_config=None,
         dce_config=None,
         work_dir=tmp_path / "work",
-        mem_limit_gb=12.0,
+        mem_limit_gb=4.0,
         layout=None,
     )
 
@@ -987,14 +1029,20 @@ def test_prepare_master_context_resolves_session_policy(
     assert context.dsc_mem_gb == 4.0
     assert context.dce_mem_gb == 5.0
     assert estimates == [
-        (tmp_path / "dsc.nii.gz", 4, 12.0),
-        (tmp_path / "dce.nii.gz", 5, 12.0),
+        (tmp_path / "dsc.nii.gz", 4, 4.0),
+        (tmp_path / "dce.nii.gz", 5, 4.0),
     ]
-    assert context.decision.run_anat is True
-    assert context.decision.run_dsc is False
-    assert context.decision.run_dce is True
+    assert context.decision.run_anat is run_anat
+    assert context.decision.run_dsc is run_dsc
+    assert context.decision.run_dce is run_dce
+    assert context.anat_config.tool == ("ants" if run_anat else "hdbet")
     assert isinstance(context.anat_config, AnatConfig)
     assert isinstance(context.dsc_config, DSCConfig)
+    warnings = [record.message for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == sum((run_anat, run_dsc, run_dce))
+    assert any(message.startswith("HD-BET") for message in warnings) is run_anat
+    assert any(message.startswith("DSC processing") for message in warnings) is run_dsc
+    assert any(message.startswith("DCE processing") for message in warnings) is run_dce
 
 
 def test_prepare_master_context_isolates_session_config_mutation(

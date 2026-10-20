@@ -729,7 +729,7 @@ def test_xval_plot_node_emits_prior_diagnostic(
 
 
 class TestFindPreviousDscOutputsNcbv:
-    """Skip-DSC path must discover the nCBV file, and warn if missing."""
+    """Cached DSC lookup reports the available CBV derivatives."""
 
     @staticmethod
     def _make_layout(tmp_path: Any, subject_id: str, session_id: str):
@@ -758,30 +758,28 @@ class TestFindPreviousDscOutputsNcbv:
         )
         assert outputs.get("ncbv_map") == str(ncbv_path)
 
-    def test_ncbv_missing_warns_and_sets_none(
+    def test_ncbv_missing_sets_none(
         self,
         tmp_path: Any,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Layout with no dscNawmNormCbv_stat → ``ncbv_map is None`` and a warning fires."""
+        """Relative CBV remains available when the nCBV derivative is absent."""
         from pmriprep.workflows.base import _find_previous_dsc_outputs
 
         perf_dir = self._make_layout(tmp_path, "02", "01")
+        cbv_path = perf_dir / "sub-02_ses-01_desc-dscRelAUCCbv_stat.nii.gz"
         _write_nifti(
-            perf_dir / "sub-02_ses-01_desc-dscRelAUCCbv_stat.nii.gz",
+            cbv_path,
             np.ones((2, 2, 2)),
         )
 
-        with caplog.at_level(logging.WARNING, logger="pmriprep.workflows"):
-            outputs = _find_previous_dsc_outputs(
-                output_dir=tmp_path,
-                subject_id="02",
-                session_id="01",
-            )
+        outputs = _find_previous_dsc_outputs(
+            output_dir=tmp_path,
+            subject_id="02",
+            session_id="01",
+        )
 
-        assert outputs.get("ncbv_map") is None
-        joined = " ".join(r.message for r in caplog.records)
-        assert ("NAWM" in joined) or ("nCBV" in joined) or ("ncbv" in joined)
+        assert outputs["ncbv_map"] is None
+        assert outputs["rel_cbv_map"] == str(cbv_path)
 
 
 class TestMaskProducersReturnEmptyString:

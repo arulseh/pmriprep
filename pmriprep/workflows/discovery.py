@@ -25,10 +25,9 @@ class ModalityAvailability:
         Path to pre-contrast T1w image, if available.
     t1w_ce_gad : Path, optional
         Path to contrast-enhanced T1w (GAD) image, if available.
-    t1w_subtraction_compatible : bool, optional
-        Whether the selected pre- and postcontrast T1w images have no detected
-        sequence mismatch and may be used for subtraction. ``None`` when a
-        pair was not evaluated.
+    t1w_sequence_mismatches : tuple of str
+        Acquisition differences between the selected pre- and postcontrast
+        T1w images. Empty when the pair is unavailable or no mismatch is detected.
     t2w : Path, optional
         Path to T2w image, if available.
     flair : Path, optional
@@ -65,7 +64,7 @@ class ModalityAvailability:
 
     t1w_pre: Optional[Path] = None
     t1w_ce_gad: Optional[Path] = None
-    t1w_subtraction_compatible: Optional[bool] = None
+    t1w_sequence_mismatches: Tuple[str, ...] = ()
     t2w: Optional[Path] = None
     flair: Optional[Path] = None
     flair_postcon: Optional[Path] = None
@@ -258,17 +257,16 @@ def _scalar(val: object) -> Optional[float]:
         return None
 
 
-def _check_t1w_sequence_compatibility(
+def _get_t1w_sequence_mismatches(
     t1w_pre: Path,
     t1w_postcon: Path,
     layout: "BIDSLayout",
-) -> bool:
-    """Return whether pre- and postcontrast T1w are subtraction-compatible.
+) -> Tuple[str, ...]:
+    """Describe detected acquisition differences in a pre/postcontrast T1w pair.
 
-    Compares acquisition metadata across three tiers of severity. Logs
-    warnings when mismatches are detected; logs info when compatibility
-    is confirmed. Never raises — all metadata access is defensive. Missing
-    metadata does not by itself disqualify a pair.
+    Compare available metadata, treating failed metadata reads as empty.
+    Acquisition labels, sequence codes and InversionTime availability take
+    precedence over parameter differences. Acquisition type is checked separately.
 
     Parameters
     ----------
@@ -281,20 +279,9 @@ def _check_t1w_sequence_compatibility(
 
     Returns
     -------
-    bool
-        ``False`` when available metadata demonstrates a sequence mismatch;
-        otherwise ``True``.
-
-    Notes
-    -----
-    Tier 1 detects fundamentally different sequence types (e.g., MPRAGE vs
-    SPGR). Tier 2 catches parameter drift within the same sequence type
-    that alters tissue contrast. Tier 3 flags structural acquisition
-    differences (2D vs 3D).
-
-    Sequence mismatch can produce subtraction-map artifacts that exceed
-    gadolinium enhancement signal in low-grade gliomas (5-15% signal
-    change vs 10-25% sequence-related difference at 3T).
+    tuple of str
+        Mismatch descriptions, including available parameter values, in
+        precontrast/postcontrast order. Empty when no mismatch is detected.
     """
     try:
         meta_pre = layout.get_metadata(str(t1w_pre)) or {}
@@ -305,7 +292,7 @@ def _check_t1w_sequence_compatibility(
     except Exception:
         meta_post = {}
 
-    warned = False
+    mismatches: List[str] = []
 
     # --- Tier 1: sequence type mismatch ---
 
@@ -322,56 +309,35 @@ def _check_t1w_sequence_compatibility(
     acq_post = (entities_post.get("acquisition") or "").lower() or None
 
     if acq_pre and acq_post and acq_pre != acq_post:
-        logger.warning(
-            "Pre- and post-contrast T1w use different pulse sequences "
-            "(acq-%s vs acq-%s). Subtraction map may show apparent signal "
-            "differences unrelated to gadolinium enhancement, particularly "
-            "at gray-white matter boundaries.",
-            acq_pre, acq_post,
+        mismatches.append(
+            f"acquisition label (acq-{acq_pre} vs acq-{acq_post})"
         )
-        warned = True
 
     seq_pre = _normalize_scanning_sequence(meta_pre.get("ScanningSequence"))
     seq_post = _normalize_scanning_sequence(meta_post.get("ScanningSequence"))
 
-    if seq_pre and seq_post and seq_pre != seq_post and not warned:
-        logger.warning(
-            "Pre- and post-contrast T1w use different pulse sequences "
-            "(ScanningSequence %s vs %s). Subtraction map may show apparent "
-            "signal differences unrelated to gadolinium enhancement, "
-            "particularly at gray-white matter boundaries.",
-            sorted(seq_pre), sorted(seq_post),
+    if seq_pre and seq_post and seq_pre != seq_post and not mismatches:
+        mismatches.append(
+            f"ScanningSequence ({sorted(seq_pre)} vs {sorted(seq_post)})"
         )
-        warned = True
 
     ti_pre = _scalar(meta_pre.get("InversionTime"))
     ti_post = _scalar(meta_post.get("InversionTime"))
 
-    if (ti_pre is not None) != (ti_post is not None) and not warned:
-        logger.warning(
-            "Pre- and post-contrast T1w differ in inversion recovery usage "
-            "(InversionTime: precon=%s, postcon=%s). Subtraction map may "
-            "show apparent signal differences unrelated to gadolinium "
-            "enhancement, particularly at gray-white matter boundaries.",
-            ti_pre, ti_post,
+    if (ti_pre is not None) != (ti_post is not None) and not mismatches:
+        mismatches.append(
+            f"InversionTime metadata (precon={ti_pre}, postcon={ti_post})"
         )
-        warned = True
 
     # --- Tier 2: parameter mismatch within same sequence type ---
-    # Only fires when Tier 1 did not already identify a fundamental sequence
-    # mismatch — parameter differences are expected across different sequences.
+    # Compare parameters after the label, sequence and InversionTime checks.
 
-    if not warned:
+    if not mismatches:
         if ti_pre is not None and ti_post is not None:
             if abs(ti_pre - ti_post) > 0.050:
-                logger.warning(
-                    "Pre- and post-contrast T1w use the same sequence type "
-                    "but differ in InversionTime (%.0f ms vs %.0f ms). This "
-                    "may introduce tissue-contrast differences that mimic or "
-                    "mask true enhancement.",
-                    ti_pre * 1000, ti_post * 1000,
+                mismatches.append(
+                    f"InversionTime ({ti_pre * 1000:.0f} ms vs {ti_post * 1000:.0f} ms)"
                 )
-                warned = True
 
         tr_pre = _scalar(meta_pre.get("RepetitionTime"))
         tr_post = _scalar(meta_post.get("RepetitionTime"))
@@ -379,28 +345,19 @@ def _check_t1w_sequence_compatibility(
         if tr_pre and tr_post and tr_pre > 0 and tr_post > 0:
             ratio = max(tr_pre, tr_post) / min(tr_pre, tr_post)
             if ratio > 1.5:
-                logger.warning(
-                    "Pre- and post-contrast T1w use the same sequence type "
-                    "but differ in RepetitionTime (%.3f s vs %.3f s, ratio "
-                    "%.1fx). This may introduce tissue-contrast differences "
-                    "that mimic or mask true enhancement.",
-                    tr_pre, tr_post, ratio,
+                mismatches.append(
+                    f"RepetitionTime ({tr_pre:.3f} s vs {tr_post:.3f} s, "
+                    f"ratio {ratio:.1f}x)"
                 )
-                warned = True
 
         fa_pre = _scalar(meta_pre.get("FlipAngle"))
         fa_post = _scalar(meta_post.get("FlipAngle"))
 
         if fa_pre is not None and fa_post is not None:
             if abs(fa_pre - fa_post) > 3.0:
-                logger.warning(
-                    "Pre- and post-contrast T1w use the same sequence type "
-                    "but differ in FlipAngle (%.1f deg vs %.1f deg). This "
-                    "may introduce tissue-contrast differences that mimic or "
-                    "mask true enhancement.",
-                    fa_pre, fa_post,
+                mismatches.append(
+                    f"FlipAngle ({fa_pre:.1f} deg vs {fa_post:.1f} deg)"
                 )
-                warned = True
 
     # --- Tier 3: acquisition type mismatch (2D vs 3D) ---
 
@@ -409,19 +366,10 @@ def _check_t1w_sequence_compatibility(
 
     if (acq_type_pre and acq_type_post
             and acq_type_pre != acq_type_post):
-        logger.warning(
-            "Pre-contrast T1w is %s and post-contrast is %s. Slice profile "
-            "and resolution differences may degrade subtraction map quality "
-            "near slice boundaries.",
-            acq_type_pre, acq_type_post,
+        mismatches.append(
+            f"MRAcquisitionType ({acq_type_pre} vs {acq_type_post})"
         )
-        warned = True
-
-    if not warned:
-        logger.info(
-            "No T1w sequence mismatch detected for subtraction map.",
-        )
-    return not warned
+    return tuple(mismatches)
 
 
 def _classify_orientation(iop: List[float]) -> str:
@@ -1056,7 +1004,7 @@ def discover_session_data(
     modalities.t1w_ce_gad = _find_t1w_ce_gad(layout, subject, session)
 
     if modalities.t1w_pre and modalities.t1w_ce_gad:
-        modalities.t1w_subtraction_compatible = _check_t1w_sequence_compatibility(
+        modalities.t1w_sequence_mismatches = _get_t1w_sequence_mismatches(
             modalities.t1w_pre, modalities.t1w_ce_gad, layout
         )
 

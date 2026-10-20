@@ -879,10 +879,9 @@ def _copy_perf_map(
     # Conditional producers may represent a missing output as Nipype
     # Undefined, None, or an empty string.
     if not isdefined(in_file) or not in_file:
-        logging.getLogger("nipype.workflow").warning(
-            "Skipping _copy_perf_map sink (desc=%s, suffix=%s): upstream "
-            "produced no output (in_file=%r)",
-            desc, suffix, in_file,
+        logging.getLogger("nipype.workflow").debug(
+            "DCE map not produced; derivative omitted (desc=%s, suffix=%s).",
+            desc, suffix,
         )
         return ""
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
