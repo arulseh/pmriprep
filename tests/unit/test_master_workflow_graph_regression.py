@@ -56,28 +56,34 @@ def _write_image(path: Path, *, n_volumes: int | None = None) -> None:
     nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.float32), np.eye(4)), path)
 
 
-def _write_case(root: Path, modalities: set[str]) -> Path:
-    """Create a minimal BIDS session containing the selected modalities."""
+def _write_case(
+    root: Path, modalities: set[str], session_id: str | None = "0001",
+) -> Path:
+    """Create a minimal BIDS subject containing the selected modalities."""
     bids = root / ("case_" + "_".join(sorted(modalities)))
-    raw = bids / "sub-0001" / "ses-0001"
+    raw = bids / "sub-0001"
+    prefix = "sub-0001"
+    if session_id:
+        raw /= f"ses-{session_id}"
+        prefix += f"_ses-{session_id}"
     bids.mkdir(parents=True, exist_ok=True)
     (bids / "dataset_description.json").write_text(
         json.dumps({"Name": "T", "BIDSVersion": "1.9.0", "DatasetType": "raw"})
     )
 
     anatomical = {
-        "t1w_pre": "sub-0001_ses-0001_T1w.nii.gz",
-        "t1w_postcon": "sub-0001_ses-0001_ce-GAD_T1w.nii.gz",
-        "t2w": "sub-0001_ses-0001_T2w.nii.gz",
-        "flair": "sub-0001_ses-0001_FLAIR.nii.gz",
+        "t1w_pre": f"{prefix}_T1w.nii.gz",
+        "t1w_postcon": f"{prefix}_ce-GAD_T1w.nii.gz",
+        "t2w": f"{prefix}_T2w.nii.gz",
+        "flair": f"{prefix}_FLAIR.nii.gz",
     }
     for key, filename in anatomical.items():
         if key in modalities:
             _write_image(raw / "anat" / filename)
 
     perfusion = {
-        "dsc": ("sub-0001_ses-0001_dsc.nii.gz", 60),
-        "dce": ("sub-0001_ses-0001_dce.nii.gz", 40),
+        "dsc": (f"{prefix}_dsc.nii.gz", 60),
+        "dce": (f"{prefix}_dce.nii.gz", 40),
     }
     sidecars = {
         "dsc": {
@@ -138,6 +144,7 @@ def _build_master(
     root: Path,
     *,
     modalities: set[str],
+    session_id: str | None = "0001",
     skip_anat: bool = False,
     tumor_seg: bool = False,
     external_t1: bool = False,
@@ -145,7 +152,7 @@ def _build_master(
     dsc_underlays: list[str] | None = None,
     dce_underlays: list[str] | None = None,
 ) -> Any:
-    bids = _write_case(root, modalities)
+    bids = _write_case(root, modalities, session_id)
     if external_t1:
         external_t1_file = root / "external_t1map.nii.gz"
         _write_image(external_t1_file)
@@ -161,7 +168,7 @@ def _build_master(
         bids_dir=bids,
         output_dir=root / "out",
         subject_id="0001",
-        session_id="0001",
+        session_id=session_id,
         skip_flags=PipelineSkipFlags(
             skip_anat=skip_anat,
             skip_tumor_seg=not tumor_seg,
@@ -174,6 +181,47 @@ def _build_master(
         dce_config=dce_config,
         work_dir=root / "work",
     )
+
+
+@pytest.mark.parametrize("session_id", [None, "0001"], ids=["sessionless", "session"])
+def test_master_statistics_preserve_optional_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, session_id: str | None,
+) -> None:
+    """Discovered session labels reach statistics inputs and written identifiers."""
+    from pmriprep.cli.run import _find_sessions
+
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    workflow = _build_master(
+        tmp_path, modalities={"t1w_pre", "dsc", "dce"}, session_id=session_id,
+    )
+    assert _find_sessions(workflow.bids_dir, "0001") == [session_id]
+    assert workflow.session_id == session_id
+    assert workflow.pipeline_decision.run_dsc
+    assert workflow.pipeline_decision.run_dce
+
+    mask = tmp_path / "roi.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4)), mask)
+    prefix = "sub-0001" + (f"_ses-{session_id}" if session_id else "")
+    for modality, map_input in (("dsc", "ncbv_map"), ("dce", "ktrans_map")):
+        stats = workflow.get_node(f"{modality}_wf.{modality}_lesion_stats_wf")
+        for name in ("lesion_stats", "user_lesion_stats", "roi_stats"):
+            node = stats.get_node(name)
+            assert node.inputs.subject_id == "0001"
+            assert node.inputs.session_id == (session_id or "")
+
+        roi = stats.get_node("roi_stats").interface
+        roi.inputs.lesion_mask = str(mask)
+        setattr(roi.inputs, map_input, str(mask))
+        run_dir = tmp_path / modality
+        run_dir.mkdir()
+        result = roi.run(cwd=str(run_dir))
+        output = Path(result.outputs.stats_json)
+        assert output.name == f"{prefix}_roi-stats.json"
+        payload = json.loads(output.read_text())
+        assert payload["Subject"] == "sub-0001"
+        assert payload["Session"] == (f"ses-{session_id}" if session_id else "")
+        assert payload["TotalLesionVoxels"] == 27
+        assert payload["Regions"]["roi"]["perfusion_maps"][map_input[:-4]]["mean"] == 1.0
 
 
 def test_master_omits_unused_discovered_secondary_anatomy(

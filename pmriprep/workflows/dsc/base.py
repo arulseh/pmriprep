@@ -1135,11 +1135,11 @@ def init_dsc_lesion_stats_wf(
 
     lesion_stats = pe.Node(DSCLesionStats(), name="lesion_stats")
     lesion_stats.inputs.subject_id = subject_id
-    lesion_stats.inputs.session_id = session_id
+    lesion_stats.inputs.session_id = session_id or ""
 
     roi_stats = pe.Node(DSCLesionStats(force_binary=True), name="roi_stats")
     roi_stats.inputs.subject_id = subject_id
-    roi_stats.inputs.session_id = session_id
+    roi_stats.inputs.session_id = session_id or ""
 
     user_lesion_stats = pe.Node(
         DSCLesionStats(force_binary=True), name="user_lesion_stats"
@@ -1152,7 +1152,7 @@ def init_dsc_lesion_stats_wf(
     for stats_node in (lesion_stats, roi_stats, user_lesion_stats):
         stats_node.inputs.timing_map_name = timing_map_name
     user_lesion_stats.inputs.subject_id = subject_id
-    user_lesion_stats.inputs.session_id = session_id
+    user_lesion_stats.inputs.session_id = session_id or ""
 
     # Perfusion maps + NAWM + AIF QC are shared by all three
     # stats nodes; the lesion mask differs (tumor-seg / ROI / user), and only

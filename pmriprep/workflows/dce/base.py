@@ -478,17 +478,17 @@ def init_dce_lesion_stats_wf(
 
     lesion_stats = pe.Node(DCELesionStats(), name="lesion_stats")
     lesion_stats.inputs.subject_id = subject_id
-    lesion_stats.inputs.session_id = session_id
+    lesion_stats.inputs.session_id = session_id or ""
 
     user_lesion_stats = pe.Node(
         DCELesionStats(force_binary=True), name="user_lesion_stats"
     )
     user_lesion_stats.inputs.subject_id = subject_id
-    user_lesion_stats.inputs.session_id = session_id
+    user_lesion_stats.inputs.session_id = session_id or ""
 
     roi_stats = pe.Node(DCELesionStats(force_binary=True), name="roi_stats")
     roi_stats.inputs.subject_id = subject_id
-    roi_stats.inputs.session_id = session_id
+    roi_stats.inputs.session_id = session_id or ""
 
     # PK and model-free maps + NAWM are shared by all
     # three stats nodes; the lesion mask differs (tumor-seg / ROI / user), and

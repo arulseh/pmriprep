@@ -1676,7 +1676,7 @@
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "convert_inv_dsc_h5": "9a56330576763c1d147a939f4cd92271651e5ebf08d545098cf7ffa59808b4e2",
     "dsc_brain_mask_qc": "c28321cd48efbb941cd617a0ffd203a6ef31a2fe99eb69262bb04219a55cd11f",
-    "dsc_fit_qc": "f0e491b7d657b39e8fa35b1dfbe8ae7b545f8020619f46c21e4e578b59acb7d8",
+    "dsc_fit_qc": "8d221f55ef19751c39a519b7f8d29d8b0d583a29b30219adb17b54f6639256ad",
     "dsc_leakage_qc": "a735a82e0da32621735f4ce517d26d0f627a3dbec1155e48851950d61f07274b",
     "dsc_param_maps_qc": "5950f852e687a8cbaf3ddced7fc8813094393d7c2a6fb4a7b1a8babec132e635",
     "dsc_preproc_qc": "ecd065feacb20ec77e9ec0f85f244b8571380efc30577213b57b3f2c67dc032f",

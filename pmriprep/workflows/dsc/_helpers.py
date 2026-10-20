@@ -1449,9 +1449,10 @@ def _generate_dsc_fit_qc(
 
     out_dir = Path.cwd() / "qc"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = str(
-        out_dir / f"sub-{subject_id}_ses-{session_id}_dsc_fit_qc.png"
-    )
+    prefix = f"sub-{subject_id}"
+    if session_id:
+        prefix += f"_ses-{session_id}"
+    out_path = str(out_dir / f"{prefix}_dsc_fit_qc.png")
 
     from pmriprep.utils.dsc_qc_plots import generate_dsc_fit_qc_plot
 
