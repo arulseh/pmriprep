@@ -394,8 +394,8 @@ def apply_t1_correction(
         Median E1 = exp(-TR/T1) from VFA data. Retained as descriptive
         acquisition state; it does not independently determine fallback.
     b1_corrected : bool
-        Whether B1 field mapping was applied. Retained in the internal API
-        so callers can provide the complete acquisition state; B1 map quality
+        Whether supported B1 ratios changed nominal flip angles. Retained so
+        callers can provide the complete acquisition state; B1 map quality
         is assessed separately through ``b1_qc_pass``.
     population_reference_applicable : bool
         Whether the supplied summary mask excludes high-probability CSF and

@@ -82,29 +82,31 @@ class TestVFAFitNRMSECorrectedAngles:
     """B1-corrected fitting, finite support and QC through T1Mapping."""
 
     @pytest.mark.parametrize(
-        ("n_slices", "upper_t1_s", "erosion_mode", "expected_asymmetry", "warn", "fail"),
+        ("n_slices", "upper_t1_s", "erosion_mode", "expected_asymmetry",
+         "warn", "fail", "b1", "b1_corrected"),
         [
-            (30, 1.0, "2d_per_slice", 0.0, False, False),
-            (31, 1.2, "3d", 0.1818, True, False),
-            (8, 1.5, "2d_per_slice", 0.4, True, True),
+            (30, 1.0, "2d_per_slice", 0.0, False, False, 1.2, True),
+            (31, 1.2, "3d", 0.1818, True, False, 1.0, False),
+            (8, 1.5, "2d_per_slice", 0.4, True, True, None, False),
+            (8, 1.0, "2d_per_slice", 0.0, False, False, 0.0, False),
         ],
     )
     def test_corrected_fit_support_and_asymmetry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         n_slices: int, upper_t1_s: float,
         erosion_mode: str, expected_asymmetry: float, warn: bool, fail: bool,
+        b1: float | None, b1_corrected: bool,
     ) -> None:
         """Known SPGR signals retain the expected slab interior and T1 asymmetry."""
         # Keep the interface's cwd-relative outputs (T1 map, QC PNG) in tmp.
         monkeypatch.chdir(tmp_path)
         nominal_deg = np.array([3.0, 7.0, 15.0])
-        b1 = 1.2
         tr_ms = 5.0
         t1_s = 1.000
         s0 = 500.0
         shape = (8, 8, n_slices)
 
-        corrected_rad = np.deg2rad(nominal_deg * b1)
+        corrected_rad = np.deg2rad(nominal_deg * (b1 if b1 else 1.0))
         affine = np.eye(4)
         affine[0, 3] = -3.5
         vfa_files = []
@@ -115,8 +117,11 @@ class TestVFAFitNRMSECorrectedAngles:
             nib.save(nib.Nifti1Image(vol.astype(np.float32), affine), str(p))
             vfa_files.append(str(p))
 
-        b1_p = tmp_path / "b1.nii.gz"
-        nib.save(nib.Nifti1Image(np.full(shape, b1, np.float32), affine), str(b1_p))
+        b1_inputs = {}
+        if b1 is not None:
+            b1_p = tmp_path / "b1.nii.gz"
+            nib.save(nib.Nifti1Image(np.full(shape, b1, np.float32), affine), str(b1_p))
+            b1_inputs["b1_map"] = str(b1_p)
         mask_p = tmp_path / "mask.nii.gz"
         nib.save(nib.Nifti1Image(np.ones(shape, np.uint8), affine), str(mask_p))
 
@@ -124,10 +129,10 @@ class TestVFAFitNRMSECorrectedAngles:
             vfa_files=vfa_files,
             flip_angles=list(nominal_deg),
             tr=tr_ms,
-            b1_map=str(b1_p),
             brain_mask=str(mask_p),
             t1_method="wlls",
             t1_correction_mode="none",
+            **b1_inputs,
         ).run().outputs
 
         nrmse = out.qc_metrics["vfa_conditioning"]["vfa_fit_nrmse"]
@@ -144,6 +149,8 @@ class TestVFAFitNRMSECorrectedAngles:
         truth[4:] = upper_t1_s * 1000.0
         np.testing.assert_allclose(measured[expected_support], truth[expected_support], rtol=1e-3)
         qc = out.qc_metrics
+        assert qc["b1_corrected"] is b1_corrected
+        assert qc["b1_valid_fraction"] == (1.0 if b1 else 0.0)
         assert qc["edge_erosion_mode"] == erosion_mode
         assert qc["edge_voxels_eroded"] == np.count_nonzero(~expected_support)
         assert qc["t1_support"]["directly_measured_voxels"] == np.count_nonzero(expected_support)

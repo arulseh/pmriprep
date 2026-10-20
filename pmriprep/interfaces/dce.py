@@ -1771,17 +1771,16 @@ class T1Mapping(SimpleInterface):
             wm_probseg_arr = wm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             gm_probseg_arr = gm_ps_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
 
-        # Classify spatial variation for B1 QC.
-        if isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map):
-            b1_std = float(np.std(b1_map[tissue_qc_mask]))
-            b1_corrected = b1_std > 1e-6
-            if not b1_corrected:
+        # Record whether supported B1 ratios changed the nominal flip angles.
+        supported_b1 = b1_map[brain_mask & ~b1_missing]
+        b1_corrected = bool(np.any(np.abs(supported_b1 - 1.0) > 1e-6))
+        if supported_b1.size:
+            b1_std = float(np.std(supported_b1))
+            if b1_std <= 1e-6:
                 logger.info(
-                    "B1+ map is spatially uniform within T1 QC support (std=%.2e).",
+                    "B1+ map is spatially uniform within supported brain voxels (std=%.2e).",
                     b1_std,
                 )
-        else:
-            b1_corrected = False
 
         t1_map_arr, correction_result = apply_t1_correction(
             t1_map,
