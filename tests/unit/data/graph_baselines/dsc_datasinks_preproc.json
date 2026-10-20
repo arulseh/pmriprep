@@ -398,6 +398,12 @@
     ],
     [
       "inputnode",
+      "registration_qc",
+      "resume_checkpoint",
+      "registration_qc"
+    ],
+    [
+      "inputnode",
       "roi_stats_json",
       "mtt_map_meta",
       "roi_stats_json"
@@ -881,6 +887,7 @@
         "motion_qc",
         "preload_qc",
         "preprocessing_stats",
+        "registration_qc",
         "session_id",
         "subject_id",
         "work_dir"
@@ -936,7 +943,7 @@
     "mtt_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
     "psr_map_meta": "6a5c62929f52e51d848d60d21ccf42635e63fc512b81c3648f6bfd41f491e85c",
     "psr_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
-    "resume_checkpoint": "75f03da8c3c7884f258fbfc706ed795636c66c352f8fa3accbfc006ea4fddc90",
+    "resume_checkpoint": "19f61885788b9a4b8b1b9475bbc1643ee5bc6c993cf00f5affe2522bc4400cca",
     "tmax_map_meta": "6a5c62929f52e51d848d60d21ccf42635e63fc512b81c3648f6bfd41f491e85c",
     "tmax_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee"
   },

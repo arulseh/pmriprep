@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import nibabel as nib
+import numpy as np
 import pytest
 
-from pmriprep.workflows.base import _find_previous_dsc_outputs
+from pmriprep.config import DCEConfig, DSCConfig
+from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+from pmriprep.workflows.base import _connect_master_dsc_to_dce, _find_previous_dsc_outputs
 from pmriprep.workflows.dsc.datasinks import _write_dsc_resume_checkpoint
 
 
@@ -135,16 +141,41 @@ class TestRoundTripViaResumeHelper:
 
         assert recovered["dsc_to_t1w_xfm"] == str(xfm)
 
+    @pytest.mark.parametrize("registration_status", ["PASS", "POOR", None])
     def test_resume_recovers_verbatim_dicts(
         self, tmp_path: Path, representative_qc_dicts: Any,
+        registration_status: str | None,
     ) -> None:
+        """An nCBV-only cache supplies its actual QC to the existing prior gate."""
         aif_qc, preload_qc, preprocessing_stats = representative_qc_dicts
+        # Qualifying tissue measurements isolate the registration decision.
+        preprocessing_stats = dict(
+            preprocessing_stats, fraction_cnr_gt_4=0.99, mean_cnr=10.0,
+        )
+        registration_qc = (
+            {"qc_status": registration_status, "dice": 0.91}
+            if registration_status is not None else None
+        )
         _write_dsc_resume_checkpoint(
             work_dir=str(tmp_path),
             subject_id="X", session_id="Y",
             aif_qc=aif_qc, preload_qc=preload_qc,
             preprocessing_stats=preprocessing_stats,
+            registration_qc=registration_qc,
         )
+        perf_dir = tmp_path / "pmriprep" / "sub-X" / "ses-Y" / "perf"
+        perf_dir.mkdir(parents=True)
+        ncbv = perf_dir / "sub-X_ses-Y_desc-dscNawmNormCbv_stat.nii.gz"
+        mask = tmp_path / "mask.nii.gz"
+        for path in (ncbv, mask):
+            nib.save(nib.Nifti1Image(np.ones((6, 6, 6)), np.eye(4)), path)
+        xfm_dir = (
+            tmp_path / "pmriprep_sub_X_ses_Y_wf" / "dsc_wf"
+            / "dsc_registration_wf" / "invert_dsc_xfm"
+        )
+        xfm_dir.mkdir(parents=True)
+        xfm = xfm_dir / "inverse.mat"
+        np.savetxt(xfm, np.eye(4))
         recovered = _find_previous_dsc_outputs(
             output_dir=tmp_path, subject_id="X", session_id="Y",
             work_dir=tmp_path,
@@ -152,7 +183,48 @@ class TestRoundTripViaResumeHelper:
         assert recovered["aif_qc"] == aif_qc
         assert recovered["preload_qc"] == preload_qc
         assert recovered["preprocessing_stats"] == preprocessing_stats
+        assert recovered["registration_qc"] == registration_qc
+        assert recovered["rel_cbv_map"] is None
 
+        inputs = SimpleNamespace(
+            dsc_cbv_file=None, dsc_ncbv_file=None, dsc_registration_qc={},
+        )
+        pk = SimpleNamespace()
+        dce = SimpleNamespace(inputs=SimpleNamespace(
+            inputnode=inputs,
+            dce_pk_modeling_wf=SimpleNamespace(pk_modeling=pk),
+        ))
+        _connect_master_dsc_to_dce(
+            workflow=SimpleNamespace(), dsc_wf=None, dce_wf=dce,
+            dsc_config=DSCConfig(), dce_config=DCEConfig(model="patlak", inference="vi"),
+            output_dir=tmp_path, work_dir=tmp_path, subject_id="X", session_id="Y",
+        )
+        assert inputs.dsc_ncbv_file == str(ncbv)
+        assert inputs.dsc_cbv_file is None
+        assert inputs.dsc_to_t1w_xfm == str(xfm)
+        assert inputs.dsc_registration_qc == (registration_qc or {})
+        assert pk.dsc_aif_qc == aif_qc
+        assert pk.dsc_preload_qc == preload_qc
+        assert pk.dsc_preprocessing_stats == preprocessing_stats
+        interface = ComputeDCEMaps(
+            dsc_ncbv_file=inputs.dsc_ncbv_file, brain_mask_file=str(mask),
+            dsc_aif_qc=pk.dsc_aif_qc,
+            dsc_preprocessing_stats=pk.dsc_preprocessing_stats,
+            dsc_preload_qc=pk.dsc_preload_qc,
+            dsc_registration_qc=inputs.dsc_registration_qc,
+            dce_registration_qc={"qc_status": "PASS"},
+        )
+        prior = interface._prepare_vp_constraint(SimpleNamespace(
+            model_name="patlak", is_auto=False, candidate_names=[],
+            inference="vi", mask=np.ones((6, 6, 6), dtype=bool),
+        ))
+        if registration_status == "PASS":
+            assert prior.mode == ConstraintMode.SOFT
+            assert prior.vp_map is not None
+            np.testing.assert_allclose(prior.vp_map, 0.01)
+        else:
+            assert prior.mode == ConstraintMode.SKIP
+            assert prior.qc["skip_reason"] == "cross_modal_registration_qc"
 
     def test_no_work_dir_returns_none(self, tmp_path: Path) -> None:
         recovered = _find_previous_dsc_outputs(
@@ -161,6 +233,7 @@ class TestRoundTripViaResumeHelper:
         assert recovered["aif_qc"] is None
         assert recovered["preload_qc"] is None
         assert recovered["preprocessing_stats"] is None
+        assert recovered["registration_qc"] is None
 
     def test_malformed_json_fails_closed(self, tmp_path: Path) -> None:
         wf_dir = tmp_path / "pmriprep_sub_X_ses_Y_wf"
@@ -173,6 +246,7 @@ class TestRoundTripViaResumeHelper:
         assert recovered["aif_qc"] is None
         assert recovered["preload_qc"] is None
         assert recovered["preprocessing_stats"] is None
+        assert recovered["registration_qc"] is None
 
     def test_partial_checkpoint(self, tmp_path: Path) -> None:
         wf_dir = tmp_path / "pmriprep_sub_X_ses_Y_wf"
@@ -187,3 +261,4 @@ class TestRoundTripViaResumeHelper:
         assert recovered["aif_qc"] == {"detection_method": "unavailable"}
         assert recovered["preload_qc"] is None
         assert recovered["preprocessing_stats"] is None
+        assert recovered["registration_qc"] is None

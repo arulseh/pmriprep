@@ -640,6 +640,7 @@ def _write_dsc_resume_checkpoint(
     preprocessing_stats: dict | None = None,
     motion_qc: dict | None = None,
     aif_metrics: dict | None = None,
+    registration_qc: dict | None = None,
 ) -> str:
     """Write the DSC→DCE handoff checkpoint to the work directory."""
     import json as _json
@@ -675,6 +676,8 @@ def _write_dsc_resume_checkpoint(
         checkpoint["preload_qc"] = dict(preload_qc)
     if pp:
         checkpoint["preprocessing_stats"] = pp
+    if isinstance(registration_qc, dict) and registration_qc:
+        checkpoint["registration_qc"] = dict(registration_qc)
 
     from pmriprep.utils.naming import workflow_dirname
 
@@ -1353,7 +1356,7 @@ def init_dsc_datasinks_wf(
                 # Parametric diagnostics
                 "parametric_r2_map", "fallback_mask",
                 "preload_qc", "preprocessing_stats", "aif_qc",
-                "motion_qc", "aif_metrics",
+                "motion_qc", "aif_metrics", "registration_qc",
                 # Smoothing
                 "smooth_hemodynamic", "smooth_fwhm",
                 # Motion + AIF
@@ -1739,7 +1742,7 @@ def init_dsc_datasinks_wf(
                 input_names=[
                     "work_dir", "subject_id", "session_id",
                     "aif_qc", "preload_qc", "preprocessing_stats",
-                    "motion_qc", "aif_metrics",
+                    "motion_qc", "aif_metrics", "registration_qc",
                 ],
                 output_names=["out_file"],
                 function=_write_dsc_resume_checkpoint,
@@ -1756,6 +1759,7 @@ def init_dsc_datasinks_wf(
                 ("preprocessing_stats", "preprocessing_stats"),
                 ("motion_qc", "motion_qc"),
                 ("aif_metrics", "aif_metrics"),
+                ("registration_qc", "registration_qc"),
             ]),
         ])
         sink_outputs.append((resume_checkpoint, "out_file"))

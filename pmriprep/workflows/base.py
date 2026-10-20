@@ -1009,13 +1009,14 @@ def _find_previous_dsc_outputs(
     work_dir : Path, optional
         Path to Nipype work directory. When provided, the DSC
         resume checkpoint (``dsc_resume.json``) is read from here to
-        recover AIF/preload/preprocessing QC dicts for DCE handoff.
+        recover AIF, preload, preprocessing and registration QC for DCE handoff.
 
     Returns
     -------
     dict
         Dict with keys: rel_cbv_map, ncbv_map, dsc_to_t1w_xfm (str paths
-        or None), aif_qc, preload_qc, preprocessing_stats (dict or None).
+        or None), aif_qc, preload_qc, preprocessing_stats and registration_qc
+        (dict or None).
     """
     outputs: dict[str, str | dict[str, Any] | None] = {
         "rel_cbv_map": None,
@@ -1024,6 +1025,7 @@ def _find_previous_dsc_outputs(
         "aif_qc": None,
         "preload_qc": None,
         "preprocessing_stats": None,
+        "registration_qc": None,
     }
 
     ses_label = f"ses-{session_id}" if session_id else ""
@@ -1073,6 +1075,8 @@ def _find_previous_dsc_outputs(
                     outputs["preload_qc"] = data["preload_qc"]
                 if isinstance(data.get("preprocessing_stats"), dict):
                     outputs["preprocessing_stats"] = data["preprocessing_stats"]
+                if isinstance(data.get("registration_qc"), dict):
+                    outputs["registration_qc"] = data["registration_qc"]
         # Missing checkpoint entries remain None for downstream QC assessment.
 
     return outputs
@@ -2042,6 +2046,7 @@ def _connect_master_dsc_datasinks(
             ("outputnode.preprocessing_stats", "inputnode.preprocessing_stats"),
             ("outputnode.motion_qc", "inputnode.motion_qc"),
             ("outputnode.aif_metrics", "inputnode.aif_metrics"),
+            ("outputnode.registration_qc", "inputnode.registration_qc"),
             # Motion-corrected data
             ("outputnode.dsc_moco", "inputnode.dsc_moco"),
             ("outputnode.dsc_mean", "inputnode.dsc_mean"),
@@ -2139,15 +2144,12 @@ def _connect_master_dsc_to_dce(
     if dsc_wf is not None:
         _assign_dsc_dose()
         # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
-        if dce_config.model in ("extended_tofts", "2cxm", "auto"):
+        if dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
             workflow.connect([
                 (dsc_wf, dce_wf, [
-                    # Relative CBV; nCBV is used for cross-validation.
-                    # resampling path (DSC 128x128 → DCE 256x256).
+                    # Maps are resampled into DCE space for their consumers.
                     ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
-                    # NAWM-normalized CBV → vp prior path. None propagates
-                    # cleanly when no NAWM mask exists (missing-NAWM
-                    # handling lives in prepare_vp_constraint_from_data).
+                    # NAWM-normalized CBV supplies the vp prior and concordance.
                     ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                     ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ("outputnode.registration_qc", "inputnode.dsc_registration_qc"),
@@ -2156,16 +2158,6 @@ def _connect_master_dsc_to_dce(
                     ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
                     # CNR coverage for CBV quality assessment
                     ("outputnode.preprocessing_stats", "dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats"),
-                ]),
-            ])
-
-        # Patlak receives the maps and transform used for concordance assessment.
-        if dce_config.model == "patlak":
-            workflow.connect([
-                (dsc_wf, dce_wf, [
-                    ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
-                    ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
-                    ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                 ]),
             ])
 
@@ -2185,9 +2177,16 @@ def _connect_master_dsc_to_dce(
             Path(output_dir), subject_id, session_id,
             work_dir=Path(work_dir) if work_dir else None,
         )
-        if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
+        if (
+            (prev_dsc["rel_cbv_map"] or prev_dsc.get("ncbv_map"))
+            and prev_dsc["dsc_to_t1w_xfm"]
+        ):
             _assign_dsc_dose()
-            dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
+            if prev_dsc["rel_cbv_map"]:
+                dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
+                _log.info(
+                    "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
+                )
             dce_wf.inputs.inputnode.dsc_to_t1w_xfm = prev_dsc["dsc_to_t1w_xfm"]
             if prev_dsc.get("ncbv_map"):
                 dce_wf.inputs.inputnode.dsc_ncbv_file = prev_dsc["ncbv_map"]
@@ -2199,9 +2198,8 @@ def _connect_master_dsc_to_dce(
                     "DSC-informed vp prior unavailable: no cached "
                     "NAWM-normalized CBV map was found."
                 )
-            _log.info(
-                "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
-            )
+            if prev_dsc.get("registration_qc"):
+                dce_wf.inputs.inputnode.dsc_registration_qc = prev_dsc["registration_qc"]
             if prev_dsc["aif_qc"]:
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
             if prev_dsc.get("preload_qc"):

@@ -711,7 +711,8 @@ def test_connect_master_dsc_outputs_preserves_provenance_sources(
     assert captured["gd_multiplicity"] == 1
 
 
-def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
+@pytest.mark.parametrize("model", ["extended_tofts", "2cxm", "auto", "patlak"])
+def test_connect_master_dsc_to_dce_preserves_live_constraint_routes(model: str) -> None:
     """Live DSC supplies CBV, normalized CBV, transforms, and QC to DCE."""
     connections: list[Any] = []
     dsc_wf = SimpleNamespace()
@@ -726,7 +727,7 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
         dsc_wf=dsc_wf,
         dce_wf=dce_wf,
         dsc_config=DSCConfig(dose=0.5, agent_standard_dose=0.1, preload=0.0),
-        dce_config=DCEConfig(model="extended_tofts"),
+        dce_config=DCEConfig(model=model),
         output_dir=Path("out"),
         work_dir=Path("work"),
         subject_id="0001",

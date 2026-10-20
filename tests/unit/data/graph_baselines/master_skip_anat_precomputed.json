@@ -698,6 +698,12 @@
     ],
     [
       "dsc_wf",
+      "outputnode.registration_qc",
+      "dsc_datasinks_wf",
+      "inputnode.registration_qc"
+    ],
+    [
+      "dsc_wf",
       "outputnode.rel_cbf_map",
       "dsc_datasinks_wf",
       "inputnode.rel_cbf_map"
