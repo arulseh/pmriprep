@@ -93,7 +93,7 @@ Common options:
 | `--participant-label LABEL [...]` | Select participants (without `sub-` prefix) |
 | `--session-label LABEL [...]` | Select sessions (without `ses-` prefix) |
 | `-w PATH`, `--work-dir PATH` | Set the Nipype working directory |
-| `--nprocs N` | Limit workflow and fitting processes (default: 1) |
+| `--nprocs N` | CPU budget for workflow scheduling and fitting (default: 1) |
 | `--omp-nthreads N` | Limit threads per process |
 | `--mem-gb GB` | Set the Nipype memory limit |
 | `--config-file PATH` | Load options from a YAML or JSON configuration file |
@@ -188,7 +188,7 @@ DSC fields:
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
 | `leakage_method` | `bsw` | BSW correction (guidance for joint signal-domain CPI); `none` disables leakage correction/estimation |
 | `pre_bolus` | `5` | Initial baseline frames; final baseline may be refined |
-| `motion_correct` | `true` | Apply motion correction |
+| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
@@ -220,7 +220,7 @@ DCE fields:
 | `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
 | `b1_map_encoding` | `auto` | Infer (`auto`) or specify precomputed B1+ pixel encoding (`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio`) |
 | `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
-| `motion_correct` | `true` | Apply motion correction |
+| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
 | `ser_early_time_s` | `60.0` | Early SER sample time after the selected global contrast reference (s) |

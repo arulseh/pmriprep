@@ -509,22 +509,19 @@ def _build_motion_recommendation(
 ) -> Optional["QCRecommendation"]:
     """Build the motion QC recommendation from composite status.
 
-    When motion correction was not applied (input assumed pre-corrected), the
-    plotted values are residual motion: elevated residual motion is escalated to
-    an explicit bias warning (the sole guardrail if the pre-correction
-    assumption is wrong), and an acceptable status is annotated as residual.
+    Estimated input motion is reported whether or not correction was applied.
+    Elevated motion without correction receives an explicit quantitative-bias
+    warning.
     """
     if not motion_applied and motion_status in (QCStatus.WARN, QCStatus.POOR):
         return QCRecommendation(
             QCAction.REVIEW,
-            f"Residual motion above threshold {detail}: motion correction not "
-            "applied (input assumed pre-corrected); scanner correction may have "
-            "failed or the input was not motion-corrected — quantitative "
-            "maps may be biased.",
+            f"Estimated input motion above threshold {detail}: motion correction "
+            "was not applied; quantitative maps may be biased.",
             2,
         )
     if motion_status == QCStatus.PASS:
-        suffix = " (residual; correction not applied)" if not motion_applied else ""
+        suffix = " (correction not applied)" if not motion_applied else ""
         return QCRecommendation(
             QCAction.INCLUDE, f"Motion acceptable {detail}{suffix}", 0,
         )

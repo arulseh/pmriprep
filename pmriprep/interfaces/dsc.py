@@ -12,8 +12,6 @@ import numpy as np
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
-    CommandLine,
-    CommandLineInputSpec,
     File,
     SimpleInterface,
     TraitedSpec,
@@ -23,11 +21,11 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 
 
 from pmriprep.utils.motion import (  # noqa: E402
-    calculate_framewise_displacement,
+    summarize_motion,
 )
 
 
-class MotionCorrectionInputSpec(CommandLineInputSpec):
+class MotionCorrectionInputSpec(BaseInterfaceInputSpec):
     """Input specification for MotionCorrection interface."""
 
     in_file = File(
@@ -53,32 +51,13 @@ class MotionCorrectionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Head radius (mm) for FD calculation (default: 50mm)",
     )
-    cost = traits.Enum(
-        "normcorr",
-        "corratio",
-        "normmi",
-        "mutualinfo",
-        "leastsq",
-        "woods",
-        usedefault=True,
-        desc="Cost function for motion correction (default: normcorr)",
+    apply_motion_correction = traits.Bool(
+        True, usedefault=True,
+        desc="Apply estimated ANTs transforms; otherwise retain the original series",
     )
-    interpolation = traits.Enum(
-        "trilinear",
-        "sinc",
-        "spline",
-        usedefault=True,
-        desc="Interpolation method (default: trilinear)",
-    )
-    sinc_width = traits.Int(
-        7,
-        usedefault=True,
-        desc="Sinc interpolation window width (default: 7)",
-    )
-    stages = traits.Int(
-        3,
-        usedefault=True,
-        desc="Number of search stages (default: 3, matching MCFLIRT default)",
+    num_threads = traits.Range(
+        low=1, value=1, usedefault=True,
+        desc="ANTs ITK threads reserved for this node",
     )
     baseline_frames = traits.Range(
         low=1,
@@ -102,271 +81,90 @@ class MotionCorrectionOutputSpec(TraitedSpec):
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
-class MotionCorrection(CommandLine):
-    """DSC motion correction with QC metrics using FSL mcflirt.
-
-    This interface wraps FSL mcflirt to perform motion correction on 4D DSC
-    perfusion time series, with comprehensive motion QC metrics including
-    framewise displacement (FD) and RMS displacement.
+class MotionCorrection(SimpleInterface):
+    """Estimate rigid ANTs motion and report common motion QC for DSC.
 
     Parameters
     ----------
     in_file : str
-        Input 4D DSC time series
+        Input 4D DSC time series.
     baseline_frames : int
-        Number of pre-bolus frames for the motion reference mean.
+        Number of initial frames defining the fixed reference mean.
+    apply_motion_correction : bool
+        Apply transforms or retain the input unchanged while estimating motion.
     motion_thresh : float
-        FD threshold (mm) for flagging outlier volumes (default: 0.5mm)
+        FD threshold in millimetres for QC flags.
     head_radius : float
-        Head radius (mm) for FD calculation (default: 50mm)
-    cost : str
-        Cost function: normcorr, corratio, normmi, etc. (default: normcorr)
-    interpolation : str
-        Interpolation: trilinear, sinc, or spline (default: trilinear)
-
-    Returns
-    -------
-    out_file : str
-        Motion-corrected 4D image
-    out_params : str
-        Motion parameters file (FSL format)
-    mean_img : str
-        Mean image of motion-corrected data
-    fd : list
-        Framewise displacement per volume (mm)
-    fd_mean : float
-        Mean FD across all volumes
-    fd_max : float
-        Maximum FD
-    n_outliers : int
-        Number of volumes with FD > motion_thresh
-    outlier_frames : list
-        Indices of outlier volumes
-    qc_metrics : dict
-        Complete QC metrics dictionary
-
-    Examples
-    --------
-    >>> moco = MotionCorrection()
-    >>> moco.inputs.in_file = 'dsc_raw.nii.gz'
-    >>> moco.inputs.motion_thresh = 0.5
-    >>> result = moco.run()  # doctest: +SKIP
+        Radius in millimetres for angular displacement conversion.
+    num_threads : int
+        ANTs thread count reserved for this node by the scheduler.
 
     Notes
     -----
-    Framewise displacement formula: ``FD = |Δtrans| + r × |Δrot|``
-    where r is head radius (default 50mm), rotations in radians.
-
-    FSL mcflirt outputs motion parameters in columns:
-    rot_x, rot_y, rot_z (radians), trans_x, trans_y, trans_z (mm)
-
-    Volumes are flagged as outliers when FD > motion_thresh.
-    For DSC, motion correction is critical as small movements can cause
-    large signal changes due to susceptibility gradients.
-
-    Requires FSL to be installed and available in PATH.
-
+    Motion parameters use FSL-convention rotations in radians followed by
+    translations in millimetres, about the reference intensity centre.
     """
 
     input_spec = MotionCorrectionInputSpec
     output_spec = MotionCorrectionOutputSpec
 
-    _cmd = "mcflirt"
-
     def _gen_outfilename(self) -> str:
-        """Generate output filename if not specified."""
-        if self.inputs.out_file:
-            return str(self.inputs.out_file)
-
+        """Return the requested or generated series filename."""
         from pmriprep.utils.nifti import nifti_gz_name
 
+        if isdefined(self.inputs.out_file):
+            return str(Path(self.inputs.out_file).absolute())
         return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_moco"))
 
-    def _gen_params_filename(self) -> str:
-        """Generate motion parameters filename."""
-        if self.inputs.out_params:
-            return str(self.inputs.out_params)
-
-        from pmriprep.utils.nifti import nifti_gz_name
-
-        # mcflirt outputs {basename}.par
-        base = nifti_gz_name(self.inputs.in_file, "_moco")[:-7]  # strip .nii.gz
-        return str(Path.cwd() / f"{base}.par")
-
     def _compute_pre_bolus_mean(self) -> str:
-        """Compute pre-bolus mean reference image and return its path."""
+        """Write the fixed baseline mean used for every volume."""
         import nibabel as nib
-        import tempfile
 
-        in_file = str(self.inputs.in_file)
-        baseline_frames = int(self.inputs.baseline_frames)
+        image: Any = nib.load(self.inputs.in_file)
+        if len(image.shape) != 4:
+            raise ValueError("DSC motion input must be four-dimensional")
+        count = min(int(self.inputs.baseline_frames), image.shape[3])
+        mean = image.get_fdata()[..., :count].mean(axis=-1)
+        path = str(Path.cwd() / "motion_reference.nii.gz")
+        header = image.header.copy()
+        header.set_data_dtype(np.float32)
+        nib.save(nib.Nifti1Image(mean.astype(np.float32), image.affine, header), path)
+        return path
 
-        img = nib.load(in_file)
-        data = img.get_fdata()  # type: ignore[attr-defined]
-        n_timepoints = data.shape[-1]
-        n_frames = min(max(1, baseline_frames), n_timepoints)
+    def _run_interface(self, runtime: Any) -> Any:
+        """Run motion estimation and summarize the selected series."""
+        import nibabel as nib
+        import shutil
+        from pmriprep.utils.ants_motion import run_motion_correction
 
-        pre_bolus_mean = np.mean(data[..., :n_frames], axis=-1)
-        fd, ref_path = tempfile.mkstemp(
-            suffix="_prebolus_mean.nii.gz", dir=str(Path.cwd())
+        result = run_motion_correction(
+            str(self.inputs.in_file), self._compute_pre_bolus_mean(),
+            self._gen_outfilename(), apply=bool(self.inputs.apply_motion_correction),
+            num_threads=int(self.inputs.num_threads),
         )
-        import os
-        os.close(fd)
-        ref_img = nib.Nifti1Image(pre_bolus_mean.astype(np.float32), img.affine, img.header)  # type: ignore[attr-defined]
-        nib.save(ref_img, ref_path)
-        return ref_path
-
-    @property
-    def cmdline(self) -> str:
-        """Build the mcflirt command line."""
-        in_file = str(self.inputs.in_file)
-        out_file = self._gen_outfilename()
-
-        # Remove extension for mcflirt output basename
-        out_path = Path(out_file)
-        if out_path.name.endswith(".nii.gz"):
-            out_base = str(out_path)[:-7]
-        elif out_path.name.endswith(".nii"):
-            out_base = str(out_path)[:-4]
-        else:
-            out_base = str(out_path)
-
-        # Compute pre-bolus mean reference image
-        ref_file = self._compute_pre_bolus_mean()
-
-        # Build command
-        cmd_parts = [
-            "mcflirt",
-            f"-in {in_file}",
-            f"-out {out_base}",
-            "-plots",  # Output motion parameters
-            "-stats",  # Output mean volume
-            "-mats",  # Output transformation matrices
-        ]
-
-        # Use pre-bolus mean as reference via -reffile
-        cmd_parts.append(f"-reffile {ref_file}")
-
-        # Cost function
-        cost = self.inputs.cost
-        cmd_parts.append(f"-cost {cost}")
-
-        # Interpolation
-        interp = self.inputs.interpolation
-        if interp == "sinc":
-            cmd_parts.append("-sinc_final")
-            sinc_width = self.inputs.sinc_width
-            cmd_parts.append(f"-sinc_width {sinc_width}")
-        elif interp == "spline":
-            cmd_parts.append("-spline_final")
-        # trilinear is default, no flag needed
-
-        # Number of stages
-        stages = self.inputs.stages
-        cmd_parts.append(f"-stages {stages}")
-
-        return " ".join(cmd_parts)
-
-    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List expected outputs and compute QC metrics."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
-
-        out_file = self._gen_outfilename()
-        outputs["out_file"] = out_file
-
-        # mcflirt outputs
-        out_path = Path(out_file)
-        if out_path.name.endswith(".nii.gz"):
-            base = str(out_path)[:-7]
-        elif out_path.name.endswith(".nii"):
-            base = str(out_path)[:-4]
-        else:
-            base = str(out_path)
-
-        # Motion parameters file
-        params_file = f"{base}.par"
-        outputs["out_params"] = params_file
-
-        # Mean image -- with -reffile mcflirt does not produce _mean_reg.nii.gz,
-        # so we compute the mean of the motion-corrected output ourselves.
-        mean_file = f"{base}_mean_reg.nii.gz"
-        if not Path(mean_file).exists() and Path(out_file).exists():
-            import nibabel as nib
-            moco_img = nib.load(out_file)
-            moco_data = moco_img.get_fdata()  # type: ignore[attr-defined]
-            mean_data = np.mean(moco_data, axis=-1).astype(np.float32)
-            mean_img = nib.Nifti1Image(mean_data, moco_img.affine, moco_img.header)  # type: ignore[attr-defined]
-            nib.save(mean_img, mean_file)
-        outputs["mean_img"] = mean_file
-
-        # Compute motion metrics if params file exists
-        qc_metrics: dict[str, Any] = {}
-
-        if Path(params_file).exists():
-            try:
-                # Load motion parameters
-                motion_params = np.loadtxt(params_file)
-
-                # Calculate framewise displacement.
-                head_radius = float(self.inputs.head_radius)
-                fd = calculate_framewise_displacement(motion_params, head_radius)
-
-                # Convert to lists for Nipype traits
-                fd_list = [float(x) for x in fd]
-
-                outputs["fd"] = fd_list
-
-                # Summary metrics
-                fd_mean = float(np.mean(fd[1:]))  # Exclude first frame (always 0)
-                fd_max = float(np.max(fd))
-
-                outputs["fd_mean"] = fd_mean
-                outputs["fd_max"] = fd_max
-
-                # Outlier detection
-                motion_thresh = float(self.inputs.motion_thresh)
-                outlier_mask = fd > motion_thresh
-                n_outliers = int(np.sum(outlier_mask))
-                outlier_frames = [int(i) for i in np.where(outlier_mask)[0]]
-
-                outputs["n_outliers"] = n_outliers
-                outputs["outlier_frames"] = outlier_frames
-
-                from pmriprep.utils.qc_standards import (
-                    get_composite_motion_status,
-                )
-                pct_outliers = 100.0 * n_outliers / max(1, len(fd_list))
-                motion_status = get_composite_motion_status(
-                    fd_mean, fd_max, pct_outliers,
-                )
-
-                # QC metrics dict
-                qc_metrics = {
-                    "fd_mean": fd_mean,
-                    "fd_max": fd_max,
-                    "motion_status": motion_status,
-                    "fd_list": fd_list,
-                    "n_outliers": n_outliers,
-                    "outlier_frames": outlier_frames,
-                    "motion_thresh": motion_thresh,
-                    "n_volumes": len(fd_list),
-                    "percent_outliers": 100.0 * n_outliers / max(1, len(fd_list)),
-                }
-
-            except Exception:
-                # If metrics computation fails, provide empty defaults
-                pass
-
-        outputs["qc_metrics"] = qc_metrics
-        return outputs
-
-    def _gen_filename(self, name: str) -> Optional[str]:
-        """Generate filename for outputs."""
-        if name == "out_file":
-            return self._gen_outfilename()
-        if name == "out_params":
-            return self._gen_params_filename()
-        return None
+        params_file = result.params_file
+        if isdefined(self.inputs.out_params):
+            requested = str(Path(self.inputs.out_params).absolute())
+            if requested != params_file:
+                shutil.copyfile(params_file, requested)
+            params_file = requested
+        metrics = summarize_motion(np.loadtxt(params_file, ndmin=2),
+                                   float(self.inputs.motion_thresh), float(self.inputs.head_radius))
+        metrics.update(result.provenance)
+        metrics["reference_type"] = "baseline_mean"
+        metrics["baseline_frames"] = min(int(self.inputs.baseline_frames), metrics["n_volumes"])
+        image: Any = nib.load(result.out_file)
+        mean_file = str(Path.cwd() / "motion_mean.nii.gz")
+        header = image.header.copy()
+        header.set_data_dtype(np.float32)
+        mean = image.get_fdata().mean(axis=-1).astype(np.float32)
+        nib.save(nib.Nifti1Image(mean, image.affine, header), mean_file)
+        self._results.update(out_file=result.out_file, out_params=params_file,
+                             mean_img=mean_file, fd=metrics["fd_list"],
+                             qc_metrics=metrics)
+        for key in ("fd_mean", "fd_max", "n_outliers", "outlier_frames"):
+            self._results[key] = metrics[key]
+        return runtime
 
 
 # =============================================================================

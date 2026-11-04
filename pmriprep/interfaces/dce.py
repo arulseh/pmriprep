@@ -3159,22 +3159,6 @@ class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Head radius (mm) for FD calculation (default: 50mm)",
     )
-    cost = traits.Enum(
-        "normcorr",
-        "corratio",
-        "normmi",
-        "mutualinfo",
-        "leastsq",
-        usedefault=True,
-        desc="Cost function for motion correction (default: normcorr)",
-    )
-    interpolation = traits.Enum(
-        "trilinear",
-        "sinc",
-        "spline",
-        usedefault=True,
-        desc="Interpolation method (default: trilinear)",
-    )
     brain_mask = File(
         exists=True,
         desc="Brain mask for baseline detection and QC (optional)",
@@ -3187,10 +3171,12 @@ class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
     apply_motion_correction = traits.Bool(
         True,
         usedefault=True,
-        desc="Apply motion correction. When False, the input is assumed already "
-        "motion-corrected: mcflirt still runs to report residual motion for QC, "
-        "but the uncorrected series is passed through to avoid a second "
-        "interpolation.",
+        desc="Apply estimated ANTs transforms. When False, estimate motion for QC "
+        "and retain the input series without resampling.",
+    )
+    num_threads = traits.Range(
+        low=1, value=1, usedefault=True,
+        desc="ANTs ITK threads reserved for this node",
     )
 
 
@@ -3230,17 +3216,8 @@ class _DCEPreprocessPreparation:
 
 
 @dataclass(frozen=True)
-class _DCEMCFLIRTPlan:
-    """Resolved MCFLIRT reference, output base, and command."""
-
-    out_base: str
-    reference_file: Optional[str]
-    command: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class _DCEMotionQC:
-    """Reduced MCFLIRT motion parameters and QC state."""
+    """Reduced common motion parameters and QC state."""
 
     fd: tuple[float, ...]
     fd_mean: float
@@ -3264,7 +3241,7 @@ class DCEPreprocess(SimpleInterface):
     """DCE preprocessing with motion correction and baseline detection.
 
     This interface performs motion correction on 4D DCE perfusion time series
-    using FSL mcflirt, with automatic detection of baseline frames from the
+    using rigid ANTs registration, with automatic detection of baseline frames from the
     global signal time course. The baseline period is identified as the
     pre-contrast phase before bolus arrival.
 
@@ -3280,14 +3257,12 @@ class DCEPreprocess(SimpleInterface):
         Number of baseline frames (0 = auto-detect from global signal)
     ref_vol : int or str
         Reference volume: integer index, 'mean', 'first', or 'baseline_mean' (default)
+    num_threads : int
+        ANTs thread count reserved for this node by the scheduler.
     motion_thresh : float
         FD threshold (mm) for flagging outlier volumes (default: 0.5mm)
     head_radius : float
         Head radius (mm) for FD calculation (default: 50mm)
-    cost : str
-        Cost function: normcorr, corratio, normmi, etc. (default: normcorr)
-    interpolation : str
-        Interpolation: trilinear, sinc, or spline (default: trilinear)
     brain_mask : str, optional
         Brain mask for baseline detection (improves accuracy)
 
@@ -3331,7 +3306,7 @@ class DCEPreprocess(SimpleInterface):
 
     **Motion Correction:**
 
-    Uses FSL mcflirt with a baseline-mean reference by default. The reference
+    Uses rigid ANTs registration with a baseline-mean reference by default. The reference
     is precontrast when the selected baseline precedes bolus arrival.
 
     Motion parameters are output in FSL format:
@@ -3339,7 +3314,7 @@ class DCEPreprocess(SimpleInterface):
 
     Framewise displacement formula: ``FD = |Δtrans| + r × |Δrot|``
 
-    Requires FSL to be installed and available in PATH.
+    Requires ANTs ``antsMotionCorr`` to be available in PATH.
 
     Examples
     --------
@@ -3464,89 +3439,46 @@ class DCEPreprocess(SimpleInterface):
             baseline_diagnostics=baseline_diag,
         )
 
-    def _prepare_mcflirt_plan(
-        self, preparation: _DCEPreprocessPreparation
-    ) -> _DCEMCFLIRTPlan:
-        """Create the existing MCFLIRT reference and command plan.
+    def _prepare_motion_reference(self, preparation: _DCEPreprocessPreparation) -> str:
+        """Write the selected fixed reference on the original spatial grid.
 
         Parameters
         ----------
         preparation : _DCEPreprocessPreparation
-            Loaded DCE image and resolved baseline state.
+            Loaded acquisition and resolved baseline.
 
         Returns
         -------
-        _DCEMCFLIRTPlan
-            Output base, optional temporary reference, and command arguments.
+        str
+            Three-dimensional reference filename.
         """
         ref_vol = self.inputs.ref_vol
-        ref_vol_index: Optional[int] = None
         if ref_vol == "baseline_mean":
-            baseline_data = np.mean(
-                preparation.data[..., :preparation.baseline_frames], axis=3
-            )
-            ref_file = str(
-                Path(preparation.out_file).parent / "_tmp_baseline_mean.nii.gz"
-            )
-            ref_img = nib.Nifti1Image(
-                baseline_data.astype(np.float32),
-                preparation.affine,
-                preparation.header,
-            )
-            nib.save(ref_img, ref_file)
+            data = preparation.data[..., :preparation.baseline_frames].mean(axis=3)
         elif ref_vol == "mean":
-            ref_file = None
-        elif ref_vol == "first":
-            ref_vol_index = 0
-            ref_file = None
-        elif isinstance(ref_vol, int):
-            ref_vol_index = ref_vol
-            ref_file = None
+            data = preparation.data.mean(axis=3)
         else:
-            ref_file = None
-
-        out_path = Path(preparation.out_file)
-        if out_path.name.endswith(".nii.gz"):
-            out_base = str(out_path)[:-7]
-        elif out_path.name.endswith(".nii"):
-            out_base = str(out_path)[:-4]
-        else:
-            out_base = str(out_path)
-
-        command = [
-            "mcflirt",
-            "-in", preparation.in_file,
-            "-out", out_base,
-            "-plots",
-            "-stats",
-            "-mats",
-        ]
-        if ref_vol == "baseline_mean" and ref_file:
-            command.extend(["-reffile", ref_file])
-        elif ref_vol == "mean":
-            command.append("-meanvol")
-        elif ref_vol_index is not None:
-            command.extend(["-refvol", str(ref_vol_index)])
-
-        command.extend(["-cost", self.inputs.cost])
-        if self.inputs.interpolation == "sinc":
-            command.append("-sinc_final")
-        elif self.inputs.interpolation == "spline":
-            command.append("-spline_final")
-        command.extend(["-stages", "4"])
-        return _DCEMCFLIRTPlan(out_base, ref_file, tuple(command))
+            index = 0 if ref_vol == "first" else int(ref_vol)
+            if index < 0 or index >= preparation.n_volumes:
+                raise ValueError("Motion reference index is outside the DCE series")
+            data = preparation.data[..., index]
+        path = str(Path(preparation.out_file).parent / "motion_reference.nii.gz")
+        header = preparation.header.copy()
+        header.set_data_dtype(np.float32)
+        nib.save(nib.Nifti1Image(data.astype(np.float32), preparation.affine, header), path)
+        return path
 
     def _summarize_motion_qc(
         self,
         params_file: str,
         preparation: _DCEPreprocessPreparation,
     ) -> _DCEMotionQC:
-        """Reduce MCFLIRT parameters and return zeroed QC on read failure.
+        """Reduce common motion parameters and return zeroed QC on read failure.
 
         Parameters
         ----------
         params_file : str
-            MCFLIRT six-column motion-parameter file.
+            Common six-column motion-parameter file.
         preparation : _DCEPreprocessPreparation
             Baseline and volume state included in the QC record.
 
@@ -3556,34 +3488,19 @@ class DCEPreprocess(SimpleInterface):
             Framewise displacement, outliers, and composite QC metrics.
         """
         try:
-            motion_params = np.loadtxt(params_file)
-            fd = self._calculate_fd(motion_params, float(self.inputs.head_radius))
-            fd_list = tuple(float(value) for value in fd)
-            fd_mean = float(np.mean(fd[1:]))
-            fd_max = float(np.max(fd))
-            motion_thresh = float(self.inputs.motion_thresh)
-            outlier_mask = fd > motion_thresh
-            n_outliers = int(np.sum(outlier_mask))
-            outlier_frames = tuple(int(i) for i in np.where(outlier_mask)[0])
+            from pmriprep.utils.motion import summarize_motion
 
-            from pmriprep.utils.qc_standards import get_composite_motion_status
-
-            pct_outliers = 100.0 * n_outliers / max(1, preparation.n_volumes)
-            motion_status = get_composite_motion_status(
-                fd_mean, fd_max, pct_outliers,
-            )
+            motion_params = np.loadtxt(params_file, ndmin=2)
+            if motion_params.shape != (preparation.n_volumes, 6):
+                raise ValueError("Motion parameters do not match the DCE frame count")
+            summary = summarize_motion(motion_params, float(self.inputs.motion_thresh),
+                                       float(self.inputs.head_radius))
+            fd_list = tuple(summary["fd_list"])
+            fd_mean, fd_max = summary["fd_mean"], summary["fd_max"]
+            n_outliers = summary["n_outliers"]
+            outlier_frames = tuple(summary["outlier_frames"])
             metrics = self._preprocess_qc_context(preparation)
-            metrics.update({
-                "fd_mean": fd_mean,
-                "fd_max": fd_max,
-                "motion_status": motion_status,
-                "motion_qc_available": True,
-                "fd_list": list(fd_list),
-                "n_outliers": n_outliers,
-                "outlier_frames": list(outlier_frames),
-                "motion_thresh": motion_thresh,
-                "percent_outliers": pct_outliers,
-            })
+            metrics.update(summary)
             if preparation.baseline_diagnostics.get("confidence", "high") != "high":
                 logger.warning(
                     "DCE baseline detection low confidence: method=%s, "
@@ -3664,42 +3581,10 @@ class DCEPreprocess(SimpleInterface):
                 metrics[key] = preparation.baseline_diagnostics[key]
         return metrics
 
-    def _run_mcflirt(self, plan: _DCEMCFLIRTPlan) -> str:
-        """Execute a prepared MCFLIRT command and return its parameter file.
-
-        Parameters
-        ----------
-        plan : _DCEMCFLIRTPlan
-            Command, output base, and optional temporary reference.
-
-        Returns
-        -------
-        str
-            Expected MCFLIRT motion-parameter path.
-
-        Raises
-        ------
-        RuntimeError
-            If MCFLIRT exits with a nonzero status.
-        """
-        import subprocess
-
-        try:
-            result = subprocess.run(plan.command, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise RuntimeError(f"mcflirt failed: {result.stderr}")
-        finally:
-            if self.inputs.ref_vol == "baseline_mean" and plan.reference_file:
-                try:
-                    Path(plan.reference_file).unlink()
-                except Exception:
-                    pass
-        return f"{plan.out_base}.par"
-
     def _write_preprocess_outputs(
         self,
         preparation: _DCEPreprocessPreparation,
-        mcflirt_plan: _DCEMCFLIRTPlan,
+        series_path: str,
         params_file: str,
     ) -> _DCEPreprocessOutputs:
         """Select the processed series and write whole/baseline means.
@@ -3708,8 +3593,8 @@ class DCEPreprocess(SimpleInterface):
         ----------
         preparation : _DCEPreprocessPreparation
             Input path and resolved baseline state.
-        mcflirt_plan : _DCEMCFLIRTPlan
-            Output base locating the realigned MCFLIRT series.
+        series_path : str
+            Selected motion-corrected or unchanged series.
         params_file : str
             Motion-parameter output returned with the serialized products.
 
@@ -3723,18 +3608,6 @@ class DCEPreprocess(SimpleInterface):
         FileNotFoundError
             If motion-corrected data or the generated mean image is absent.
         """
-        moco_path = f"{mcflirt_plan.out_base}.nii.gz"
-        if not Path(moco_path).exists():
-            raise FileNotFoundError(
-                f"Motion-corrected output not found: {moco_path}"
-            )
-
-        if bool(self.inputs.apply_motion_correction):
-            series_path = moco_path
-        else:
-            shutil.copyfile(preparation.in_file, preparation.out_file)
-            series_path = preparation.in_file
-
         series_img = nib.load(series_path)
         series_data = series_img.get_fdata()  # type: ignore[attr-defined]
         mean_header = series_img.header.copy()
@@ -3791,12 +3664,22 @@ class DCEPreprocess(SimpleInterface):
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE preprocessing."""
         preparation = self._prepare_preprocess_inputs()
-        mcflirt_plan = self._prepare_mcflirt_plan(preparation)
-        params_file = self._run_mcflirt(mcflirt_plan)
-        motion_qc = self._summarize_motion_qc(params_file, preparation)
-        outputs = self._write_preprocess_outputs(
-            preparation, mcflirt_plan, params_file
+        from pmriprep.utils.ants_motion import run_motion_correction
+
+        result = run_motion_correction(
+            preparation.in_file, self._prepare_motion_reference(preparation),
+            preparation.out_file, apply=bool(self.inputs.apply_motion_correction),
+            num_threads=int(self.inputs.num_threads),
         )
+        params_file = result.params_file
+        if isdefined(self.inputs.out_params):
+            requested = str(Path(self.inputs.out_params).absolute())
+            if requested != params_file:
+                shutil.copyfile(params_file, requested)
+            params_file = requested
+        motion_qc = self._summarize_motion_qc(params_file, preparation)
+        motion_qc.metrics.update(result.provenance)
+        outputs = self._write_preprocess_outputs(preparation, result.out_file, params_file)
         self._assemble_preprocess_results(preparation, motion_qc, outputs)
 
         return runtime

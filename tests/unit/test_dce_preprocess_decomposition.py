@@ -153,81 +153,59 @@ def test_prepare_preprocess_inputs_flags_series_without_five_baseline_frames(
     )
 
 
-@pytest.mark.parametrize(
-    "ref_vol,interpolation,reference_args,interpolation_arg",
-    [
-        ("mean", "trilinear", ["-meanvol"], None),
-        ("first", "sinc", ["-refvol", "0"], "-sinc_final"),
-        (4, "spline", ["-refvol", "4"], "-spline_final"),
-    ],
-)
-def test_prepare_mcflirt_plan_preserves_reference_and_interpolation_flags(
-    tmp_path: Path,
-    monkeypatch: Any,
-    ref_vol: str | int,
-    interpolation: str,
-    reference_args: list[str],
-    interpolation_arg: str | None,
+@pytest.mark.parametrize("ref_vol", ["baseline_mean", "mean", "first", 4])
+def test_prepare_motion_reference(
+    tmp_path: Path, monkeypatch: Any, ref_vol: str | int,
 ) -> None:
-    """Reference modes and final interpolation map to the same CLI flags."""
+    """ANTs receives the requested reference on the acquisition grid."""
     dce_file = tmp_path / "dce.nii.gz"
     _write_dce(dce_file)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        DCEPreprocess,
-        "_detect_bolus_arrival",
-        lambda self, data, mask: (5, {"confidence": "high"}),
-    )
-    interface = DCEPreprocess(
-        in_file=str(dce_file),
-        baseline_frames=5,
-        ref_vol=ref_vol,
-        interpolation=interpolation,
-        cost="normmi",
-    )
-
-    plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
-    command = list(plan.command)
-
-    assert command[:7] == [
-        "mcflirt", "-in", str(dce_file), "-out", plan.out_base, "-plots", "-stats"
-    ]
-    assert "-mats" in command
-    assert command[command.index("-cost") + 1] == "normmi"
-    start = command.index(reference_args[0])
-    assert command[start:start + len(reference_args)] == reference_args
-    assert command[-2:] == ["-stages", "4"]
-    if interpolation_arg is None:
-        assert "-sinc_final" not in command
-        assert "-spline_final" not in command
+    monkeypatch.setattr(DCEPreprocess, "_detect_bolus_arrival",
+                        lambda self, data, mask: (5, {"confidence": "high"}))
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5, ref_vol=ref_vol)
+    prepared = interface._prepare_preprocess_inputs()
+    actual = nib.load(interface._prepare_motion_reference(prepared))
+    if ref_vol == "baseline_mean":
+        expected = prepared.data[..., :5].mean(axis=3)
+    elif ref_vol == "mean":
+        expected = prepared.data.mean(axis=3)
     else:
-        assert interpolation_arg in command
-    assert plan.reference_file is None
+        expected = prepared.data[..., 0 if ref_vol == "first" else ref_vol]
+    np.testing.assert_allclose(actual.get_fdata(), expected)
+    np.testing.assert_array_equal(actual.affine, prepared.affine)
 
 
-def test_prepare_mcflirt_plan_writes_baseline_mean_reference(
+def test_reference_preserves_fractional_mean_from_integer_input(
     tmp_path: Path, monkeypatch: Any,
 ) -> None:
-    """Baseline-mean mode writes the characterized float32 reference volume."""
-    dce_file = tmp_path / "dce.nii.gz"
-    _write_dce(dce_file)
+    """A derived mean must not inherit integer storage from the acquisition."""
+    dce_file = tmp_path / "integer_dce.nii.gz"
+    spatial = np.arange(120, dtype=np.int16).reshape(4, 5, 6) * 17
+    temporal = np.array([0, 1, 2, 3, 5, 7], dtype=np.int16)
+    data = spatial[..., None] + temporal
+    nib.save(nib.Nifti1Image(data, np.diag([2., 2., 3., 1.])), dce_file)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        DCEPreprocess,
-        "_detect_bolus_arrival",
-        lambda self, data, mask: (5, {"confidence": "high"}),
-    )
+    monkeypatch.setattr(DCEPreprocess, "_detect_bolus_arrival",
+                        lambda self, data, mask: (5, {"confidence": "high"}))
     interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
     prepared = interface._prepare_preprocess_inputs()
-
-    plan = interface._prepare_mcflirt_plan(prepared)
-
-    assert plan.reference_file == str(tmp_path / "_tmp_baseline_mean.nii.gz")
-    assert list(plan.command)[-2:] == ["-stages", "4"]
-    ref_index = plan.command.index("-reffile")
-    assert plan.command[ref_index + 1] == plan.reference_file
-    reference = nib.load(plan.reference_file).get_fdata()
-    assert np.allclose(reference, prepared.data[..., :5].mean(axis=3))
+    reference = nib.load(interface._prepare_motion_reference(prepared))
+    assert reference.get_data_dtype() == np.dtype(np.float32)
+    np.testing.assert_array_equal(
+        reference.get_fdata(), data[..., :5].mean(axis=3).astype(np.float32),
+    )
+    np.testing.assert_array_equal(reference.affine, prepared.affine)
+    original_bytes = dce_file.read_bytes()
+    outputs = interface._write_preprocess_outputs(prepared, str(dce_file), "motion.par")
+    for path, expected in (
+        (outputs.mean_file, data.mean(axis=3)),
+        (outputs.baseline_mean_file, data[..., :5].mean(axis=3)),
+    ):
+        derived = nib.load(path)
+        assert derived.get_data_dtype() == np.dtype(np.float32)
+        np.testing.assert_array_equal(derived.get_fdata(), expected.astype(np.float32))
+    assert dce_file.read_bytes() == original_bytes
 
 
 def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
@@ -236,7 +214,7 @@ def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
     """Motion reduction retains FD arithmetic, thresholds, and baseline QC."""
     dce_file = tmp_path / "dce.nii.gz"
     params_file = tmp_path / "motion.par"
-    _write_dce(dce_file)
+    _write_dce(dce_file, shape=(4, 5, 6, 3))
     np.savetxt(
         params_file,
         np.array([
@@ -271,9 +249,9 @@ def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
     assert qc.n_outliers == 1
     assert qc.outlier_frames == (1,)
     assert qc.metrics["fd_list"] == pytest.approx([0.0, 0.6, 0.5])
-    assert qc.metrics["percent_outliers"] == pytest.approx(100.0 / 12.0)
-    assert qc.metrics["baseline_frames"] == 5
-    assert qc.metrics["bolus_arrival_frame"] == 5
+    assert qc.metrics["percent_outliers"] == pytest.approx(100.0 / 3.0)
+    assert qc.metrics["baseline_frames"] == 2
+    assert qc.metrics["bolus_arrival_frame"] == 2
     assert qc.metrics["baseline_detection_method"] == "characterized"
     assert qc.metrics["baseline_detection_confidence"] == "medium"
     assert qc.metrics["reference_type"] == "first"
@@ -335,101 +313,3 @@ def test_motion_qc_failure_retains_baseline_exclusion_state(
     assert qc.metrics["baseline_status"] == "POOR"
     assert qc.metrics["detected_bolus_frame"] == 2
     assert "PK maps are unreliable" in qc.metrics["baseline_warning"]
-
-
-def test_run_mcflirt_preserves_command_and_success_cleanup(
-    tmp_path: Path, monkeypatch: Any,
-) -> None:
-    """Successful execution returns the parameter path and removes its reference."""
-    import subprocess
-
-    dce_file = tmp_path / "dce.nii.gz"
-    _write_dce(dce_file)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        DCEPreprocess,
-        "_detect_bolus_arrival",
-        lambda self, data, mask: (5, {"confidence": "high"}),
-    )
-    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
-    plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
-    captured: dict[str, Any] = {}
-
-    def _run(command: tuple[str, ...], **kwargs: Any):
-        captured["command"] = command
-        captured["kwargs"] = kwargs
-        return type("Result", (), {"returncode": 0, "stderr": ""})()
-
-    monkeypatch.setattr(subprocess, "run", _run)
-
-    params_file = interface._run_mcflirt(plan)
-
-    assert captured == {
-        "command": plan.command,
-        "kwargs": {"capture_output": True, "text": True},
-    }
-    assert params_file == f"{plan.out_base}.par"
-    assert plan.reference_file is not None
-    assert not Path(plan.reference_file).exists()
-
-
-def test_run_mcflirt_failure_cleans_temporary_reference(
-    tmp_path: Path, monkeypatch: Any,
-) -> None:
-    """Failure retains the command error and removes its temporary reference."""
-    import subprocess
-
-    dce_file = tmp_path / "dce.nii.gz"
-    _write_dce(dce_file)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        DCEPreprocess,
-        "_detect_bolus_arrival",
-        lambda self, data, mask: (5, {"confidence": "high"}),
-    )
-    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
-    plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: type(
-            "Result", (), {"returncode": 1, "stderr": "characterized failure"}
-        )(),
-    )
-
-    with pytest.raises(RuntimeError, match="mcflirt failed: characterized failure"):
-        interface._run_mcflirt(plan)
-
-    assert plan.reference_file is not None
-    assert not Path(plan.reference_file).exists()
-
-
-def test_preprocess_means_preserve_fractional_integer_input(
-    tmp_path: Path, monkeypatch: Any,
-) -> None:
-    """A derived mean must not inherit integer storage from the acquisition."""
-    dce_file = tmp_path / "integer_dce.nii.gz"
-    spatial = np.arange(120, dtype=np.int16).reshape(4, 5, 6) * 17
-    temporal = np.array([0, 1, 2, 3, 5, 7], dtype=np.int16)
-    data = spatial[..., None] + temporal
-    nib.save(nib.Nifti1Image(data, np.diag([2., 2., 3., 1.])), dce_file)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(DCEPreprocess, "_detect_bolus_arrival",
-                        lambda self, data, mask: (5, {"confidence": "high"}))
-    interface = DCEPreprocess(
-        in_file=str(dce_file), baseline_frames=5, apply_motion_correction=False,
-        out_file=str(tmp_path / "selected.nii.gz"),
-    )
-    prepared = interface._prepare_preprocess_inputs()
-    original_bytes = dce_file.read_bytes()
-    plan = interface._prepare_mcflirt_plan(prepared)
-    nib.save(nib.Nifti1Image(data + 100, prepared.affine), f"{plan.out_base}.nii.gz")
-    outputs = interface._write_preprocess_outputs(prepared, plan, "motion.par")
-    for path, expected in (
-        (outputs.mean_file, data.mean(axis=3)),
-        (outputs.baseline_mean_file, data[..., :5].mean(axis=3)),
-    ):
-        derived = nib.load(path)
-        assert derived.get_data_dtype() == np.dtype(np.float32)
-        np.testing.assert_array_equal(derived.get_fdata(), expected.astype(np.float32))
-    assert dce_file.read_bytes() == original_bytes

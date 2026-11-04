@@ -352,7 +352,7 @@ def par_to_confounds_tsv(
     par_file: Union[str, Path],
     output_path: Union[str, Path],
 ) -> Path:
-    """Convert an FSL mcflirt ``.par`` file to a BIDS confounds TSV.
+    """Convert a common six-column ``.par`` file to a BIDS confounds TSV.
 
     FSL column order: rot_x, rot_y, rot_z, trans_x, trans_y, trans_z.
     Output column order: trans_x, trans_y, trans_z, rot_x, rot_y, rot_z,
@@ -392,11 +392,11 @@ def par_to_confounds_tsv(
         params = params.reshape(1, -1)
     if params.ndim != 2 or params.shape[1] != 6:
         raise ValueError(
-            "MCFLIRT parameter file must contain exactly 6 columns; "
+            "Motion parameter file must contain exactly 6 columns; "
             f"got shape {params.shape}"
         )
     if not np.all(np.isfinite(params)):
-        raise ValueError("MCFLIRT parameter file contains non-finite values")
+        raise ValueError("Motion parameter file contains non-finite values")
 
     # Reorder: FSL [rot(0:3), trans(3:6)] → BIDS [trans, rot]
     trans = params[:, 3:6]
@@ -444,10 +444,8 @@ def write_confounds_sidecar(
     bids_dir : str, optional
         BIDS rawdata root (for Sources URI construction).
     motion_applied : bool, optional
-        Whether motion correction was applied. When False, these columns
-        describe residual motion (the input was assumed already corrected);
-        a ``MotionCorrectionApplied`` flag and a note record that provenance
-        so cohort-level motion summaries do not pool them with corrected runs.
+        Whether the estimated ANTs transforms were applied. The columns
+        describe input motion in both cases, not motion remaining after correction.
 
     Returns
     -------
@@ -464,12 +462,11 @@ def write_confounds_sidecar(
         [source_path] if source_path else [], bids_dir or ".",
     )
 
-    residual_note = (
+    motion_note = (
         {
             "Note": (
-                "Motion correction was not applied (input assumed "
-                "pre-corrected); these values are residual motion measured "
-                "for QC only."
+                "ANTs estimated input motion for QC; correction was not applied "
+                "and the original frames were retained without resampling."
             )
         }
         if not motion_applied
@@ -480,7 +477,9 @@ def write_confounds_sidecar(
         **get_bids_derivative_provenance(),
         **({"Sources": sources} if sources else {}),
         "MotionCorrectionApplied": bool(motion_applied),
-        **residual_note,
+        "MotionEstimation": "ANTs rigid registration",
+        "MotionParameterConvention": "FSL scaled-voxel moving-to-reference; reference intensity centre",
+        **motion_note,
         "trans_x": {
             "Description": "Translation along the x-axis",
             "Units": "mm",

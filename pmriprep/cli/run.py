@@ -1218,6 +1218,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     name=workflow_dirname(subject_id, session_id),
                     layout=bids_layout,
                 )
+                _configure_motion_threads(workflow, args.nprocs, omp)
 
                 # Log pipeline summary
                 summary = get_pipeline_summary(workflow)
@@ -1431,6 +1432,39 @@ def _effective_nprocs(
             )
         return value
     return 1
+
+
+def _configure_motion_threads(
+    workflow: Any, nprocs: int, omp_nthreads: int,
+) -> int:
+    """Reserve the same bounded CPU count used by each ANTs motion process.
+
+    Parameters
+    ----------
+    workflow : pe.Workflow
+        Constructed workflow, including nested DSC/DCE motion nodes.
+    nprocs : int
+        Resolved pipeline CPU budget, including plugin-resource precedence.
+    omp_nthreads : int
+        Resolved per-process limit shared with the rest of the pipeline.
+
+    Returns
+    -------
+    int
+        Thread count applied to both motion interfaces and node reservations.
+    """
+    from pmriprep.interfaces.dce import DCEPreprocess
+    from pmriprep.interfaces.dsc import MotionCorrection
+
+    if nprocs < 1 or omp_nthreads < 1:
+        raise ValueError("CPU budget and thread limit must be positive")
+    threads = min(nprocs, omp_nthreads)
+    for node in getattr(workflow, "_get_all_nodes", lambda: [])():
+        if isinstance(node.interface, (MotionCorrection, DCEPreprocess)):
+            node.inputs.num_threads = threads
+            node.n_procs = threads
+    logger.info("ANTs motion correction reserves %d CPU(s) per node", threads)
+    return threads
 
 
 def _workflow_uses_gpu(workflow: Any) -> bool:

@@ -57,10 +57,8 @@ class DCEConfig:
     no_dsc_validation : bool
         Skip descriptive DSC–DCE vascular concordance assessment.
     motion_correct : bool
-        Apply motion correction. True (default) runs mcflirt and processes the
-        realigned series. False assumes the input was already motion-corrected
-        (e.g. on-scanner); mcflirt still runs to report residual motion for QC,
-        but the uncorrected series is processed to avoid a second interpolation.
+        Apply ANTs rigid motion correction. False estimates input motion for
+        QC while processing the original series without resampling.
     motion_thresh : float
         Framewise-displacement threshold (mm) for flagging motion outliers in QC.
     smooth_fwhm : float

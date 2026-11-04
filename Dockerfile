@@ -34,7 +34,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
-LABEL org.opencontainers.image.version="1.0.0rc6.dev1"
+LABEL org.opencontainers.image.version="1.0.0rc6.dev2"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
 
@@ -180,6 +180,7 @@ import os, shutil, torch, nibabel, nipype; \
 print(f'PyTorch {torch.__version__}'); \
 print(f'CUDA available: {torch.cuda.is_available()}'); \
 assert shutil.which('antsBrainExtraction.sh'), 'antsBrainExtraction.sh missing'; \
+assert shutil.which('antsMotionCorr'), 'antsMotionCorr missing'; \
 from pmriprep.interfaces.anat import BrainExtraction; \
 print(f'ANTs templates: {BrainExtraction._get_ants_templates()}'); \
 import HD_BET; print('HD-BET: OK'); \

@@ -1097,6 +1097,7 @@ def _generate_motion_qc_plot(
     subject_id: str = "",
     session_id: str = "",
     motion_applied: bool = True,
+    motion_thresh: float = 0.5,
 ) -> tuple[str, dict[str, object]]:
     """Generate motion QC plot from motion parameters.
 
@@ -1114,9 +1115,9 @@ def _generate_motion_qc_plot(
     session_id : str, optional
         Session ID for QC figure title.
     motion_applied : bool, optional
-        Whether motion correction was applied. When False, the plotted values
-        are residual motion (mcflirt was run for measurement only), and the
-        figure/summary are annotated accordingly.
+        Whether the estimated ANTs transforms were applied to the input.
+    motion_thresh : float, optional
+        Configured FD exceedance threshold in millimetres.
 
     Returns
     -------
@@ -1128,17 +1129,16 @@ def _generate_motion_qc_plot(
     from pathlib import Path
     from pmriprep.utils.qc_utils import plot_motion_qc
 
-    note = None
-    if not motion_applied:
-        note = (
-            "Motion correction NOT applied (input assumed pre-corrected); "
-            "plotted values are residual motion, near the registration noise floor."
-        )
+    note = (
+        "ANTs estimated input motion; correction applied."
+        if motion_applied else
+        "ANTs estimated input motion; correction not applied (original frames retained)."
+    )
 
-    motion_params = np.loadtxt(motion_params_file)
+    motion_params = np.loadtxt(motion_params_file, ndmin=2)
     out_path = Path.cwd() / "dsc_motion_qc.png"
     _, motion_summary = plot_motion_qc(
-        motion_params, out_path, tr=tr,
+        motion_params, out_path, tr=tr, fd_threshold=motion_thresh,
         subject_id=subject_id, session_id=session_id, note=note,
     )
     motion_summary["motion_applied"] = bool(motion_applied)

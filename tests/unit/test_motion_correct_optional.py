@@ -110,7 +110,7 @@ class TestDSCMotionBranch:
         # Uncorrected series + its mean feed downstream ...
         assert _outputnode_source(wf, "dsc_moco") == ("dsc_reorient", "out_file")
         assert _outputnode_source(wf, "dsc_mean") == ("reorient_mean", "mean_file")
-        # ... but residual motion is still estimated by mcflirt.
+        # ... but input motion is still estimated by ANTs.
         assert _outputnode_source(wf, "motion_params") == ("motion_correct", "out_params")
         assert _outputnode_source(wf, "fd_values") == ("motion_correct", "fd")
 
@@ -168,7 +168,7 @@ class TestConfoundsProvenance:
         write_confounds_sidecar(out, motion_applied=False)
         data = json.loads(out.read_text())
         assert data["MotionCorrectionApplied"] is False
-        assert "residual motion" in data["Note"].lower()
+        assert "estimated input motion" in data["Note"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ class TestMotionQCPlotAnnotation:
         np.savetxt(par, np.zeros((10, 6)))
         return str(par)
 
-    def test_applied_no_note(self, tmp_path: Path, monkeypatch) -> None:
+    def test_applied_identifies_ants(self, tmp_path: Path, monkeypatch) -> None:
         from pmriprep.workflows.dsc._helpers import _generate_motion_qc_plot
 
         monkeypatch.chdir(tmp_path)
@@ -188,9 +188,10 @@ class TestMotionQCPlotAnnotation:
             self._params(tmp_path), tr=1.5, motion_applied=True,
         )
         assert summary["motion_applied"] is True
-        assert "motion_note" not in summary
+        assert "ANTs" in summary["motion_note"]
+        assert "correction applied" in summary["motion_note"]
 
-    def test_off_carries_residual_note(self, tmp_path: Path, monkeypatch) -> None:
+    def test_off_describes_estimation_only(self, tmp_path: Path, monkeypatch) -> None:
         from pmriprep.workflows.dsc._helpers import _generate_motion_qc_plot
 
         monkeypatch.chdir(tmp_path)
@@ -198,13 +199,14 @@ class TestMotionQCPlotAnnotation:
             self._params(tmp_path), tr=1.5, motion_applied=False,
         )
         assert summary["motion_applied"] is False
-        assert "residual motion" in summary["motion_note"].lower()
+        assert "estimated input motion" in summary["motion_note"].lower()
+        assert "not applied" in summary["motion_note"].lower()
 
 
 # ---------------------------------------------------------------------------
-# Residual-FD recommendation (condition B)
+# QC recommendation when correction was not applied
 # ---------------------------------------------------------------------------
-class TestResidualMotionRecommendation:
+class TestUncorrectedMotionRecommendation:
     def _dsc_qc(self, *, motion_applied, status):
         # DSC nests motion_applied under preprocessing.motion_summary.
         return {
@@ -248,7 +250,7 @@ class TestResidualMotionRecommendation:
 
 
 # ---------------------------------------------------------------------------
-# DCE interface passthrough (mcflirt mocked): apply=False must NOT re-resample
+# DCE interface passthrough (shared ANTs runner mocked): apply=False must NOT re-resample
 # ---------------------------------------------------------------------------
 class TestDCEInterfacePassthrough:
     def _make_dce(self, tmp_path):
@@ -262,34 +264,25 @@ class TestDCEInterfacePassthrough:
         nib.save(nib.Nifti1Image(data.astype(np.float32), np.eye(4)), path)
         return str(path), data.astype(np.float32)
 
-    def _patch_mcflirt(self, monkeypatch, in_file):
-        """Fake mcflirt: write a *distinct* 'corrected' 4D (input + 100) + .par."""
-        import subprocess
-
+    def _patch_ants(self, monkeypatch, in_file):
+        """Isolate DCE baseline/output wiring from the tested shared runner."""
         import nibabel as nib
+        import shutil
+        from pmriprep.utils.ants_motion import MotionResult
 
-        real_run = subprocess.run
-
-        def fake_run(cmd, **kwargs):
-            if not (isinstance(cmd, (list, tuple)) and "mcflirt" in cmd):
-                return real_run(cmd, **kwargs)
-            out_base = cmd[cmd.index("-out") + 1]
+        def fake_run(in_file, reference_file, out_file, *, apply, num_threads):
+            assert num_threads == 3
             img = nib.load(in_file)
-            corrected = img.get_fdata() + 100.0  # clearly != input
-            nib.save(
-                nib.Nifti1Image(corrected.astype(np.float32), img.affine, img.header),
-                f"{out_base}.nii.gz",
-            )
-            n_t = img.shape[3]
-            np.savetxt(f"{out_base}.par", np.zeros((n_t, 6)))
+            if apply:
+                nib.save(nib.Nifti1Image((img.get_fdata() + 100).astype(np.float32),
+                                        img.affine, img.header), out_file)
+            else:
+                shutil.copyfile(in_file, out_file)
+            params = str(Path(out_file).parent / "motion.par")
+            np.savetxt(params, np.zeros((img.shape[3], 6)))
+            return MotionResult(out_file, params, {"motion_applied": apply, "motion_tool": "ANTs"})
 
-            class _R:
-                returncode = 0
-                stderr = ""
-
-            return _R()
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr("pmriprep.utils.ants_motion.run_motion_correction", fake_run)
 
     def _run(self, tmp_path, monkeypatch, apply_moco):
         import nibabel as nib
@@ -297,11 +290,12 @@ class TestDCEInterfacePassthrough:
         from pmriprep.interfaces.dce import DCEPreprocess
 
         in_file, in_data = self._make_dce(tmp_path)
-        self._patch_mcflirt(monkeypatch, in_file)
+        self._patch_ants(monkeypatch, in_file)
         monkeypatch.chdir(tmp_path)
 
         iface = DCEPreprocess(
             in_file=in_file, baseline_frames=5,
+            num_threads=3,
             apply_motion_correction=apply_moco,
         )
         res = iface.run()
@@ -315,12 +309,12 @@ class TestDCEInterfacePassthrough:
         # out_file must equal the input, NOT the +100 'corrected' series.
         assert np.allclose(out, in_data)
         # mean_img / baseline_mean_img must also derive from the input, not the
-        # mcflirt-resampled series (condition C: means tied to processed series).
+        # ANTs-resampled series (condition C: means tied to processed series).
         mean_img = nib.load(res.outputs.mean_img).get_fdata()
         assert np.allclose(mean_img, in_data.mean(axis=3), atol=1e-3)
         base_img = nib.load(res.outputs.baseline_mean_img).get_fdata()
         assert np.allclose(base_img, in_data[..., :5].mean(axis=3), atol=1e-3)
-        # mcflirt still ran, so residual motion params are produced.
+        # ANTs still ran, so motion parameters are produced.
         assert Path(res.outputs.out_params).exists()
         assert res.outputs.qc_metrics["motion_applied"] is False
 

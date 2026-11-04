@@ -1823,7 +1823,7 @@ def init_dce_preproc_wf(
         niu.Function(
             input_names=[
                 "motion_params_file", "tr", "subject_id", "session_id",
-                "motion_applied",
+                "motion_applied", "motion_thresh",
             ],
             output_names=["plot_file"],
             function=_generate_dce_motion_qc_plot,
@@ -1833,6 +1833,7 @@ def init_dce_preproc_wf(
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
     motion_qc_plot.inputs.motion_applied = config.motion_correct
+    motion_qc_plot.inputs.motion_thresh = config.motion_thresh
     # Connect motion QC plot
     workflow.connect([
         (dce_preprocessing_wf, motion_qc_plot, [

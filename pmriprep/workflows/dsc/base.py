@@ -241,10 +241,8 @@ def init_dsc_motion_wf(
     pre-bolus mean reference (used downstream for brain extraction, registration,
     and mask/atlas resampling), plus a motion-QC plot.
 
-    When ``apply_moco`` is False the input is assumed to have been motion-
-    corrected already (e.g. on-scanner); mcflirt still runs so residual motion is
-    reported for QC, but the reoriented (uncorrected) series is passed downstream
-    to avoid a second interpolation.
+    When ``apply_moco`` is False, ANTs estimates input motion for QC,
+    while the reoriented original series is passed downstream without resampling.
 
     Parameters
     ----------
@@ -260,7 +258,7 @@ def init_dsc_motion_wf(
         Memory estimate (GB) for the heavy motion-correction node.
     apply_moco : bool
         Apply motion correction (default True). When False, the reoriented
-        series is used downstream and mcflirt runs for measurement only.
+        series is used downstream and ANTs runs for measurement only.
     name : str
         Workflow name.
 
@@ -327,6 +325,7 @@ def init_dsc_motion_wf(
         MotionCorrection(
             motion_thresh=motion_thresh,
             baseline_frames=baseline_frames,
+            apply_motion_correction=apply_moco,
         ),
         name="motion_correct",
         mem_gb=mem_gb,
@@ -337,7 +336,7 @@ def init_dsc_motion_wf(
         niu.Function(
             input_names=[
                 "motion_params_file", "tr", "subject_id", "session_id",
-                "motion_applied",
+                "motion_applied", "motion_thresh",
             ],
             output_names=["plot_file", "motion_summary"],
             function=_generate_motion_qc_plot,
@@ -347,6 +346,7 @@ def init_dsc_motion_wf(
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
     motion_qc_plot.inputs.motion_applied = apply_moco
+    motion_qc_plot.inputs.motion_thresh = motion_thresh
 
     # Node 1b: Pre-Bolus Mean Reference
     prebolus_mean = pe.Node(
@@ -360,7 +360,7 @@ def init_dsc_motion_wf(
     prebolus_mean.inputs.baseline_frames = baseline_frames
 
     # Connections common to both branches: motion_correct always runs so
-    # motion params / FD / QC report (residual) motion regardless of apply_moco.
+    # motion params / FD / QC report estimated input motion regardless of apply_moco.
     workflow.connect([
         (inputnode, dsc_reorient, [("dsc_file", "in_file")]),
         (dsc_reorient, motion_correct, [("out_file", "in_file")]),
@@ -388,7 +388,7 @@ def init_dsc_motion_wf(
             ]),
         ])
     else:
-        # Process the reoriented (uncorrected) series; mcflirt output is
+        # Process the reoriented (uncorrected) series; ANTs output is
         # measurement-only. dsc_mean is recomputed from the passthrough series
         # so the registration/datasink reference matches the quantified data.
         reorient_mean = pe.Node(
@@ -1805,7 +1805,7 @@ def init_dsc_preproc_wf(
     Notes
     -----
     The workflow follows this processing flow:
-    1. Motion correction (mcflirt)
+    1. Motion correction (ANTs)
     2. Signal-to-concentration conversion (ΔR2*)
     3. AIF detection (atlas-based → automatic → partial outputs)
     4. Leakage correction and preload-provenance recording

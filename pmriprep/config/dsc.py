@@ -74,10 +74,8 @@ class DSCConfig:
     motion_thresh : float
         Framewise displacement threshold (mm) for motion outliers.
     motion_correct : bool
-        Apply motion correction. True (default) runs mcflirt and processes the
-        realigned series. False assumes the input was already motion-corrected
-        (e.g. on-scanner); mcflirt still runs to report residual motion for QC,
-        but the uncorrected series is processed to avoid a second interpolation.
+        Apply ANTs rigid motion correction. False estimates input motion for
+        QC while processing the original series without resampling.
     pre_bolus : int
         Number of pre-bolus baseline frames for S0 estimation.
         Tissue timing sets the integration baseline, with arterial refinement

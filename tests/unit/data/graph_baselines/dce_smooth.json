@@ -2268,6 +2268,7 @@
       "input_names": [
         "motion_applied",
         "motion_params_file",
+        "motion_thresh",
         "session_id",
         "subject_id",
         "tr"
@@ -2559,7 +2560,7 @@
     "derive_smoothed_kep": "599bb294e5520863fe6b795cd72eabac724c5573e6d25e84d3ba435eaa690365",
     "dsc_dce_validation": "da5d51bf521025d8b460e0958d7283097da1db47e0cd23af83eb7f31de11be16",
     "dsc_dce_xval_plot": "4b3043f6b55becca0f1b47f258f81d1409455bf4f1fa0bea62b1be65fe452777",
-    "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
+    "motion_qc_plot": "57c94169f180e1c1b1ed32ca00cd8c91e82e74ca380a240c4ede83e673b39ce5",
     "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",
     "reg_filmstrip": "275519aaedfc5af9379fc2e49fd0bee20c4629d63c5491d25d2e6e825fa1ca3f",
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
@@ -2881,10 +2882,9 @@
     "dce_preprocess": {
       "apply_motion_correction": true,
       "baseline_frames": 0,
-      "cost": "normcorr",
       "head_radius": 50.0,
-      "interpolation": "trilinear",
       "motion_thresh": 0.5,
+      "num_threads": 1,
       "ref_vol": "baseline_mean",
       "volume_tr": 0.0
     },
@@ -2928,6 +2928,7 @@
     },
     "motion_qc_plot": {
       "motion_applied": true,
+      "motion_thresh": 0.5,
       "session_id": "0001",
       "subject_id": "0001"
     },

@@ -41,6 +41,7 @@ PathLike = Union[str, Path]
 
 _PIPELINE_QC_STRIP_KEYS = frozenset({
     "fd_list", "outlier_frames",
+    "motion_command", "motion_executable", "motion_reference",
     "candidate_coords", "candidate_scores",
     "cascade_anchor_outcomes", "cascade_gate_decisions",
     "aif_gate_decisions", "motion_summary",
@@ -430,10 +431,9 @@ def build_tool_generatedby_entries() -> List[Dict[str, Any]]:
         "HD-GLIO": get_hdglio_version(),
     }
     metadata = {
-        "FSL": ("Tissue segmentation (FAST), linear registration and motion "
-                "correction (FLIRT, MCFLIRT)", "https://fsl.fmrib.ox.ac.uk"),
+        "FSL": ("Tissue segmentation (FAST) and linear registration (FLIRT)", "https://fsl.fmrib.ox.ac.uk"),
         "ANTs": ("Intensity non-uniformity correction (N4BiasFieldCorrection) "
-                 "and denoising (DenoiseImage)", "https://github.com/ANTsX/ANTs"),
+                 "denoising (DenoiseImage) and rigid motion correction (antsMotionCorr)", "https://github.com/ANTsX/ANTs"),
         "Nipype": ("Workflow engine", "https://github.com/nipy/nipype"),
         "HD-BET": ("Brain extraction", "https://github.com/MIC-DKFZ/HD-BET"),
         "HD-GLIO": ("Automated glioma segmentation",

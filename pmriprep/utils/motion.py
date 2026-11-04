@@ -1,8 +1,7 @@
 """Shared motion parameter utilities for PMRIPrep.
 
-Provides functions to calculate framewise displacement (FD) and
-root-mean-square displacement (RMSD) from rigid-body motion parameters
-in FSL mcflirt `.par` format.
+Calculate framewise displacement (FD) and QC summaries from rigid-body
+motion parameters in the common FSL-compatible six-column format.
 """
 
 from typing import Any
@@ -27,7 +26,7 @@ def calculate_framewise_displacement(
     motion_params : np.ndarray
         Motion parameters array with shape (N, 6).
         Columns: rot_x, rot_y, rot_z (radians), trans_x, trans_y, trans_z (mm).
-        This is FSL mcflirt output format.
+        Parameters use the common FSL-compatible convention.
     head_radius : float
         Head radius in mm for converting rotations to displacements (default: 50mm).
 
@@ -70,3 +69,49 @@ def calculate_framewise_displacement(
     fd_full[1:] = fd
 
     return fd_full
+
+
+def summarize_motion(
+    motion_params: npt.NDArray[Any],
+    threshold: float = 0.5,
+    head_radius: float = 50.0,
+) -> dict[str, Any]:
+    """Summarize finite motion parameters using a common FD convention.
+
+    Parameters
+    ----------
+    motion_params : ndarray
+        Shape (frames, 6): radians followed by millimetres.
+    threshold : float, optional
+        Strict FD exceedance threshold in millimetres.
+    head_radius : float, optional
+        Radius converting angular displacement to millimetres.
+
+    Returns
+    -------
+    dict
+        Unrounded FD, transition mean, maximum, exceedances and composite QC.
+        Percentages use all frames; the mean excludes the initial placeholder.
+    """
+    from pmriprep.utils.qc_standards import get_composite_motion_status
+
+    params = np.atleast_2d(np.asarray(motion_params, dtype=float))
+    if params.ndim != 2 or params.shape[1] != 6 or params.shape[0] == 0 or not np.isfinite(params).all():
+        raise ValueError("Motion parameters must be a finite nonempty (frames, 6) array")
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("Motion threshold must be finite and nonnegative")
+    if not np.isfinite(head_radius) or head_radius <= 0:
+        raise ValueError("Motion head radius must be finite and positive")
+    fd = calculate_framewise_displacement(params, head_radius)
+    mean = float(np.mean(fd[1:])) if len(fd) > 1 else 0.0
+    maximum = float(np.max(fd))
+    indices = np.flatnonzero(fd > threshold).tolist()
+    percent = 100.0 * len(indices) / len(fd)
+    return {
+        "fd_list": fd.tolist(), "fd_mean": mean, "fd_max": maximum,
+        "n_outliers": len(indices), "outlier_frames": indices,
+        "percent_outliers": percent, "motion_thresh": threshold,
+        "fd_threshold": threshold, "head_radius_mm": head_radius,
+        "n_volumes": len(fd), "motion_qc_available": True,
+        "motion_status": get_composite_motion_status(mean, maximum, percent),
+    }

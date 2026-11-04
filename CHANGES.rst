@@ -1,3 +1,15 @@
+1.0.0rc6.dev2 (2026-11-04)
+==========================
+
+* CHG: Use ANTs rigid motion correction for DSC and DCE with a fixed
+  baseline-mean reference and linear resampling. Disabling correction retains
+  the input frames while still estimating motion for QC.
+* FIX: Use common physical-transform conversion and FD summaries across
+  preprocessing and motion plots, including the configured QC threshold and
+  exclusion of the initial FD placeholder from the mean.
+* ENH: Bound ANTs motion threads by the pipeline CPU budget and per-process
+  thread limit, with matching Nipype processor reservations.
+
 1.0.0rc6.dev1 (2026-11-04)
 ==========================
 

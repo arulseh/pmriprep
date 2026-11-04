@@ -14,7 +14,6 @@ import numpy.typing as npt
 
 from .qc_standards import (
     COLORBLIND_PALETTE,
-    MOTION_FD_THRESHOLDS,
 )
 
 
@@ -119,7 +118,7 @@ def calculate_framewise_displacement(
     Parameters
     ----------
     motion_params : npt.NDArray[Any]
-        Motion parameters array of shape (N, 6) in MCFLIRT
+        Motion parameters array of shape (N, 6) in the common FSL-compatible
         format where columns are [rx, ry, rz, tx, ty, tz] (rotations
         in radians, translations in mm), or shape (N, 12) for affine
         parameters (uses first 6).
@@ -669,6 +668,7 @@ def plot_motion_qc(
     subject_id: str = "",
     session_id: str = "",
     note: Optional[str] = None,
+    fd_threshold: float = 0.5,
 ) -> tuple[Path, dict[str, Any]]:
     """Create a 3-panel motion QC plot.
 
@@ -680,7 +680,7 @@ def plot_motion_qc(
     Parameters
     ----------
     motion_params : npt.NDArray[Any]
-        Motion parameters array of shape (N, 6) in MCFLIRT
+        Motion parameters array of shape (N, 6) in the common FSL-compatible
         format where columns are [rx, ry, rz, tx, ty, tz] (rotations
         in radians, translations in mm), or shape (N, 12) for affine
         parameters (uses first 6).
@@ -695,8 +695,9 @@ def plot_motion_qc(
     subject_id, session_id : str, optional
         Participant and session identifiers for the figure title.
     note : str, optional
-        Caption rendered below the panels (e.g. a residual-motion disclaimer
-        when motion correction was not applied).
+        Caption describing motion estimation and transform application.
+    fd_threshold : float, optional
+        Configured strict FD exceedance threshold in millimetres.
 
     Returns
     -------
@@ -713,21 +714,23 @@ def plot_motion_qc(
     # Import matplotlib here to avoid import overhead when not needed
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
 
-    motion_params = np.asarray(motion_params)
+    from pmriprep.utils.motion import summarize_motion
+
+    motion_params = np.atleast_2d(np.asarray(motion_params))
 
     if motion_params.ndim != 2 or motion_params.shape[1] < 6:
         raise ValueError(
             f"Expected shape (N, 6) or (N, 12), got {motion_params.shape}"
         )
 
-    # Extract the 6 rigid-body parameters (MCFLIRT: rx, ry, rz, tx, ty, tz)
+    # Extract rotations in radians followed by translations in millimetres.
     params = motion_params[:, :6]
     n_frames = params.shape[0]
     volumes = np.arange(n_frames)
 
     # Calculate framewise displacement
-    fd = calculate_framewise_displacement(params, radius=radius)
-    fd_threshold = MOTION_FD_THRESHOLDS.warn_threshold  # 0.5mm
+    motion_metrics = summarize_motion(params, fd_threshold, radius)
+    fd = np.asarray(motion_metrics["fd_list"])
 
     # Color scheme
     color_1 = "#EE7733"  # Orange
@@ -804,7 +807,7 @@ def plot_motion_qc(
 
     fig.tight_layout(rect=(0, 0.12, 1, 0.985))
 
-    # Optional caption (e.g. residual-motion disclaimer when moco not applied)
+    # Describe motion estimation and whether correction was applied.
     if note:
         fig.text(
             0.5, 0.04, note, ha="center", va="center", fontsize=9,
@@ -816,15 +819,5 @@ def plot_motion_qc(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-
-    # Build motion metrics dict
-    n_outliers = int(np.sum(outlier_mask))
-    motion_metrics: dict[str, Any] = {
-        "fd_mean": round(float(np.mean(fd)), 3),
-        "fd_max": round(max_fd, 3),
-        "n_outliers": n_outliers,
-        "percent_outliers": round(100.0 * n_outliers / n_frames, 1),
-        "fd_threshold": fd_threshold,
-    }
 
     return output_path, motion_metrics
