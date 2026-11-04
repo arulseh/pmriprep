@@ -18,6 +18,7 @@ from pmriprep.utils.dce_t1_validation import (
     apply_t1_correction,
     fill_t1_gaps,
     get_field_strength_key,
+    resolve_t1_default_ms,
     valid_t1_support,
 )
 
@@ -38,6 +39,17 @@ class TestValidT1Support:
         assert valid_t1_support(values, 3.0).tolist() == [
             False, True, True, True, True, False,
         ]
+
+    @pytest.mark.parametrize("field_strength,upper_bound", [(1.5, 5000.), (3., 6000.), (7., 7000.)])
+    def test_uniform_fallback_obeys_measured_t1_limits(
+        self, field_strength: float, upper_bound: float,
+    ) -> None:
+        """Catch seconds-as-ms and field-limit violations without excluding endpoints."""
+        for value in (1.4, 99.9, upper_bound + 0.1):
+            with pytest.raises(ValueError, match="milliseconds; did you enter seconds"):
+                resolve_t1_default_ms(field_strength, value)
+        for value in (100., 1400., upper_bound):
+            assert resolve_t1_default_ms(field_strength, value) == value
 
 
 class TestT1CorrectionResult:
@@ -84,6 +96,7 @@ class TestApplyT1CorrectionAuto:
             t1, field_strength=3.0, correction_mode="auto", brain_mask=brain_mask,
             nan_fraction=0.5, e1_median=0.998, b1_corrected=True,
             b1_qc_pass=b1_qc_pass, wm_probseg=wm, gm_probseg=gm,
+            t1_default_ms=850.,
         )
         np.testing.assert_array_equal(corrected, t1)
         assert result.correction_applied == "none"
@@ -166,10 +179,11 @@ class TestSkipT1Paths:
 
         t1_corr, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="fallback",
-            brain_mask=mask,
+            brain_mask=mask, t1_default_ms=850.,
         )
         assert result.correction_applied == "fallback"
-        assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
+        assert result.fallback_value_ms == 850.
+        assert result.to_dict()["fallback_source"] == "configured"
         np.testing.assert_allclose(t1_corr[mask], result.fallback_value_ms)
 
     def test_auto_falls_back_only_when_no_measured_support_exists(self) -> None:
@@ -484,6 +498,7 @@ def test_t1_mapping_preserves_compact_measured_structure(tmp_path: Path) -> None
         brain_mask=str(mask_file),
         t1_method="nlls",
         t1_correction_mode="none",
+        t1_default_ms=850.,
         out_file=str(tmp_path / "t1_map.nii.gz"),
     )
     result = interface.run(cwd=str(tmp_path))
@@ -509,6 +524,55 @@ def test_t1_mapping_preserves_compact_measured_structure(tmp_path: Path) -> None
         ]
         is False
     )
+
+
+@pytest.mark.parametrize("skip", [True, False])
+def test_t1_interface_uniform_fallback_reaches_conversion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip: bool,
+) -> None:
+    """Skipped/failed mapping uses the override and reports its actual source."""
+    import nibabel as nib
+    from pmriprep.interfaces.dce import T1Mapping
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+    from pmriprep.utils.dce_signal import signal_to_concentration
+
+    monkeypatch.chdir(tmp_path)
+    shape = (7, 7, 3)
+    vfa_files = []
+    for index in range(2):
+        path = tmp_path / f"vfa_{index}.nii.gz"
+        nib.save(nib.Nifti1Image(np.zeros(shape, np.float32), np.eye(4)), path)
+        vfa_files.append(str(path))
+    mask_file = tmp_path / "mask.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones(shape, np.uint8), np.eye(4)), mask_file)
+    mapped = T1Mapping(vfa_files=vfa_files, flip_angles=[5., 15.], tr=7.,
+                       brain_mask=str(mask_file), skip_t1=skip, t1_default_ms=850.).run().outputs
+    values = nib.load(mapped.out_file).get_fdata()
+    np.testing.assert_allclose(values[np.isfinite(values)], 850.)
+    qc = mapped.qc_metrics
+    if skip:
+        assert qc["assumed_t1_ms"] == 850.
+        assert qc["assumed_t1_policy"] == "uniform_configured"
+    else:
+        assert qc["t1_correction"]["fallback_value_ms"] == 850.
+        assert qc["t1_correction"]["fallback_source"] == "configured"
+        assert qc["t1_correction"]["median_t1_corrected"] == 850.
+        signal = np.full(shape + (10,), 100., dtype=np.float32)
+        signal[..., 5:] = 130.
+        signal_file = tmp_path / "dce.nii.gz"
+        nib.save(nib.Nifti1Image(signal, np.eye(4)), signal_file)
+        output, conversion = _signal_to_concentration_node(
+            str(signal_file), str(mask_file), mapped.out_file, None,
+            15., .005, 3., 3.8, 5, False, t1_default_ms=850., t1_mapping_qc=qc,
+        )
+        expected = signal_to_concentration(signal, 15., .005, t1_map=values,
+                                           r1_relaxivity=3.8, baseline_frames=5,
+                                           convert_to_plasma=False)
+        np.testing.assert_allclose(nib.load(output).get_fdata(), expected.concentration,
+                                   rtol=1e-6, atol=1e-7)
+        assert conversion["t1_source"] == "assumed"
+        assert conversion["assumed_t1_policy"] == "uniform_configured"
+        assert conversion["assumed_t1_ms"] == 850.
 
 
 def test_t1_mapping_csf_probseg_restricts_qc_not_support(tmp_path: Path) -> None:

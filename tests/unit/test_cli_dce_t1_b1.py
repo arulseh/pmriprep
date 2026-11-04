@@ -56,10 +56,11 @@ def test_yaml_no_t1_preserves_configured_b1_processing() -> None:
     """YAML-shaped configuration follows the same independent controls."""
     merged = merge_cli_config(
         {},
-        {"dce": {"no_t1": True, "b1_method": "precomputed"}},
+        {"dce": {"no_t1": True, "b1_method": "precomputed", "t1_default_ms": 850}},
     )
     config = DCEConfig(**merged["dce"])
 
+    assert config.t1_default_ms == 850.0
     assert _workflow_names(config) == {
         "inputnode",
         "outputnode",

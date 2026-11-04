@@ -738,6 +738,15 @@ def test_dsc_cbv_statistics_use_distinct_map_sources(bids: Path) -> None:
         assert ("compute_maps", "out_rel_cbv_auc", node, "cbv_map") not in edges
 
 
+def test_dce_t1_fallback_reaches_mapping_and_conversion(bids: Path) -> None:
+    """The public override must reach both independent fallback consumers."""
+    workflow = _dce(bids, t1_default_ms=850.)
+    assert workflow.get_node("dce_t1_b1_wf.t1_mapping").inputs.t1_default_ms == 850.
+    assert workflow.get_node("signal_to_concentration").inputs.t1_default_ms == 850.
+    signature = graph_signature(workflow)
+    assert ("t1_mapping", "qc_metrics", "signal_to_concentration", "t1_mapping_qc") in signature["edges"]
+
+
 def test_dce_peak_floor_is_routed_as_parameter(bids: Path) -> None:
     """Disabling the peak floor changes only the AIF node parameter."""
     enabled = graph_signature(_dce(bids))

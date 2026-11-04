@@ -1238,7 +1238,10 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
     skip_t1 = traits.Bool(
         False,
         usedefault=True,
-        desc="Skip T1 mapping (return uniform T1=1200ms map)",
+        desc="Skip T1 mapping and return the uniform fallback T1 map",
+    )
+    t1_default_ms = traits.Float(
+        desc="Uniform fallback T1 in milliseconds; unset uses the field-strength reference",
     )
     field_strength = traits.Float(
         3.0,
@@ -1337,7 +1340,10 @@ class T1Mapping(SimpleInterface):
     brain_mask : str, optional
         Brain mask for QC calculations
     skip_t1 : bool
-        If True, skip T1 mapping and return uniform T1=1200ms map
+        If True, skip T1 mapping and return the uniform fallback map.
+    t1_default_ms : float, optional
+        Uniform fallback in milliseconds; unset uses the field reference.
+        Applies only when mapping is skipped or no usable measurement remains.
     field_strength : float
         Magnetic field strength in Tesla for QC range lookup
 
@@ -1418,19 +1424,20 @@ class T1Mapping(SimpleInterface):
         affine = first_img.affine  # type: ignore[attr-defined]
         header = first_img.header  # type: ignore[attr-defined]
 
+        from pmriprep.utils.dce_t1_validation import resolve_t1_default_ms
+
+        t1_override = (
+            float(self.inputs.t1_default_ms) if isdefined(self.inputs.t1_default_ms) else None
+        )
+        default_t1 = resolve_t1_default_ms(self.inputs.field_strength, t1_override)
+        fallback_source = "configured" if t1_override is not None else "field_strength_reference"
+
         # Check if T1 mapping should be skipped
         if self.inputs.skip_t1:
-            from pmriprep.utils.dce_t1_validation import (
-                T1_TISSUE_REFERENCE,
-                get_field_strength_key,
-            )
-
-            field_key = get_field_strength_key(self.inputs.field_strength)
-            default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
             t1_map = np.full(shape, default_t1, dtype=np.float32)
             logger.info(
-                "skip_t1: using uniform field-strength T1 (%.0fms)",
-                default_t1,
+                "skip_t1: using uniform T1 (%.0fms, %s)",
+                default_t1, fallback_source,
             )
 
             # Save output
@@ -1450,6 +1457,9 @@ class T1Mapping(SimpleInterface):
                 "qc_pass": True,
                 "skipped": True,
                 "tissue_t1_used": False,
+                "assumed_t1_ms": default_t1,
+                "assumed_t1_field_strength_t": float(self.inputs.field_strength),
+                "assumed_t1_policy": "uniform_" + fallback_source,
             }
             return runtime
 
@@ -1794,10 +1804,10 @@ class T1Mapping(SimpleInterface):
             e1_median=e1_median,
             b1_corrected=b1_corrected,
             population_reference_applicable=csf_qc_restricted,
+            t1_default_ms=t1_override,
         )
         t1_map = t1_map_arr.astype(np.float32)
         if correction_result.correction_applied == "fallback":
-            default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
             t1_map = np.where(
                 fallback_brain_mask,
                 default_t1,

@@ -116,17 +116,19 @@ class TestT1Keys:
             "t1_mapping": {"method": "nlls"},
             "signal_conversion": {
                 "t1_source": "assumed",
-                "assumed_t1_ms": 1200.0,
+                "assumed_t1_ms": 850.0,
+                "assumed_t1_policy": "uniform_configured",
                 "vfa_to_dce_registration": {"qc_status": "POOR"},
             },
         }
 
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
 
-        assert out["T1Source"] == "uniform_field_strength_fallback"
+        assert out["T1Source"] == "uniform_configured_fallback"
+        assert out["T1AssumptionPolicy"] == "uniform_configured"
         assert out["T1MappingAttempted"] is True
         assert out["T1MappingAccepted"] is False
-        assert out["T1AssumedValue"] == 1200.0
+        assert out["T1AssumedValue"] == 850.0
         assert out["T1FallbackReason"] == (
             "VFA-to-DCE registration QC was POOR"
         )

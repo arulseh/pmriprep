@@ -2259,7 +2259,7 @@ def _init_master_dce_workflow(
     ):
         _log.warning(
             "No VFA data found for sub-%s ses-%s; "
-            "disabling T1 mapping (using field-strength default T1)",
+            "disabling T1 mapping (using uniform T1 fallback)",
             subject_id, session_id,
         )
         dce_config.no_t1 = True

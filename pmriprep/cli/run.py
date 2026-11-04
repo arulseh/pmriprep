@@ -604,7 +604,8 @@ Examples:
         action="store_const",
         const=True,
         default=None,
-        help="Skip T1 mapping (use a uniform field-strength reference T1). "
+        help="Skip T1 mapping (use dce.t1_default_ms from config, or the "
+             "field-strength reference when unset). "
              "B1+ correction remains controlled by --dce-b1-method.",
     )
     dce_group.add_argument(

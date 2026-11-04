@@ -605,6 +605,8 @@ def _signal_to_concentration_node(
     external_t1: bool = False,
     t1_registration_qc: dict[str, object] | None = None,
     b1_registration_qc: dict[str, object] | None = None,
+    t1_default_ms: float | None = None,
+    t1_mapping_qc: dict[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:
     """Convert DCE signal to contrast-agent concentration.
 
@@ -632,13 +634,17 @@ def _signal_to_concentration_node(
     baseline_frames : int
         Number of pre-contrast baseline frames.
     no_t1 : bool
-        If True, skip T1 mapping and use a field-strength default T1.
+        If True, skip T1 mapping and use the uniform fallback T1.
     external_t1 : bool, optional
         Whether the T1 map is a user-supplied map requiring alignment QC.
     t1_registration_qc : dict or None, optional
         VFA-reference-to-DCE registration accounting for internally fitted T1.
     b1_registration_qc : dict or None, optional
         Magnitude-derived registration accounting for B1+ transfer.
+    t1_default_ms : float or None, optional
+        Uniform fallback T1 in milliseconds; None selects the field reference.
+    t1_mapping_qc : dict or None, optional
+        Mapping provenance distinguishing measured T1 from a uniform fallback map.
 
     Returns
     -------
@@ -659,8 +665,7 @@ def _signal_to_concentration_node(
     from pmriprep.utils.dce_constants import EPSILON_SIGNAL
     from pmriprep.utils.dce_signal import signal_to_concentration
     from pmriprep.utils.dce_t1_validation import (
-        T1_TISSUE_REFERENCE,
-        get_field_strength_key,
+        resolve_t1_default_ms,
         valid_t1_support,
     )
 
@@ -688,7 +693,7 @@ def _signal_to_concentration_node(
             import logging as _logging
 
             _logging.getLogger("pmriprep.workflows.dce").warning(
-                "Failed to load T1 map (%s) — using default T1", exc,
+                "Failed to load T1 map (%s) — using uniform T1 fallback", exc,
             )
 
     # Preserve the nonpositive B1 sentinel consumed by signal_to_concentration.
@@ -710,6 +715,7 @@ def _signal_to_concentration_node(
         flip_angle_deg=flip_angle,
         tr=tr,
         t1_map=t1_map,
+        t1_default_ms=t1_default_ms,
         b1_map=b1_map,
         r1_relaxivity=r1_relaxivity,
         field_strength=field_strength,
@@ -732,13 +738,24 @@ def _signal_to_concentration_node(
         conversion_qc["vfa_to_dce_registration"] = dict(t1_registration_qc)
     if b1_registration_qc is not None:
         conversion_qc["b1_registration"] = dict(b1_registration_qc)
-    if t1_map is None:
-        field_key = get_field_strength_key(field_strength)
-        conversion_qc["assumed_t1_ms"] = float(
-            T1_TISSUE_REFERENCE[field_key]["default"]
-        )
+    mapping_correction = (t1_mapping_qc or {}).get("t1_correction")
+    uniform_map = (
+        t1_map is not None and not external_t1
+        and isinstance(mapping_correction, dict)
+        and mapping_correction.get("correction_applied") == "fallback"
+    )
+    if t1_map is None or uniform_map:
+        conversion_qc["t1_source"] = "assumed"
+        if uniform_map:
+            assert isinstance(mapping_correction, dict)
+            assumed_t1 = float(mapping_correction["fallback_value_ms"])
+            source = str(mapping_correction["fallback_source"])
+        else:
+            assumed_t1 = resolve_t1_default_ms(field_strength, t1_default_ms)
+            source = "configured" if t1_default_ms is not None else "field_strength_reference"
+        conversion_qc["assumed_t1_ms"] = assumed_t1
         conversion_qc["assumed_t1_field_strength_t"] = float(field_strength)
-        conversion_qc["assumed_t1_policy"] = "uniform_field_strength_reference"
+        conversion_qc["assumed_t1_policy"] = "uniform_" + source
     conversion_qc["b1_correction_applied"] = bool(
         b1_map is not None
         and np.any(
@@ -1345,7 +1362,7 @@ def _collect_qc_metrics(
             "external_alignment": alignment,
         }
     elif no_t1:
-        # No T1 mapping - using assumed literature values
+        # No T1 mapping - using the configured or field-reference uniform value
         conversion = (
             signal_conversion_qc
             if isinstance(signal_conversion_qc, dict)
@@ -1990,7 +2007,7 @@ def _transform_t1_to_dce(
         )
     if status not in {"PASS", "WARN"}:
         logging.getLogger("pmriprep.workflows.dce").warning(
-            "VFA-to-DCE registration QC is %s; using population T1 fallback",
+            "VFA-to-DCE registration QC is %s; using uniform T1 fallback",
             status,
         )
         return None

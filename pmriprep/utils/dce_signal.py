@@ -442,15 +442,9 @@ def signal_to_concentration(
         # T1 map provided (in ms)
         t1_seconds = t1_map / 1000.0
     else:
-        # Use default T1 value (field-strength-aware if not specified)
-        if t1_default_ms is None:
-            from pmriprep.utils.dce_t1_validation import (
-                T1_TISSUE_REFERENCE,
-                get_field_strength_key,
-            )
-            field_key = get_field_strength_key(field_strength)
-            t1_default_ms = T1_TISSUE_REFERENCE[field_key]["default"]
-        t1_seconds = t1_default_ms / 1000.0  # type: ignore[assignment]
+        from pmriprep.utils.dce_t1_validation import resolve_t1_default_ms
+
+        t1_seconds = resolve_t1_default_ms(field_strength, t1_default_ms) / 1000.0  # type: ignore[assignment]
 
     # Ensure T1 is positive
     if isinstance(t1_seconds, np.ndarray):

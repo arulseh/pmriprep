@@ -53,7 +53,12 @@ class DCEConfig:
         pixel = flip×10), actual_flip_deg, percent (BIDS p.u., 100=nominal),
         or ratio (1.0=nominal).
     no_t1 : bool
-        Skip T1 mapping (use field-strength-appropriate default T1).
+        Skip T1 mapping and use the uniform fallback T1.
+    t1_default_ms : Optional[float]
+        Uniform fallback T1 in milliseconds. None selects the field-strength
+        reference; a usable measured or external map takes precedence.
+        The measured-T1 lower limit is checked during configuration; the
+        field-dependent upper limit is checked when resolved.
     no_dsc_validation : bool
         Skip descriptive DSC–DCE vascular concordance assessment.
     motion_correct : bool
@@ -114,6 +119,7 @@ class DCEConfig:
         "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"
     ] = "auto"
     no_t1: bool = False
+    t1_default_ms: Optional[float] = None
     t1_method: Literal["nlls", "wlls"] = "nlls"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
 
@@ -263,6 +269,18 @@ class DCEConfig:
             raise TypeError(f"DCEConfig float field has invalid type: {e}") from e
 
         # Handle Optional[float] fields
+        if self.t1_default_ms is not None:
+            from pmriprep.utils.dce_t1_validation import MIN_VALID_T1_MS
+
+            if isinstance(self.t1_default_ms, (str, bool)):
+                raise TypeError("t1_default_ms must be a numeric value in milliseconds or null")
+            self.t1_default_ms = float(self.t1_default_ms)
+            if not math.isfinite(self.t1_default_ms) or self.t1_default_ms < MIN_VALID_T1_MS:
+                raise ValueError(
+                    f"t1_default_ms must be finite and at least {MIN_VALID_T1_MS:g} "
+                    "milliseconds; did you enter seconds?"
+                )
+
         if self.target_peak is not None:
             try:
                 self.target_peak = float(self.target_peak)

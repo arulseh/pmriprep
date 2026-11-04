@@ -642,6 +642,8 @@ def init_dce_t1_b1_wf(
         )
         t1_mapping.inputs.subject_id = subject_id
         t1_mapping.inputs.session_id = session_id or ""
+        if config.t1_default_ms is not None:
+            t1_mapping.inputs.t1_default_ms = config.t1_default_ms
         vfa_to_dce_registration = pe.Node(
             DCERegistration(
                 cost="normmi",
@@ -1753,7 +1755,7 @@ def init_dce_preproc_wf(
     # Three T1 source modes:
     #   1. VFA T1 fitting (default): full VFA→B1→T1 chain
     #   2. External T1 map: skip VFA fitting, keep B1 for concentration conversion
-    #   3. no_t1: skip T1 mapping, use field-strength default T1
+    #   3. no_t1: skip T1 mapping and use the uniform fallback T1
     use_external_t1 = config.t1_map_file is not None
     use_vfa_t1 = config.uses_vfa_t1
     # B1 corrects the DCE excitation flip angle independently of the T1 source.
@@ -2170,6 +2172,8 @@ def init_dce_preproc_wf(
                 "external_t1",
                 "t1_registration_qc",
                 "b1_registration_qc",
+                "t1_default_ms",
+                "t1_mapping_qc",
             ],
             output_names=["concentration_file", "conversion_qc"],
             function=_signal_to_concentration_node,
@@ -2183,6 +2187,8 @@ def init_dce_preproc_wf(
     signal_to_conc.inputs.external_t1 = use_external_t1
     signal_to_conc.inputs.t1_registration_qc = None
     signal_to_conc.inputs.b1_registration_qc = None
+    signal_to_conc.inputs.t1_default_ms = config.t1_default_ms
+    signal_to_conc.inputs.t1_mapping_qc = None
 
     # Use T1 and B1 maps resampled to DCE space
     workflow.connect([
@@ -2208,6 +2214,7 @@ def init_dce_preproc_wf(
             ]),
             (t1_b1_wf, signal_to_conc, [
                 ("outputnode.vfa_to_dce_registration_qc", "t1_registration_qc"),
+                ("outputnode.t1_qc", "t1_mapping_qc"),
             ]),
             (transform_b1_to_dce, signal_to_conc, [
                 ("out_file", "b1_map_file"),

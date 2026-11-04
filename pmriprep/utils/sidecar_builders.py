@@ -1751,11 +1751,13 @@ def _dce_t1_cosmetic_keys(
     if signal_source == "assumed":
         fallback_used = method not in {None, "assumed"}
         mapping_attempted = method not in {None, "assumed", "external"}
-        out["T1Source"] = (
-            "uniform_field_strength_fallback"
-            if fallback_used
-            else "uniform_field_strength_assumption"
-        )
+        configured = signal.get("assumed_t1_policy") == "uniform_configured"
+        source = "uniform_configured" if configured else "uniform_field_strength"
+        out["T1Source"] = source + ("_fallback" if fallback_used else "_assumption")
+        if signal.get("assumed_t1_policy") is not None:
+            out["T1AssumptionPolicy"] = str(signal["assumed_t1_policy"])
+        if signal.get("assumed_t1_field_strength_t") is not None:
+            out["T1AssumptionFieldStrength"] = float(signal["assumed_t1_field_strength_t"])
         out["T1MappingAttempted"] = mapping_attempted
         if mapping_attempted:
             out["T1MappingAccepted"] = False

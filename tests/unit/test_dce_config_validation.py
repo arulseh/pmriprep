@@ -1,5 +1,7 @@
 """Tests for DCE/DSC config validation rules."""
 
+from typing import Any
+
 import pytest
 
 from pmriprep.config.dce import DCEConfig
@@ -30,6 +32,19 @@ class TestCbvConstraintModeValidation:
 
 class TestConcentrationParameterValidation:
     """Signal-conversion scaling parameters reject invalid domains."""
+
+    @pytest.mark.parametrize("value", [0., -1., 99.9, float("nan"), float("inf"), True, "900"])
+    def test_invalid_t1_fallback_is_rejected(self, value: Any) -> None:
+        """Reject invalid units/config types instead of silently clipping T1."""
+        with pytest.raises((ValueError, TypeError), match="t1_default_ms"):
+            DCEConfig(t1_default_ms=value)
+
+    def test_t1_fallback_config_checks_units_before_field_strength_is_known(self) -> None:
+        """Reject seconds at startup, retain the lower endpoint and defer the upper limit."""
+        with pytest.raises(ValueError, match="milliseconds; did you enter seconds"):
+            DCEConfig(t1_default_ms=1.4)
+        assert DCEConfig(t1_default_ms=100.).t1_default_ms == 100.
+        assert DCEConfig(t1_default_ms=7000.).t1_default_ms == 7000.
 
     @pytest.mark.parametrize("value", [0.0, -1.0, float("nan")])
     def test_relaxivity_must_be_finite_positive(self, value: float) -> None:

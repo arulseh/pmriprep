@@ -119,7 +119,7 @@ Key DCE options:
 | `--dce-aif-file FILE` | Supply a plasma-concentration AIF in mM |
 | `--dce-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dce-b1-method {auto,afi,precomputed,none}` | Control B1+ correction |
-| `--dce-no-t1` | Use a uniform field-strength reference T1 |
+| `--dce-no-t1` | Use the uniform fallback T1 |
 | `--dce-t1-map FILE` | Supply a millisecond T1 map world-aligned to DCE |
 
 Use `pmriprep --help` for the complete execution interface. `--use-plugin`
@@ -214,7 +214,8 @@ DCE fields:
 | `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
 | `nawm_mask` | `null` | NAWM mask (native-DCE space) |
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space) |
-| `no_t1` | `false` | Skip VFA fitting and use field-strength default T1 |
+| `no_t1` | `false` | Skip VFA fitting and use the uniform fallback T1 |
+| `t1_default_ms` | `null` | Uniform fallback T1 in ms, within measured-T1 safety limits; null uses field defaults. Usable measured/external maps take precedence |
 | `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
 | `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
 | `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |

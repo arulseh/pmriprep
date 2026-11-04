@@ -137,6 +137,7 @@ class T1CorrectionResult:
     correction_mode_requested: str = "auto"
     population_reference_applicable: bool = True
     fallback_value_ms: Optional[float] = None
+    fallback_source: Optional[str] = None
     deviation_type: Optional[str] = None
     nan_fraction: Optional[float] = None
     tissue_t1_used: bool = False
@@ -157,6 +158,7 @@ class T1CorrectionResult:
         }
         if self.fallback_value_ms is not None:
             d["fallback_value_ms"] = self.fallback_value_ms
+            d["fallback_source"] = self.fallback_source
         if self.deviation_type is not None:
             d["deviation_type"] = self.deviation_type
         if self.nan_fraction is not None:
@@ -226,6 +228,45 @@ def _distance_from_range(value: float, range_tuple: Tuple[float, float]) -> floa
 # ============================================================================
 # VFA T1 support
 # ============================================================================
+
+
+def resolve_t1_default_ms(
+    field_strength: float, t1_default_ms: Optional[float] = None,
+) -> float:
+    """Resolve the uniform fallback without changing measured-map support.
+
+    Parameters
+    ----------
+    field_strength : float
+        Scanner field strength in Tesla, used for the reference and upper limit.
+    t1_default_ms : float, optional
+        Finite fallback T1 in milliseconds, within the measured-T1 safety
+        envelope for the field strength (inclusive).
+
+    Returns
+    -------
+    float
+        Configured value or the field-strength reference in milliseconds.
+
+    Raises
+    ------
+    TypeError
+        If the override is a string or boolean.
+    ValueError
+        If the override is nonfinite or outside the measured-T1 safety envelope.
+    """
+    if t1_default_ms is None:
+        return float(T1_TISSUE_REFERENCE[get_field_strength_key(field_strength)]["default"])
+    if isinstance(t1_default_ms, (str, bool)):
+        raise TypeError("t1_default_ms must be a numeric value in milliseconds or None")
+    value = float(t1_default_ms)
+    if not valid_t1_support(value, field_strength):
+        upper_bound = T1_TISSUE_REFERENCE[get_field_strength_key(field_strength)]["t1_upper_bound"]
+        raise ValueError(
+            f"t1_default_ms must be finite and within [{MIN_VALID_T1_MS:g}, "
+            f"{upper_bound:g}] milliseconds; did you enter seconds?"
+        )
+    return value
 
 
 def valid_t1_support(
@@ -356,13 +397,14 @@ def apply_t1_correction(
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
     population_reference_applicable: bool = True,
+    t1_default_ms: Optional[float] = None,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Apply T1 map correction based on median T1 validation.
 
     Correction modes:
 
     - ``none``: No correction, use VFA T1 as-is.
-    - ``fallback``: Replace with uniform literature T1 value.
+    - ``fallback``: Replace with the configured or field-reference uniform T1.
     - ``auto``: Retain numerically valid measured T1 support. Population
       reference deviations and acquisition diagnostics are reported as QC and
       do not silently replace the estimator.
@@ -400,6 +442,9 @@ def apply_t1_correction(
     population_reference_applicable : bool
         Whether the supplied summary mask excludes high-probability CSF and
         supports comparison with the normal-parenchymal reference interval.
+    t1_default_ms : float, optional
+        Uniform fallback in milliseconds; None uses the field reference.
+        Does not replace valid measurements in ``auto`` or ``none`` mode.
 
     Returns
     -------
@@ -416,6 +461,8 @@ def apply_t1_correction(
     """
     field_key = get_field_strength_key(field_strength)
     t1_ref = T1_TISSUE_REFERENCE[field_key]
+    fallback_value = resolve_t1_default_ms(field_strength, t1_default_ms)
+    fallback_source = "configured" if t1_default_ms is not None else "field_strength_reference"
 
     # Calculate median T1 from valid voxels
     if brain_mask is not None:
@@ -438,11 +485,12 @@ def apply_t1_correction(
                 if brain_mask is not None
                 else np.ones(t1_map.shape, dtype=bool)
             )
-            corrected = np.where(fill_mask, t1_ref["default"], np.nan)
+            corrected = np.where(fill_mask, fallback_value, np.nan)
             result.correction_applied = "fallback"
             result.reason = "No valid measured T1 values"
-            result.fallback_value_ms = t1_ref["default"]
-            result.median_t1_corrected = t1_ref["default"]
+            result.fallback_value_ms = fallback_value
+            result.fallback_source = fallback_source
+            result.median_t1_corrected = fallback_value
             return corrected, result
         return t1_map, result
 
@@ -466,11 +514,12 @@ def apply_t1_correction(
 
     elif correction_mode == "fallback":
         fill = (brain_mask > 0.5) if brain_mask is not None else valid_mask
-        t1_corrected = np.where(fill, t1_ref["default"], np.nan)
+        t1_corrected = np.where(fill, fallback_value, np.nan)
         result.correction_applied = "fallback"
-        result.reason = "User requested fallback to literature value"
-        result.fallback_value_ms = t1_ref["default"]
-        result.median_t1_corrected = t1_ref["default"]
+        result.reason = "User requested uniform T1 fallback"
+        result.fallback_value_ms = fallback_value
+        result.fallback_source = fallback_source
+        result.median_t1_corrected = fallback_value
         return t1_corrected, result
 
     elif correction_mode == "auto":

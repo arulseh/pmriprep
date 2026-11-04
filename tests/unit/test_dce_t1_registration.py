@@ -20,16 +20,36 @@ def _write_image(path: Path, data: np.ndarray, affine: np.ndarray) -> str:
     return str(path)
 
 
-def test_poor_vfa_registration_rejects_t1_map(tmp_path: Path) -> None:
-    """A poor magnitude-image registration must trigger population-T1 fallback."""
+def test_poor_vfa_registration_rejects_t1_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejected registration uses the configured fallback during conversion."""
     t1_file = _write_image(tmp_path / "t1.nii.gz", np.ones((2, 2, 2)), np.eye(4))
     ref_file = _write_image(tmp_path / "ref.nii.gz", np.ones((2, 2, 2)), np.eye(4))
     matrix = tmp_path / "vfa_to_dce.mat"
     matrix.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
 
-    assert _transform_t1_to_dce(
+    retained_t1 = _transform_t1_to_dce(
         t1_file, ref_file, str(matrix), {"qc_status": "POOR"},
-    ) is None
+    )
+    assert retained_t1 is None
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+    from pmriprep.utils.dce_signal import signal_to_concentration
+
+    monkeypatch.chdir(tmp_path)
+    signal = np.full((2, 2, 2, 10), 100.)
+    signal[..., 5:] = 130.
+    signal_file = _write_image(tmp_path / "dce.nii.gz", signal, np.eye(4))
+    output, qc = _signal_to_concentration_node(
+        signal_file, ref_file, retained_t1, None, 15., .005, 3., 3.8, 5, False,
+        t1_registration_qc={"qc_status": "POOR"}, t1_default_ms=850.,
+    )
+    expected = signal_to_concentration(signal, 15., .005, t1_default_ms=850.,
+                                       r1_relaxivity=3.8, baseline_frames=5,
+                                       convert_to_plasma=False)
+    np.testing.assert_allclose(nib.load(output).get_fdata(), expected.concentration, rtol=1e-6)
+    assert qc["assumed_t1_ms"] == 850.
+    assert qc["assumed_t1_policy"] == "uniform_configured"
 
 
 def test_unknown_vfa_registration_qc_fails_loudly(tmp_path: Path) -> None:

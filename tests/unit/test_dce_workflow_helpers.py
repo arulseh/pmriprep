@@ -29,6 +29,8 @@ def _write_nifti(path: Any, data: np.ndarray) -> str:
 def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
     """Workflow wrapper zeroes invalid T1 and returns conversion diagnostics."""
     from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+    from pmriprep.utils.dce_signal import signal_to_concentration
+    import nibabel as nib
 
     signal = np.full((2, 1, 1, 10), 100.0)
     signal[..., 5:] = 120.0
@@ -48,6 +50,7 @@ def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
             3.8,
             5,
             False,
+            t1_default_ms=850.,
         )
 
     assert output.endswith("dce_concentration.nii.gz")
@@ -56,6 +59,12 @@ def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
     assert qc["nonfinite_output_samples"] == 0
     assert qc["qc_domain"] == "dce_brain_mask"
     assert qc["n_qc_domain_voxels"] == 2
+    assert qc["t1_source"] == "map"
+    assert "assumed_t1_ms" not in qc
+    expected = signal_to_concentration(signal, 15., .005, t1_map=t1,
+                                       r1_relaxivity=3.8, baseline_frames=5,
+                                       convert_to_plasma=False)
+    np.testing.assert_allclose(nib.load(output).get_fdata()[0], expected.concentration[0], rtol=1e-6)
 
 
 def test_external_t1_reports_alignment_metrics(tmp_path: Any) -> None:
@@ -84,6 +93,7 @@ def test_external_t1_reports_alignment_metrics(tmp_path: Any) -> None:
             5,
             False,
             external_t1=True,
+            t1_default_ms=850.,
         )
 
     alignment = qc["external_t1_alignment"]
@@ -127,7 +137,10 @@ def test_signal_conversion_node_scopes_t1_qc_to_brain_mask(
     assert qc["t1_invalid_fraction"] == 0.0
 
 
-def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
+@pytest.mark.parametrize("t1_default_ms", [None, 850.])
+def test_no_t1_signal_conversion_retains_b1_correction(
+    tmp_path: Any, t1_default_ms: float | None,
+) -> None:
     """Assumed-T1 conversion still applies the measured excitation field."""
     import nibabel as nib  # type: ignore[import-untyped]
 
@@ -151,6 +164,7 @@ def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
             3.8,
             5,
             True,
+            t1_default_ms=t1_default_ms,
         )
         nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
         corrected_file, corrected_qc = _signal_to_concentration_node(
@@ -164,6 +178,7 @@ def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
             3.8,
             5,
             True,
+            t1_default_ms=t1_default_ms,
         )
         corrected = np.asarray(nib.load(corrected_file).dataobj).copy()
 
@@ -171,9 +186,11 @@ def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
     assert nominal_qc["b1_correction_applied"] is False
     assert corrected_qc["b1_correction_applied"] is True
     assert corrected_qc["t1_source"] == "assumed"
-    assert corrected_qc["assumed_t1_ms"] == pytest.approx(1200.0)
+    assert corrected_qc["assumed_t1_ms"] == pytest.approx(1200.0 if t1_default_ms is None else t1_default_ms)
     assert corrected_qc["assumed_t1_field_strength_t"] == pytest.approx(3.0)
-    assert corrected_qc["assumed_t1_policy"] == "uniform_field_strength_reference"
+    assert corrected_qc["assumed_t1_policy"] == (
+        "uniform_field_strength_reference" if t1_default_ms is None else "uniform_configured"
+    )
 
 
 def test_unity_b1_sentinel_is_not_reported_as_correction(tmp_path: Any) -> None:

@@ -1,3 +1,11 @@
+1.0.0rc6.dev5 (2026-11-04)
+==========================
+
+* ENH: Add dce.t1_default_ms for uniform T1 fallback in milliseconds. Null
+  retains field-strength defaults; usable measured/external maps take precedence.
+  Record the applied fallback value and source in conversion QC and sidecars.
+  Reject fallback values outside the existing field-dependent T1 safety limits.
+
 1.0.0rc6.dev4 (2026-11-04)
 ==========================
 
