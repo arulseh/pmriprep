@@ -18,7 +18,7 @@ from pmriprep.utils.dce_constants import (
 def test_exchange_rate_support_reaches_all_consumers() -> None:
     """Scalar, batched, Bayesian and retention paths share finite rate support."""
     from pmriprep.interfaces import dce_compute
-    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.models.dce import batched_fitting, retention, two_compartment_exchange
     from pmriprep.models.dce.bayesian import BayesianPKFitter
 
     model = two_compartment_exchange.TwoCompartmentExchangeModel()
@@ -30,7 +30,7 @@ def test_exchange_rate_support_reaches_all_consumers() -> None:
         bounds = getattr(dce_constants, name + "_BOUNDS")
         assert (bounds.min, bounds.max) == (0., 500.)
         assert getattr(two_compartment_exchange, name + "_BOUNDS") is bounds
-        assert getattr(dce_compute, name + "_BOUNDS") is bounds
+        assert getattr(retention, name + "_BOUNDS") is bounds
         assert batched_fitting._PARAM_BOUNDS[name.lower()] == (0., 500.)
     for rate in ("Fp", "PS"):
         for value, rejected in ((150., False), (300., False), (450., False),

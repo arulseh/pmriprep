@@ -129,12 +129,12 @@ class NativeInput:
         return np.asarray(out[0] if scalar else out)
 
 
-def predict(context: NativeInput, params: np.ndarray) -> np.ndarray:
+def predict(context: NativeInput | DelayedPchip, params: np.ndarray) -> np.ndarray:
     """Evaluate 2CXM at fixed delay; params are Fp, PS, ve and vp.
 
     Parameters
     ----------
-    context : NativeInput
+    context : NativeInput or DelayedPchip
         Exact integration context, including the fixed delay.
     params : ndarray
         One parameter vector or a batch. Fp/PS are mL/min/100 mL.

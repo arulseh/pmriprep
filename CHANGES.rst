@@ -1,3 +1,10 @@
+1.0.0rc6.dev12 (2026-11-04)
+===========================
+
+* ENH: Bind VI refinement to the selected DCE family, delay and shared PCHIP
+  input, with guarded NLLS initialization and same-delay fallback. Share the
+  existing parameter-retention rules. Pipeline routing remains pending.
+
 1.0.0rc6.dev11 (2026-11-04)
 ===========================
 

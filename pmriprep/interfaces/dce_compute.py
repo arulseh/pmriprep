@@ -27,59 +27,22 @@ from pmriprep.utils.dce_constants import (
     EPSILON_RATIO,
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
-    FP_BOUNDS,
     KEP_BOUNDS,
     KTRANS_BOUNDS,
     MIN_ENHANCEMENT_MM,
-    PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
 )
+from pmriprep.models.dce.retention import is_degenerate_fit as _is_degenerate_dce_fit
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 from pmriprep.utils.dce_metrics import compute_kep
 
 logger = logging.getLogger("nipype.interface")
 
-# Numerical endpoint tolerance for strictly feasible optimizer nudges.
-_RATE_BOUND_RTOL: float = 1e-10
 # Absolute fraction tolerance used only to classify optimizer contact with the
 # physical volume endpoints in the secondary quantitative QC mask.
 _VOLUME_QC_ENDPOINT_ATOL: float = 1e-6
-
-
-def _is_degenerate_dce_fit(
-    model_name: str,
-    params: dict[str, float],
-) -> bool:
-    """Return whether a DCE fit violates the parameter-retention rules."""
-    ktrans = params.get("Ktrans", 0.0)
-    ve = params.get("ve", 0.0)
-    vp = params.get("vp", 0.0)
-    rate_ceilings = (
-        (("Fp", FP_BOUNDS.max), ("PS", PS_BOUNDS.max))
-        if model_name == "2cxm" else (("Ktrans", KTRANS_BOUNDS.max),)
-    )
-    for name, ceiling in rate_ceilings:
-        value = params.get(name, np.nan)
-        tolerance = _RATE_BOUND_RTOL * max(1.0, abs(ceiling))
-        if not np.isfinite(value) or value >= ceiling - tolerance:
-            return True
-    if model_name != "patlak":
-        if not np.isfinite(ve) or not 0 < ve <= VE_BOUNDS.max:
-            return True
-    if model_name in ("patlak", "extended_tofts", "2cxm"):
-        if not np.isfinite(vp) or not VP_BOUNDS.min <= vp <= VP_BOUNDS.max:
-            return True
-        if model_name != "patlak" and ve + vp > VP_VE_TOTAL_MAX + 1e-12:
-            return True
-    if model_name == "2cxm":
-        fp = params.get("Fp", 0.0)
-        ps = params.get("PS", 0.0)
-        return fp <= 0 or ps <= 0
-    if model_name == "patlak":
-        return ktrans < 0
-    return ktrans <= 0
 
 
 def _scatter_dce_uncertainties(
