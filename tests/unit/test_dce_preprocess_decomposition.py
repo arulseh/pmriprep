@@ -402,3 +402,34 @@ def test_run_mcflirt_failure_cleans_temporary_reference(
 
     assert plan.reference_file is not None
     assert not Path(plan.reference_file).exists()
+
+
+def test_preprocess_means_preserve_fractional_integer_input(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """A derived mean must not inherit integer storage from the acquisition."""
+    dce_file = tmp_path / "integer_dce.nii.gz"
+    spatial = np.arange(120, dtype=np.int16).reshape(4, 5, 6) * 17
+    temporal = np.array([0, 1, 2, 3, 5, 7], dtype=np.int16)
+    data = spatial[..., None] + temporal
+    nib.save(nib.Nifti1Image(data, np.diag([2., 2., 3., 1.])), dce_file)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(DCEPreprocess, "_detect_bolus_arrival",
+                        lambda self, data, mask: (5, {"confidence": "high"}))
+    interface = DCEPreprocess(
+        in_file=str(dce_file), baseline_frames=5, apply_motion_correction=False,
+        out_file=str(tmp_path / "selected.nii.gz"),
+    )
+    prepared = interface._prepare_preprocess_inputs()
+    original_bytes = dce_file.read_bytes()
+    plan = interface._prepare_mcflirt_plan(prepared)
+    nib.save(nib.Nifti1Image(data + 100, prepared.affine), f"{plan.out_base}.nii.gz")
+    outputs = interface._write_preprocess_outputs(prepared, plan, "motion.par")
+    for path, expected in (
+        (outputs.mean_file, data.mean(axis=3)),
+        (outputs.baseline_mean_file, data[..., :5].mean(axis=3)),
+    ):
+        derived = nib.load(path)
+        assert derived.get_data_dtype() == np.dtype(np.float32)
+        np.testing.assert_array_equal(derived.get_fdata(), expected.astype(np.float32))
+    assert dce_file.read_bytes() == original_bytes

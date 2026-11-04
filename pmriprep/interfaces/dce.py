@@ -3737,12 +3737,14 @@ class DCEPreprocess(SimpleInterface):
 
         series_img = nib.load(series_path)
         series_data = series_img.get_fdata()  # type: ignore[attr-defined]
+        mean_header = series_img.header.copy()
+        mean_header.set_data_dtype(np.float32)  # type: ignore[attr-defined]
         mean_out = self._gen_mean_filename()
         mean_data = np.mean(series_data, axis=3).astype(np.float32)
         mean_nii = nib.Nifti1Image(
             mean_data,
             series_img.affine,  # type: ignore[attr-defined]
-            series_img.header,  # type: ignore[attr-defined]
+            mean_header,
         )
         nib.save(mean_nii, mean_out)
         if not Path(mean_out).exists():
@@ -3755,7 +3757,7 @@ class DCEPreprocess(SimpleInterface):
         baseline_nii = nib.Nifti1Image(
             baseline_data.astype(np.float32),
             series_img.affine,  # type: ignore[attr-defined]
-            series_img.header,  # type: ignore[attr-defined]
+            mean_header,
         )
         nib.save(baseline_nii, baseline_mean_out)
         return _DCEPreprocessOutputs(

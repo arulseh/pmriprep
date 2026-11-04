@@ -1,3 +1,9 @@
+1.0.0rc6.dev1 (2026-11-04)
+==========================
+
+* FIX: Save derived DSC/DCE temporal means and concentration images as
+  float32, preventing integer input headers from quantizing derived values.
+
 1.0.0rc5 (2026-10-20)
 =====================
 

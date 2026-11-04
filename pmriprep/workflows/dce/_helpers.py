@@ -821,6 +821,8 @@ def _signal_to_concentration_node(
 
     # Save concentration file
     out_file = str(Path.cwd() / "dce_concentration.nii.gz")
+    header = header.copy()
+    header.set_data_dtype(np.float32)  # type: ignore[attr-defined]
     conc_img = nib.Nifti1Image(result.concentration.astype(np.float32), affine, header)
     nib.save(conc_img, out_file)
 
@@ -1107,8 +1109,10 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
     mean_vol = np.mean(data[..., :n], axis=3).astype(np.float32)
 
     out_file = str(Path(dce_file).parent / "early_mean.nii.gz")
+    header = img.header.copy()
+    header.set_data_dtype(np.float32)  # type: ignore[attr-defined]
     nib.save(
-        nib.Nifti1Image(mean_vol, img.affine, img.header),  # type: ignore[attr-defined]
+        nib.Nifti1Image(mean_vol, img.affine, header),  # type: ignore[attr-defined]
         out_file,
     )
     return out_file

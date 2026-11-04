@@ -392,6 +392,8 @@ def _signal_to_concentration(
 
     out_dir = Path.cwd()
     conc_file = str(out_dir / f"{base}_concentration.nii.gz")
+    header = header.copy()
+    header.set_data_dtype(np.float32)  # type: ignore[attr-defined]
     conc_img = nib.Nifti1Image(concentration.astype(np.float32), affine, header)  # type: ignore[attr-defined]
     nib.save(conc_img, conc_file)  # type: ignore[attr-defined]
 
@@ -631,8 +633,10 @@ def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
 
     out_dir = Path.cwd()
     out_file = str(out_dir / "dsc_prebolus_mean.nii.gz")
+    header = img.header.copy()
+    header.set_data_dtype(np.float32)  # type: ignore[attr-defined]
     mean_img = nib.Nifti1Image(
-        prebolus_mean.astype(np.float32), img.affine, img.header  # type: ignore[attr-defined]
+        prebolus_mean.astype(np.float32), img.affine, header  # type: ignore[attr-defined]
     )
     nib.save(mean_img, out_file)
 
@@ -665,8 +669,10 @@ def _compute_mean_4d(in_file: str) -> str:
     mean_data = np.mean(data, axis=-1) if data.ndim == 4 else data
 
     out_file = str(Path.cwd() / "dsc_mean.nii.gz")
+    header = img.header.copy()
+    header.set_data_dtype(np.float32)  # type: ignore[attr-defined]
     mean_img = nib.Nifti1Image(
-        mean_data.astype(np.float32), img.affine, img.header  # type: ignore[attr-defined]
+        mean_data.astype(np.float32), img.affine, header  # type: ignore[attr-defined]
     )
     nib.save(mean_img, out_file)
 
