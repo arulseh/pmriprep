@@ -122,13 +122,13 @@ def _invalidate_member(
 
 
 def retry_exchange_fit(
-    context: NativeInput, curve: np.ndarray, initial: ExchangeFit
+    context: NativeInput | DelayedPchip, curve: np.ndarray, initial: ExchangeFit
 ) -> tuple[ExchangeFit, tuple[ExchangeRetry, ...]]:
     """Retry a finite failed fit without changing its delay or observation set.
 
     Parameters
     ----------
-    context : NativeInput
+    context : NativeInput or DelayedPchip
         Fixed-delay plasma input and original observation support.
     curve : ndarray
         Tissue concentration in mM at those observations.

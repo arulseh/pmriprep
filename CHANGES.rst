@@ -1,3 +1,10 @@
+1.0.0rc6.dev17 (2026-11-04)
+===========================
+
+* ENH: Package signed one-frame DCE timing refits with per-parameter
+  availability, raw fit evidence and endpoint-extension counts.
+  Diagnostic output integration remains pending.
+
 1.0.0rc6.dev16 (2026-11-04)
 ===========================
 

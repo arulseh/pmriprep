@@ -257,7 +257,46 @@ def identify_profile_point(
         objective = len(profile.observed) * np.log(np.maximum(sse, 1e-30))
         keep = objective <= objective.min() + 1
         spread = np.max(abs(outputs[keep] - values), axis=0)
-    p = parameters[index].copy()
+    return identify_fixed_point(
+        family, context, parameters[index], float(sse[index]), spread=spread,
+    )
+
+
+def identify_fixed_point(
+    family: ProfileFamily, context: DelayedPchip, params: np.ndarray, sse: float,
+    *, spread: np.ndarray | None = None,
+) -> IdentificationResult:
+    """Evaluate data identification at one fixed, possibly signed, input delay.
+
+    Parameters
+    ----------
+    family : str
+        Selected kinetic family; no model selection is performed.
+    context : DelayedPchip
+        Full input history and original observations at the fixed offset.
+    params : ndarray
+        Physical profile coordinates: Ktrans/ve for Tofts, Ktrans/ve/vp for
+        ET or Patlak (Patlak's ve is absent), Fp/PS/ve/vp for 2CXM.
+    sse : float
+        Unweighted residual sum of squares on these observations.
+    spread : ndarray, optional
+        Own-family excursions in reported-output order. Omit for a purely
+        conditional diagnostic at a prescribed offset; its excursion is zero.
+        Unavailable profile excursions must be supplied as NaN, not omitted.
+
+    Returns
+    -------
+    IdentificationResult
+        The same parameter mapping and numerical screen used for selected fits.
+        A diagnostic's result does not alter central identification or retention.
+    """
+    counts = {"patlak": 3, "tofts": 2, "extended_tofts": 3, "2cxm": 4}
+    p = np.asarray(params, dtype=float).copy()
+    if family not in counts or p.shape != (counts[family],):
+        raise ValueError("Physical profile coordinates for a supported family required.")
+    values = _outputs(family, p)
+    if spread is None:
+        spread = np.zeros_like(values)
     names = PRIMARY_PARAMETERS[family]
     upper = np.array([KTRANS_BOUNDS.max, VE_BOUNDS.max, VP_BOUNDS.max])
     volumes: tuple[int, ...] = () if family in ("patlak", "tofts") else (1, 2)
@@ -279,6 +318,6 @@ def identify_profile_point(
         gradient = np.eye(len(p))
     return evaluate_identification(
         p, upper, volumes, lambda point: evaluate_fixed_kinetics(family, context, point),
-        float(sse[index]), values, gradient, output_upper, spread, joint_outputs,
+        sse, values, gradient, output_upper, spread, joint_outputs,
         names=names, primary=PRIMARY_PARAMETERS[family],
     )
