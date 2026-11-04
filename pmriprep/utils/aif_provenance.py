@@ -104,7 +104,7 @@ def _derive_quality_flag(
 ) -> str:
     """Derive ``QualityFlag`` from source and gate/score quality.
 
-    Unavailable and population sources receive ``poor``. DCE uses its gate-based ``aif_confidence``. DSC uses the
+    Unavailable and population sources receive ``poor``. DCE uses its reported ``aif_confidence``. DSC uses the
     accepted cascade tier, matching the overall QC recommendation and HTML;
     its reported score is a transformed candidate-ranking cost rather than a
     calibrated absolute-quality scale.
@@ -345,6 +345,10 @@ def build_aif_provenance_block(
         confidence = aif_qc.get("aif_confidence")
         if confidence is not None:
             block["Confidence"] = str(confidence)
+        if aif_qc.get("aif_confidence_reason") is not None:
+            block["ConfidenceReason"] = str(aif_qc["aif_confidence_reason"])
+        if aif_qc.get("aif_support_voxels") is not None:
+            block["SupportVoxels"] = int(aif_qc["aif_support_voxels"])
         inflation = aif_qc.get("aif_uncertainty_inflation_factor")
         if inflation is not None:
             block["UncertaintyInflationFactor"] = float(inflation)

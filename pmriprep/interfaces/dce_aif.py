@@ -1666,15 +1666,16 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
         "standard",
         usedefault=True,
         desc="AIF policy confidence: 'standard', 'reduced' or 'low'; "
-             "based on detection source, acceptance gates and venous timing flags.",
+             "based on detection source, spatial support, gates and venous timing flags.",
     )
     aif_uncertainty_inflation_factor = traits.Float(
         1.0,
         usedefault=True,
-        desc="Heuristic AIF-confidence input to per-parameter uncertainty "
-             "scaling: 1.0 for standard confidence, 2.0 for reduced "
-             "confidence, and 3.0 for high-scale gate exceptions or "
-             "population AIF. The downstream policy leaves ve unchanged.",
+        desc="Heuristic input to parameter uncertainty scaling: 1.0 for ordinary "
+             "acceptance, 2.0 for gate exceptions or venous timing flags, and "
+             "3.0 for high-scale gate exceptions or population AIF. "
+             "Single-voxel support lowers qualitative confidence only. "
+             "The downstream policy leaves ve unchanged.",
     )
 
 
@@ -5073,6 +5074,14 @@ class AIFDetection(BaseInterface):
         ):
             qc_metrics["aif_confidence"] = "reduced"
             qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
+
+        # Spatial support changes qualitative confidence, independently of
+        # the numerical uncertainty treatment assigned by the gates above.
+        if detection_method in {"atlas", "whole_brain"} and np.count_nonzero(aif_mask) == 1:
+            if qc_metrics["aif_confidence"] == "standard":
+                qc_metrics["aif_confidence"] = "reduced"
+            qc_metrics["aif_confidence_reason"] = "single_voxel_support"
+            qc_metrics["aif_support_voxels"] = 1
 
         # Amplitude-anchor the Pass-2 fallback AIF to the dose-scaled population
         # target via the shared _apply_aif_scale helper (identical math to the

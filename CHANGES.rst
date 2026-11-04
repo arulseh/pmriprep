@@ -1,3 +1,9 @@
+1.0.0rc6.dev4 (2026-11-04)
+==========================
+
+* FIX: Report reduced confidence and its reason for single-voxel DCE AIFs,
+  preserving the emitted curve, calibration and numerical uncertainty factors.
+
 1.0.0rc6.dev3 (2026-11-04)
 ==========================
 

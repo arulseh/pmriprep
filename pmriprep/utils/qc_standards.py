@@ -680,7 +680,7 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     recommendations: list[QCRecommendation] = []
     enhanced = dict(qc_metrics)
 
-    # AIF quality: recommend from the gate-based aif_confidence, NOT the
+    # AIF quality: recommend from the reported aif_confidence, NOT the
     # report-only fidelity quality_score (systematically compressed ~0.26 for
     # detected AIFs, physics-scoped as not for accept/reject — thresholding it
     # would wrongly recommend EXCLUDE for a normal detected AIF).

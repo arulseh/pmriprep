@@ -408,6 +408,11 @@ def test_dce_aif_cards_follow_qc_hierarchy(env):
     )
     assert "Peak Scaling Trigger" not in rendered
 
+    aif.update(n_aif_voxels_selected=1, aif_status="WARN",
+               aif_confidence_reason="single_voxel_support")
+    rendered = template.render(dce=dce)
+    assert "Reduced confidence: single-voxel AIF" in rendered
+
 
 def test_dce_vfa_motion_warning_renders(env):
     """Potential inter-VFA motion is visible without implying correction."""

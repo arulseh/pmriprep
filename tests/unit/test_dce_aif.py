@@ -2977,6 +2977,7 @@ class TestDetectedAIFEmissionInSitu:
             (3.41, 1.0, 3.41, "substantially below expected range"),
             (5.2, 1.0, 5.2, "substantially below expected range"),
             (5.21, 1.0, 5.21, "Results may be unreliable"),
+            (6.65, 1.0, 6.65, "Results may be unreliable"),
         ],
     )
     def test_pass2_singleton_is_emitted_with_qc(
@@ -3036,8 +3037,20 @@ class TestDetectedAIFEmissionInSitu:
         assert len(scale_warnings) == (0 if warning is None else 1)
         if warning is not None:
             assert warning in scale_warnings[0]
-        assert res["aif_confidence"] == "standard"
+        assert res["aif_confidence"] == "reduced"
+        assert qc["aif_confidence_reason"] == "single_voxel_support"
+        assert qc["aif_support_voxels"] == 1
+        assert qc["aif_status"] == "WARN"
+        assert qc["raw_peak_mm"] == pytest.approx(blood_peak / (1.0 - hematocrit))
+        assert qc["peak_scaling_factor"] == pytest.approx(expected_factor)
         assert qc["aif_uncertainty_inflation_factor"] == 1.0
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        provenance = build_aif_provenance_block(qc, modality="DCE")
+        assert provenance["Confidence"] == "reduced"
+        assert provenance["ConfidenceReason"] == "single_voxel_support"
+        assert provenance["SupportVoxels"] == 1
+        assert provenance["UncertaintyInflationFactor"] == 1.0
         assert res["candidate_count"] == 1
         assert res["qc_metrics"]["n_aif_voxels_selected"] == 1
         assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]

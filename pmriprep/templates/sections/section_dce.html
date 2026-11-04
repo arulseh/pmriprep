@@ -404,6 +404,7 @@
                 <div class="metric-label">AIF Used</div>
                 <div class="metric-value">{{ 'Population' if aif.detection_method == 'population' else ('Supplied' if aif.detection_method == 'external' else 'Measured') }}</div>
                 {% if aif.search_region == 'user_mask' %}<div class="metric-note">Search: supplied mask</div>{% endif %}
+                {% if aif.aif_confidence_reason == 'single_voxel_support' %}<div class="metric-note">Reduced confidence: single-voxel AIF</div>{% endif %}
             </div>
             {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
                if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
