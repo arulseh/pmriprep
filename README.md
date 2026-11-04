@@ -78,8 +78,7 @@ and to FSL BET for DSC/DCE images, while missing HD-GLIO skips tumor
 segmentation.
 
 Runtime depends on image dimensions, time points, enabled pipelines, inference
-method, and available hardware. With default settings, recent validation runs
-using 32 CPU workers completed in approximately 5–15 minutes per session.
+method, and available hardware.
 
 ## Usage
 
@@ -340,7 +339,7 @@ AUC-CBV (`cbv_auc`); each map's sidecar reports its own regional values.
 Normalized CBV (`ncbv`) uses post-baseline tissue concentration integrals.
 DSC uses measured AIFs for deconvolution. If no acceptable AIF is found,
 tissue-based nCBV, PSR, TTP, CNR and tSNR remain available, together with K2
-when BSW correction is applied. AIF-dependent perfusion maps are withheld.
+when BSW correction is applied; AIF-dependent perfusion maps are withheld.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.

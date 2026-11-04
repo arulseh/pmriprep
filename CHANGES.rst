@@ -1,3 +1,58 @@
+1.0.0rc5 (2026-10-20)
+=====================
+
+Numerical changes
+-----------------
+
+* CHG: Use L-curve upper-extremum selection on a 100-point regularization grid
+  for DSC Tikhonov, with a modified first-difference penalty and full-record
+  residue support.
+* CHG: Preserve signed sSVD, oSVD and Tikhonov residues without post-fit
+  clipping. Integrate the full fitted support and report unavailable
+  residue-derived MTT when the signed residue area is nonpositive.
+* FIX: Correct the oSVD convolution matrix's first-sample weighting to match
+  its zero-padding convention.
+* FIX: Preserve the configured population DCE AIF arrival time at coarse
+  temporal resolution instead of resetting it when the sampled peak is low.
+* CHG: Use sourced contrast-agent relaxivities and consistent mmol Gd/kg dose
+  conventions. Require an explicit DCE r1 override for missing or unrecognized
+  agents and field strengths above 5 T.
+* FIX: Correct DSC-derived Bayesian vp-prior qualification and preserve its
+  required QC inputs for fixed Patlak models and cached DSC derivatives.
+* FIX: Use the finalized DSC baseline for CNR/tSNR summaries and the tissue-CNR
+  assessment used by the DCE prior, matching the exported signal-quality maps.
+
+Input and output contracts
+--------------------------
+
+* CHG: Replace synthetic DSC AIF fallback with partial outputs when no
+  acceptable measured AIF is available. Retain tissue-based nCBV, PSR, TTP,
+  CNR and tSNR, plus K2 when BSW correction is applied; withhold AIF-dependent
+  perfusion maps.
+* FIX: Constrain every DSC and DCE AIF search tier to a supplied search mask.
+  Exhausted or empty masks follow the modality-specific fallback and record
+  the reason without searching outside the supplied region.
+* FIX: Reject conflicting DCE time-axis inputs and malformed DSC deconvolution
+  settings. Isolate nonfinite tissue curves so valid neighbouring voxels
+  continue to produce estimates.
+* FIX: Support session-less DSC/DCE workflow construction and partial-output
+  writers, and skip DSC atlas transforms when their required input is absent.
+
+Quality control and maintenance
+-------------------------------
+
+* ENH: Report Tikhonov regularization-selection outcomes, signed-residue
+  diagnostics and unmet oSVD oscillation targets, including CPI fallback.
+  Otherwise valid oSVD results remain available when the target is unmet.
+* FIX: Preserve DSC-informed DCE reporting when DSC derivatives are reused,
+  and record applied uniform B1 corrections in T1 provenance.
+* FIX: Align QC plots, sidecar metadata, generated methods and warnings with
+  the baseline, input sources and processing actually used; correct T1 QC
+  left/right labels.
+* MNT: Consolidate regression coverage, enforce strict expected-failure
+  handling and separate portable synthetic DSC tests from local external-data
+  validation. Remove unused helpers and inactive configuration fields.
+
 1.0.0rc4 (2026-10-09)
 =====================
 
