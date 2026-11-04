@@ -19,6 +19,34 @@ from pmriprep.models.dce.native_exchange import NativeInput
 
 _COUNTS = {"patlak": 2, "tofts": 2, "extended_tofts": 3, "2cxm": 4}
 _PARAMETERS = {"patlak": 3, "tofts": 2, "extended_tofts": 3, "2cxm": 4}
+SelectionMode = Literal["auto", "patlak", "tofts", "extended_tofts", "2cxm"]
+
+
+def profile_families(mode: SelectionMode, frame_interval_seconds: float) -> list[ProfileFamily]:
+    """Return requested families in deterministic model-selection order.
+
+    Parameters
+    ----------
+    mode : str
+        Automatic selection or an explicitly requested family.
+    frame_interval_seconds : float
+        Original acquisition interval used for automatic exchange eligibility.
+
+    Returns
+    -------
+    list of str
+        Families whose conditional profiles must be built.
+    """
+    if not np.isfinite(frame_interval_seconds) or frame_interval_seconds <= 0:
+        raise ValueError("Positive finite original frame interval required.")
+    if mode == "auto":
+        names: list[ProfileFamily] = ["patlak", "extended_tofts"]
+        if frame_interval_seconds <= 2 + 1e-6:
+            names.append("2cxm")
+        return names
+    if mode in _COUNTS:
+        return [mode]
+    raise ValueError(f"Unsupported selection mode: {mode}")
 
 
 @dataclass
@@ -320,7 +348,7 @@ def select_pool(
     times: np.ndarray,
     members: np.ndarray,
     centre: int,
-    mode: Literal["auto", "patlak", "tofts", "extended_tofts", "2cxm"] = "auto",
+    mode: SelectionMode = "auto",
 ) -> LocalSelection:
     """Select one centre's local timing and requested/automatic kinetic family.
 
@@ -355,15 +383,7 @@ def select_pool(
             "Full finite AIF and uniform original acquisition times required."
         )
     dt = float((times[1] - times[0]) * 60)
-    names: list[ProfileFamily]
-    if mode == "auto":
-        names = ["patlak", "extended_tofts"]
-        if dt <= 2 + 1e-6:
-            names.append("2cxm")
-    elif mode in _COUNTS:
-        names = [mode]
-    else:
-        raise ValueError(f"Unsupported selection mode: {mode}")
+    names = profile_families(mode, dt)
     if any(name not in profiles or profiles[name].family != name for name in names):
         raise ValueError("Profiles for every requested/eligible family are required.")
     first = profiles[names[0]]

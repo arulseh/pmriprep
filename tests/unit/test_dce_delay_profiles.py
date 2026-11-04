@@ -5,6 +5,7 @@ import pytest
 
 from pmriprep.models.dce import delay_profiles as profiles
 from pmriprep.models.dce.delayed import DelayedPchip
+from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.models.dce.native_exchange import (
     ExchangeFit,
     NativeInput,
@@ -137,7 +138,7 @@ def test_repairs_follow_sweep_and_never_change_later_seeds(
     np.testing.assert_array_equal(actual.seed_index, [[-1, -1], [0, 0], [1, 1]])
 
 
-def test_retry_keeps_actual_failed_fit_and_does_not_retry_success(
+def test_retry_classifies_nonfinite_result_and_does_not_retry_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     aif, times, curves, observed = _inputs()
@@ -150,12 +151,11 @@ def test_retry_keeps_actual_failed_fit_and_does_not_retry_success(
         return ExchangeFit(initial.params.copy(), np.nan, 1, 5, 0.1)
 
     monkeypatch.setattr(profiles, "fit_native", unusable)
-    best, attempts = profiles.retry_exchange_fit(context, curves[0], initial)
-    assert best is initial and len(attempts) == 2
-    assert all(not a.retained for a in attempts)
+    with pytest.raises(NumericalFitError, match="budget 180: nonfinite"):
+        profiles.retry_exchange_fit(context, curves[0], initial)
     converged = ExchangeFit(initial.params.copy(), initial.sse, 1, 10, 0.1)
     best, attempts = profiles.retry_exchange_fit(context, curves[0], converged)
-    assert best is converged and not attempts and len(calls) == 2
+    assert best is converged and not attempts and len(calls) == 1
 
 
 def test_invalid_profiles_and_native_errors_do_not_become_flat_evidence(
@@ -182,3 +182,72 @@ def test_invalid_profiles_and_native_errors_do_not_become_flat_evidence(
     monkeypatch.setattr(profiles, "fit_native", failed)
     with pytest.raises(RuntimeError, match="delay 0 s, member 0: solver failure"):
         profiles.build_delay_profile(aif, times, curves, "2cxm", observed=observed)
+
+
+def test_local_numerical_failure_invalidates_only_its_family_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pmriprep.models.dce.local_selection import select_pool
+
+    aif, times, curve, observed = _inputs()
+    curves = np.repeat(curve, 3, axis=0)
+    grid = np.array([0.0, 0.1, 0.2])
+    for phase in ("sweep", "retry"):
+        calls = []
+
+        def fit(*args: object, **kwargs: object) -> ExchangeFit:
+            call = len(calls)
+            calls.append(kwargs)
+            if (phase == "sweep" and call == 4) or (phase == "retry" and call == 9):
+                raise NumericalFitError("isolated numerical failure")
+            return ExchangeFit(
+                np.array([60.0, 12.0, 0.3, 0.06]),
+                1.0, 0 if phase == "retry" and call == 4 else 1, 10, 0.01,
+            )
+
+        monkeypatch.setattr(profiles, "fit_native", fit)
+        profile = profiles.build_delay_profile(
+            aif, times, curves, "2cxm", observed=observed, delays_seconds=grid,
+        )
+        assert profile.failures.keys() == {1}
+        failure = profile.failures[1]
+        assert failure.phase == phase and failure.delay_index == 1
+        assert "isolated numerical failure" in failure.reason
+        assert len(calls) == (8 if phase == "sweep" else 10)
+        assert np.isnan(profile.params[:, 1]).all() and np.isnan(profile.sse[:, 1]).all()
+        assert (profile.status[:, 1] == 0).all()
+        assert np.isfinite(profile.params[:, [0, 2]]).all()
+        assert (profile.status[:, [0, 2]] == 1).all()
+        selected = select_pool({"2cxm": profile}, aif, times, np.arange(3), 1, "2cxm")
+        assert selected.family == "2cxm"
+        assert selected.timing["2cxm"].reason == "incomplete_family_profile"
+        assert selected.timing["2cxm"].support == 2
+        healthy = select_pool({"2cxm": profile}, aif, times, np.arange(3), 0, "2cxm")
+        assert healthy.timing["2cxm"].reason is None
+
+
+def test_nonnative_bad_row_cannot_reenter_pooling_at_a_later_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pmriprep.models.dce.profile_fitting import ProfileFit
+
+    aif, times, curve, observed = _inputs()
+    calls = []
+
+    def fit(context: DelayedPchip, y: np.ndarray) -> ProfileFit:
+        calls.append(context.delay)
+        params = np.tile([0.2, np.nan, 0.03], (len(y), 1))
+        sse = np.ones(len(y))
+        if len(calls) == 2:
+            sse[1] = np.nan
+        return ProfileFit(params, sse)
+
+    monkeypatch.setattr(profiles, "fit_patlak", fit)
+    actual = profiles.build_delay_profile(
+        aif, times, np.repeat(curve, 3, axis=0), "patlak", observed=observed,
+        delays_seconds=np.array([0.0, 0.1, 0.2]),
+    )
+    assert actual.failures.keys() == {1}
+    assert np.isnan(actual.sse[:, 1]).all() and (actual.status[:, 1] == 0).all()
+    np.testing.assert_array_equal(actual.sse[:, [0, 2]], np.ones((3, 2)))
+    assert (actual.status[:, [0, 2]] == 1).all()

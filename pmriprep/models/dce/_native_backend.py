@@ -12,6 +12,7 @@ from scipy.linalg import cython_lapack
 from scipy.special import cython_special
 from scipy.optimize import OptimizeResult
 
+from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.utils.dce_constants import (
     EPSILON_FLOW,
     EPSILON_VE_FORWARD,
@@ -390,6 +391,16 @@ def solve(
     -------
     OptimizeResult
         Coordinates, status, counters, objective and optional iteration trace.
+
+    Raises
+    ------
+    NumericalFitError
+        Known numerical failure in this fit, including nonfinite solver output.
+    MemoryError
+        Native workspace allocation failed.
+    RuntimeError
+        Unclassified solver, LAPACK or backend failure; must not be treated as
+        an unavailable voxel.
     """
     x0 = np.ascontiguousarray(x0, dtype=np.float64)
     if (
@@ -420,10 +431,14 @@ def solve(
             pointer(info),
             pointer(record) if trace else None,
         )
+    if code == -11:
+        raise MemoryError("Native TRF allocation failed")
+    if code in (-13, -14, -15):
+        raise NumericalFitError(f"Native TRF numerical error {code}")
     if code:
         raise RuntimeError(f"Native TRF numerical error {code}")
     if not np.isfinite(result).all() or not np.isfinite(info).all():
-        raise RuntimeError("Nonfinite native result")
+        raise NumericalFitError("Nonfinite native result")
     return OptimizeResult(
         x=result,
         status=int(info[0]),

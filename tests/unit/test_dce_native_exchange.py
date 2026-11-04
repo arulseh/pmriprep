@@ -10,6 +10,7 @@ from scipy.integrate import solve_ivp
 from scipy.optimize import least_squares
 
 from pmriprep.models.dce._native_backend import Evaluator, solve, svd
+from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.models.dce.delayed import DelayedPchip
 from pmriprep.models.dce.native_exchange import (
     NativeInput,
@@ -164,6 +165,35 @@ def test_native_svd_uses_installed_lapack_with_correct_layout() -> None:
     for invalid in (np.ones((2, 4)), np.full((8, 4), np.nan)):
         with pytest.raises(ValueError):
             svd(invalid)
+
+
+def test_native_errors_distinguish_local_numerics_from_backend_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pmriprep.models.dce import _native_backend as backend
+
+    context = _context()
+    evaluator = Evaluator(context, np.ones(len(context.t)))
+    for code in (-13, -14, -15, -10, -11, -12, -99):
+        monkeypatch.setattr(backend, "SOLVE", lambda *args, code=code: code)
+        expected = (
+            NumericalFitError if code in (-13, -14, -15)
+            else MemoryError if code == -11 else RuntimeError
+        )
+        with pytest.raises(expected) as caught:
+            solve(evaluator, np.ones(4))
+        assert type(caught.value) is expected
+
+    def nonfinite(*args: object) -> int:
+        for i in range(4):
+            args[9][i] = np.nan
+        for i in range(7):
+            args[10][i] = 0.0
+        return 0
+
+    monkeypatch.setattr(backend, "SOLVE", nonfinite)
+    with pytest.raises(NumericalFitError, match="Nonfinite native result"):
+        solve(evaluator, np.ones(4))
 
 
 @pytest.mark.parametrize("interface", ["hyp1f1", "lapack"])

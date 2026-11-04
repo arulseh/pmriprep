@@ -1,3 +1,13 @@
+1.0.0rc6.dev11 (2026-11-04)
+===========================
+
+* ENH: Assemble complete-slice DCE profiles and local selections through one
+  reusable worker pool with bounded fitting blocks. Preserve full neighborhood
+  support, original frame identity and retry provenance across blocks. Abort
+  unexpected worker failures explicitly. Record classified numerical failures
+  as unavailable voxel/family profiles without discarding their neighbors.
+  Workflow routing remains pending.
+
 1.0.0rc6.dev10 (2026-11-04)
 ===========================
 

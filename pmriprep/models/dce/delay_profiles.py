@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 
 from pmriprep.models.dce.delayed import DelayedPchip
+from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.models.dce.native_exchange import ExchangeFit, NativeInput, fit_native
 from pmriprep.models.dce.profile_fitting import (
     fit_extended_tofts,
@@ -41,6 +42,25 @@ class ExchangeRetry:
 
 
 @dataclass
+class ProfileFailure:
+    """Reason one member's family profile is unavailable for all delays.
+
+    Attributes
+    ----------
+    delay_index : int
+        Point at which the numerical failure occurred.
+    phase : {'sweep', 'retry'}
+        Whether the original sweep or post-sweep retry failed.
+    reason : str
+        Explicit numerical failure, distinct from finite nonconvergence.
+    """
+
+    delay_index: int
+    phase: Literal["sweep", "retry"]
+    reason: str
+
+
+@dataclass
 class DelayProfile:
     """One model's completed conditional fits on a common observation set.
 
@@ -67,8 +87,12 @@ class DelayProfile:
         Original continuation predecessor, or -1 for no continuation. Repairs
         do not alter this array or propagate into later sweep points.
     retries : dict
-        (Delay index, member index) to ordered retry attempts. Unresolved fits
-        retain their own nonpositive status and actual SSE.
+        (Delay index, member index) to completed ordered retry attempts. Finite
+        unconverged fits retain their own nonpositive status and actual SSE.
+    failures : dict
+        Member index to known numerical failure. Affected members have NaN
+        parameters/SSE and status zero at every delay, excluding their family
+        profile from pooling. Other members and families remain available.
     """
 
     family: ProfileFamily
@@ -81,6 +105,19 @@ class DelayProfile:
     optimality: np.ndarray
     seed_index: np.ndarray
     retries: dict[tuple[int, int], tuple[ExchangeRetry, ...]]
+    failures: dict[int, ProfileFailure] = field(default_factory=dict)
+
+
+def _invalidate_member(
+    profile: DelayProfile, member: int, delay: int,
+    phase: Literal["sweep", "retry"], reason: str,
+) -> None:
+    """Record a local numerical failure without making up residual evidence."""
+    profile.failures[member] = ProfileFailure(delay, phase, reason)
+    profile.params[:, member] = np.nan
+    profile.sse[:, member] = np.nan
+    profile.status[:, member] = 0
+    profile.optimality[:, member] = np.nan
 
 
 def retry_exchange_fit(
@@ -110,6 +147,9 @@ def retry_exchange_fit(
     ------
     ValueError
         If the original result has no finite, nonnegative SSE or parameters.
+    NumericalFitError
+        If a retry cannot produce a finite numerical result. The caller must
+        mark this member's family profile unavailable rather than infer flatness.
     """
     if (
         np.shape(initial.params) != (4,)
@@ -123,19 +163,22 @@ def retry_exchange_fit(
     for budget in (180, 720):
         if best.status > 0:
             break
-        candidate = fit_native(
-            context, curve, previous=best.params.copy(), max_nfev=budget
-        )
-        finite = np.isfinite(candidate.sse) and np.isfinite(candidate.params).all()
+        try:
+            candidate = fit_native(
+                context, curve, previous=best.params.copy(), max_nfev=budget
+            )
+        except NumericalFitError as error:
+            raise NumericalFitError(f"Retry budget {budget}: {error}") from error
+        if candidate.sse < 0:
+            raise RuntimeError("Native retry returned a negative residual sum of squares.")
+        if not np.isfinite(candidate.sse) or not np.isfinite(candidate.params).all():
+            raise NumericalFitError(f"Retry budget {budget}: nonfinite native fit result")
         retained = bool(
-            finite
-            and (
-                candidate.sse < best.sse
-                or (
-                    candidate.sse == best.sse
-                    and candidate.status > 0
-                    and best.status <= 0
-                )
+            candidate.sse < best.sse
+            or (
+                candidate.sse == best.sse
+                and candidate.status > 0
+                and best.status <= 0
             )
         )
         attempts.append(ExchangeRetry(budget, best, candidate, retained))
@@ -180,8 +223,9 @@ def build_delay_profile(
     -----
     Callers bound memory by supplying member blocks and schedule parallel work
     outside this function. No pool, model selection, masking or kinetic salvage
-    occurs here. A native numerical exception aborts the block with its point
-    identity; it is never replaced by a fabricated objective or flat profile.
+    occurs here. A classified numerical failure invalidates only that member's
+    family profile, with its reason and point identity. Other exceptions abort
+    the block; none is replaced by a fabricated objective or flat profile.
     """
     parameter_count = {"patlak": 3, "tofts": 2, "extended_tofts": 3, "2cxm": 4}
     if family not in parameter_count:
@@ -230,21 +274,26 @@ def build_delay_profile(
         if family == "2cxm":
             native_context = NativeInput(aif, times, float(delay), indices)
             for member, curve in enumerate(y):
+                if member in profile.failures:
+                    continue
                 seed = profile.params[i - 1, member].copy() if i else None
                 try:
                     result = fit_native(native_context, curve, previous=seed)
+                except NumericalFitError as error:
+                    _invalidate_member(profile, member, i, "sweep", str(error))
+                    continue
                 except RuntimeError as error:
                     raise RuntimeError(
                         f"2CXM profile failed at delay {delay:g} s, member {member}: {error}"
                     ) from error
+                if result.sse < 0:
+                    raise RuntimeError("Native fit returned a negative residual sum of squares.")
                 if (
                     not np.isfinite(result.params).all()
                     or not np.isfinite(result.sse)
-                    or result.sse < 0
                 ):
-                    raise RuntimeError(
-                        f"Nonfinite 2CXM profile at delay {delay:g} s, member {member}."
-                    )
+                    _invalidate_member(profile, member, i, "sweep", "Invalid native fit result")
+                    continue
                 profile.params[i, member] = result.params
                 profile.sse[i, member], profile.status[i, member] = (
                     result.sse,
@@ -263,20 +312,33 @@ def build_delay_profile(
                 else fit_extended_tofts(context, y)
             )
             required = fitted.params[:, [0, 2]] if family == "patlak" else fitted.params
-            if (
-                not np.isfinite(required).all()
-                or not np.isfinite(fitted.sse).all()
-                or np.any(fitted.sse < 0)
-            ):
-                raise RuntimeError(f"Nonfinite {family} profile at delay {delay:g} s.")
+            if np.any(fitted.sse < 0):
+                raise RuntimeError(f"{family} returned a negative residual sum of squares.")
+            invalid = (
+                ~np.isfinite(required).all(axis=1)
+                | ~np.isfinite(fitted.sse)
+            )
             profile.params[i], profile.sse[i], profile.status[i] = (
                 fitted.params,
                 fitted.sse,
                 1,
             )
+            for member in np.flatnonzero(invalid).tolist():
+                if member not in profile.failures:
+                    _invalidate_member(
+                        profile, int(member), i, "sweep", "Invalid profiled fit result"
+                    )
+            # Later batched results cannot restore an already incomplete member.
+            for member in profile.failures:
+                profile.params[i, member] = np.nan
+                profile.sse[i, member] = np.nan
+                profile.status[i, member] = 0
 
     if family == "2cxm":
-        for i, member in np.argwhere(profile.status <= 0):
+        for point in np.argwhere(profile.status <= 0):
+            i, member = int(point[0]), int(point[1])
+            if member in profile.failures:
+                continue
             native_context = NativeInput(aif, times, float(grid[i]), indices)
             initial = ExchangeFit(
                 profile.params[i, member].copy(),
@@ -287,6 +349,9 @@ def build_delay_profile(
             )
             try:
                 best, attempts = retry_exchange_fit(native_context, y[member], initial)
+            except NumericalFitError as error:
+                _invalidate_member(profile, int(member), int(i), "retry", str(error))
+                continue
             except RuntimeError as error:
                 raise RuntimeError(
                     f"2CXM retry failed at delay {grid[i]:g} s, member {member}: {error}"
