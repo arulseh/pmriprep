@@ -1,3 +1,11 @@
+1.0.0rc6.dev10 (2026-11-04)
+===========================
+
+* ENH: Package in-plane local delay references, nested delay selection and
+  capped G1/G2 automatic 2CXM admission. Preserve the Patlak model-selection
+  guard and explicit-model choices. Record report-only delay-boundary flags
+  and upper-edge truncation evidence. Workflow integration remains pending.
+
 1.0.0rc6.dev9 (2026-11-04)
 ==========================
 

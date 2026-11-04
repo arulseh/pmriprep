@@ -16,6 +16,7 @@ from pmriprep.models.dce.profile_fitting import (
 )
 
 ProfileFamily = Literal["patlak", "tofts", "extended_tofts", "2cxm"]
+MAX_LOCAL_DELAY_SECONDS: float = 12.0
 
 
 @dataclass
@@ -186,7 +187,8 @@ def build_delay_profile(
     if family not in parameter_count:
         raise ValueError(f"Unsupported conditional model: {family}")
     grid = np.array(
-        np.arange(121) / 10 if delays_seconds is None else delays_seconds,
+        np.arange(int(round(MAX_LOCAL_DELAY_SECONDS * 10)) + 1) / 10
+        if delays_seconds is None else delays_seconds,
         dtype=float,
         copy=True,
     )
@@ -195,10 +197,12 @@ def build_delay_profile(
         or not len(grid)
         or not np.isfinite(grid).all()
         or grid[0] != 0
-        or grid[-1] > 12
+        or grid[-1] > MAX_LOCAL_DELAY_SECONDS
         or np.any(np.diff(grid) <= 0)
     ):
-        raise ValueError("Delay grid must increase from zero within [0,12] seconds.")
+        raise ValueError(
+            f"Delay grid must increase from zero within [0,{MAX_LOCAL_DELAY_SECONDS:g}] seconds."
+        )
     initial_context = DelayedPchip(aif, times, 0.0, observed)
     indices = initial_context.observed
     if not len(indices) or len(np.unique(indices)) != len(indices):
