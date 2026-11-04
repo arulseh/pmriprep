@@ -60,7 +60,7 @@ def test_routed_slices_preserve_background_missing_values_and_family(
     assert qc["local_fitting_execution"]["peak_slice_profile_bytes"] > 0
     assert qc["local_fitting_execution"]["n_procs"] == 2
     assert qc["two_cxm_auto_sampling_eligible"] is False
-    assert qc["qc_acceptance_policy"]["fit"]["uncertainty_used_for_acceptance"] is False
+    assert qc["qc_acceptance_policy"]["fit"]["uncertainty_used_for_acceptance"] is True
 
 
 def test_rounded_uniform_time_file_can_reach_fitting(tmp_path: Path) -> None:
@@ -95,6 +95,59 @@ def test_conditional_covariance_matches_linear_theory_and_marks_rank_loss() -> N
     derivative, schemes = jacobian(np.array([0.0, 1.0]), np.ones(2), (), lambda p: design @ p)
     assert schemes == ["forward", "backward"]
     np.testing.assert_allclose(derivative, design, atol=1e-8)
+
+
+def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing NLLS evidence fails QC without erasing VI or fallback estimates."""
+    from copy import deepcopy
+    from typing import Any
+    from pmriprep.models.dce import identification, local_refinement
+    from pmriprep.models.dce.delay_profiles import DelayProfile
+    from pmriprep.models.dce.fixed_inference import FixedDelayModel, Refinement
+
+    times = np.arange(40) * 4.76 / 60
+    aif = 4 * np.exp(-((times - .5) / .12)**2)
+    context = DelayedPchip(aif, times)
+    curve = .1 * context.convolution(0) + .04 * context.cp
+    shape = (4, 1, 1)
+    nib.save(nib.Nifti1Image(np.tile(curve, (*shape, 1)), np.eye(4)), tmp_path / "conc.nii.gz")
+    nib.save(nib.Nifti1Image(np.ones(shape), np.eye(4)), tmp_path / "mask.nii.gz")
+    np.savetxt(tmp_path / "aif.txt", aif)
+    original = identification.profile_excursion
+
+    def excursion(profile: DelayProfile, member: int, index: int) -> np.ndarray:
+        result = original(profile, member, index)
+        return result if member != 0 else np.full_like(result, np.nan)
+
+    calls = []
+
+    def refine(model: FixedDelayModel, **kwargs: Any) -> Refinement:
+        fit = deepcopy(model.fit(model.tissue, model.input_aif, model.input_times))
+        calls.append(fit.parameters.copy())
+        # Distinguish reported-fit quality from good identification at its seed.
+        fit.r_squared = -1 if len(calls) == 2 else fit.r_squared
+        fallback = len(calls) == 3
+        return Refinement(fit, "vi", "nlls" if fallback else "vi", model.name, 0, fallback,
+                          "test_numerical_fallback" if fallback else None)
+
+    monkeypatch.setattr(identification, "profile_excursion", excursion)
+    monkeypatch.setattr(local_refinement, "refine_vi", refine)
+    output = ComputeDCEMaps(
+        concentration_file=str(tmp_path / "conc.nii.gz"), brain_mask_file=str(tmp_path / "mask.nii.gz"),
+        aif_file=str(tmp_path / "aif.txt"), volume_tr=4.76, baseline_frames=3,
+        model="patlak", inference="vi", n_procs=1, delay_correction=False,
+    ).run(cwd=str(tmp_path)).outputs
+    np.testing.assert_array_equal(nib.load(output.out_qc_mask).get_fdata().ravel(), [0, 0, 1, 1])
+    np.testing.assert_array_equal(nib.load(output.out_retained_nondegenerate_mask).get_fdata(), 1)
+    np.testing.assert_allclose(nib.load(output.out_ktrans).get_fdata(), .1, rtol=1e-6)
+    qc = output.qc_metrics
+    evidence = qc["identification_qc"]["by_model"]["patlak"]
+    assert evidence["evaluated"] == 4 and evidence["primary_pass"] == 3
+    assert evidence["parameters"]["Ktrans"]["failures"] == {"output_unavailable": 1}
+    assert qc["inference_fallback_reasons"] == {"test_numerical_fallback": 1}
+    assert qc["qc_acceptance_policy"]["identification"]["basis"] == "selected_nlls"
 
 
 def test_memory_reservation_accounts_for_grid_families_and_workers(tmp_path: Path) -> None:

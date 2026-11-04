@@ -79,6 +79,7 @@ def test_kep_range_directly_gates_qc_mask(
         kep=np.array([params["kep"]]),
         model_selection=np.array([1]), model_selection_codes={name: 1},
         is_auto=False, model_name=name,
+        identification_pass=np.ones_like(np.array([True]), dtype=bool),
     )
     assert bool(result[0]) is accepted
     assert np.isfinite(params["kep"])

@@ -74,6 +74,9 @@ class TestEnrichDCE:
                     "counts_are_overlapping": True,
                     "r_squared": 12,
                 },
+                "identification_qc": {
+                    "basis": "selected_nlls", "by_model": {"extended_tofts": {"evaluated": 98}},
+                },
                 "r2_median": 0.87,
                 "qc_voxel_rsquared": 0.95,
             },
@@ -118,6 +121,7 @@ class TestEnrichDCE:
         assert "PKModeling" in perf
         assert perf["PKModeling"]["model"] == "extended_tofts"
         assert perf["PKModeling"]["inference"] == "vi"
+        assert perf["PKModeling"]["IdentificationQC"] == qc["pk_modeling"]["identification_qc"]
         assert (
             perf["PKModeling"]["VoxelAccounting"]["optimizer_converged"][
                 "fraction_of_attempted"

@@ -22,6 +22,50 @@ PRIMARY_PARAMETERS: dict[ProfileFamily, tuple[str, ...]] = {
 }
 
 
+def identification_policy() -> dict[str, object]:
+    """Describe the binary-mask identification rule for derivative sidecars.
+
+    Returns
+    -------
+    dict
+        Selected-NLLS basis, numerical conventions and interpretation limits.
+        Individual Fp/PS warnings remain separate from the primary conjunction.
+    """
+    return {
+        "basis": "selected_nlls",
+        "description": (
+            "QC combines fit-quality checks on the reported estimate with "
+            "data-identification checks evaluated at the corresponding NLLS fit. "
+            "VI posterior uncertainty is reported separately and is not used "
+            "for identification screening."
+        ),
+        "primary_parameters": {name: list(parameters) for name, parameters in PRIMARY_PARAMETERS.items()},
+        "individual_fp_ps_required": False,
+        "effective_uncertainty": "sqrt(conditional_SE^2 + profile_excursion^2)",
+        "maximum_effective_relative_uncertainty_inclusive": 0.5,
+        "profile_excursion": "maximum own-family departure from selected value over Q <= min(Q) + 1",
+        "profile_objective": "n * log(max(SSE, 1e-30)); n is the number of observed frames",
+        "covariance": "SSE/(n-k) times inverse full kinetic information; conditional on AIF, family and delay",
+        "minimum_information_rcond_inclusive": 1e-10,
+        "maximum_half_step_se_relative_change_inclusive": 1e-3,
+        "box_bound_exclusion": "endpoints or distance < 2 SE; lower and upper reasons separate",
+        "overlapping_reasons": (
+            "For positive estimates with finite SE and a zero lower bound, "
+            "value < 2 SE and SE > 50% of value are equivalent. Thus "
+            "lower_box_bound and relative_uncertainty can describe the same "
+            "failure and must not be added. lower_box_bound includes a "
+            "precision margin; it does not imply optimizer contact with the bound."
+        ),
+        "joint_volume_exclusion": "slack <= 2 SE, using full covariance",
+        "missing_evidence": "fails identification; never treated as zero uncertainty",
+        "interpretation": (
+            "Screening convention, not an accuracy guarantee or certification of Fp/PS or model adequacy. "
+            "Expected near-zero values can fail; QC-filtered low-permeability summaries may be biased upward. "
+            "Quantitative maps and retention are unchanged by this screen."
+        ),
+    }
+
+
 @dataclass
 class IdentificationResult:
     """NLLS identification evidence, independent of retention and fit-quality QC.
@@ -239,11 +283,35 @@ def identify_profile_point(
     also requires fit-quality checks on the reported estimate; this function
     does not apply those checks, replace estimates or change model admission.
     """
+    spread = profile_excursion(profile, member, index)
+    context = DelayedPchip(aif, times, float(profile.delays_seconds[index]), profile.observed)
+    return identify_fixed_point(
+        profile.family, context, profile.params[index, member],
+        float(profile.sse[index, member]), spread=spread,
+    )
+
+
+def profile_excursion(profile: DelayProfile, member: int, index: int) -> np.ndarray:
+    """Extract compact own-family identification evidence before slice release.
+
+    Parameters
+    ----------
+    profile : DelayProfile
+        Conditional family profiles on common original observations.
+    member, index : int
+        Voxel and selected delay indices.
+
+    Returns
+    -------
+    ndarray
+        Maximum output departure within one Q unit of this voxel's profile
+        minimum, in reported-output order. Missing evidence is NaN. Only this
+        vector, not the whole slice profile, needs transport to a worker.
+    """
     validate_profile(profile)
     if not 0 <= member < profile.sse.shape[1] or not 0 <= index < len(profile.delays_seconds):
         raise ValueError("Existing member and selected delay indices required.")
     family = profile.family
-    context = DelayedPchip(aif, times, float(profile.delays_seconds[index]), profile.observed)
     parameters = profile.params[:, member]
     outputs = _outputs(family, parameters)
     values = outputs[index]
@@ -257,9 +325,7 @@ def identify_profile_point(
         objective = len(profile.observed) * np.log(np.maximum(sse, 1e-30))
         keep = objective <= objective.min() + 1
         spread = np.max(abs(outputs[keep] - values), axis=0)
-    return identify_fixed_point(
-        family, context, parameters[index], float(sse[index]), spread=spread,
-    )
+    return np.asarray(spread)
 
 
 def identify_fixed_point(

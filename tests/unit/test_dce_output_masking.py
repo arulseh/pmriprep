@@ -67,6 +67,7 @@ def test_build_dce_qc_mask_preserves_parameter_thresholds() -> None:
         False,
         "tofts",
         tsnr_threshold=10.0,
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
     assert mask.tolist() == [[[1, 0, 0, 1]]]
     assert mask.dtype == np.uint8
@@ -90,6 +91,7 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
         {"patlak": 1},
         True,
         "auto",
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
     assert mask.tolist() == [[[1, 0]]]
 
@@ -112,6 +114,7 @@ def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
         {"patlak": 1},
         False,
         "extended_tofts",
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
 
     assert evaluation.mask.tolist() == [[[1]]]
@@ -138,6 +141,7 @@ def test_build_dce_qc_mask_uses_uniform_positive_r_squared_threshold() -> None:
         {"patlak": 1, "extended_tofts": 3},
         True,
         "auto",
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
     assert mask.tolist() == [[[0, 0, 1, 1, 0, 0]]]
 
@@ -147,6 +151,7 @@ def test_build_dce_qc_mask_applies_strict_threshold_in_fixed_mode() -> None:
     shape = (1, 1, 2)
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
+        "identification_pass": np.ones(shape, dtype=bool),
         "optimizer_converged": np.ones(shape, dtype=bool),
         "retained_nondegenerate": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
@@ -183,6 +188,7 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
         {"patlak": 1},
         True,
         "auto",
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
     assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] is None
     assert evaluation.acceptance_policy["fit"][
@@ -190,7 +196,7 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
     ] == 0.0
     assert evaluation.acceptance_policy["fit"][
         "uncertainty_used_for_acceptance"
-    ] is False
+    ] is True
 
 
 @pytest.mark.parametrize(
@@ -230,6 +236,7 @@ def test_dce_qc_volume_checks_reject_only_numerical_endpoint_contact(
         model_selection_codes={},
         is_auto=False,
         model_name=model_name,
+        identification_pass=np.ones_like(np.array([True]), dtype=bool),
     )
     assert bool(result[0]) is accepted
 
@@ -255,6 +262,7 @@ def test_dce_qc_kep_range_has_inclusive_upper_threshold(
         model_selection_codes={},
         is_auto=False,
         model_name="extended_tofts",
+        identification_pass=np.ones_like(np.array([True]), dtype=bool),
     )
     assert bool(result[0]) is accepted
 
@@ -278,6 +286,7 @@ def test_dce_qc_mask_uses_configured_tsnr_threshold() -> None:
         False,
         "extended_tofts",
         tsnr_threshold=12.0,
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
 
     assert evaluation.mask.tolist() == [[[0, 1]]]
@@ -304,6 +313,7 @@ def test_default_zero_tsnr_threshold_is_diagnostic_only() -> None:
         False,
         "extended_tofts",
         tsnr_threshold=0.0,
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
 
     assert evaluation.mask.tolist() == [[[1]]]
@@ -316,6 +326,7 @@ def test_build_dce_qc_mask_rejects_fit_stage_and_parameter_failures() -> None:
     shape = (1, 1, 4)
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
+        "identification_pass": np.ones(shape, dtype=bool),
         "optimizer_converged": np.array([[[True, False, True, True]]]),
         "retained_nondegenerate": np.array([[[True, True, False, True]]]),
         "tsnr": np.full(shape, 20.0),
@@ -339,6 +350,7 @@ def test_build_dce_qc_mask_requires_finite_kep_for_reversible_model() -> None:
     shape = (1, 1, 1)
     arguments = {
         "fitting_mask": np.ones(shape, dtype=bool),
+        "identification_pass": np.ones(shape, dtype=bool),
         "optimizer_converged": np.ones(shape, dtype=bool),
         "retained_nondegenerate": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
@@ -383,6 +395,7 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
         False,
         "extended_tofts",
         tsnr_threshold=10.0,
+        identification_pass=np.ones_like(np.ones(shape, dtype=bool), dtype=bool),
     )
     assert evaluation.mask.tolist() == [[[0, 1, 0]]]
     assert evaluation.component_failures == {
@@ -393,6 +406,7 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
         "r_squared": 1,
         "volume_interior": 0,
         "kep_range": 0,
+        "primary_identification": 0,
     }
 
 
@@ -558,6 +572,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         kep=np.full(shape, 0.01),
         optimizer_converged=np.ones(shape, dtype=bool),
         retained_nondegenerate=np.ones(shape, dtype=bool),
+        primary_identification=np.ones(shape, dtype=bool),
         model_selection=np.ones(shape, dtype=np.int8),
         model_selection_codes={"patlak": 1},
         delta_bic=values,
@@ -606,6 +621,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         "r_squared": 0,
         "volume_interior": 0,
         "kep_range": 0,
+        "primary_identification": 0,
     }
     if is_auto:
         assert next(dtype for path, dtype in writes if "modelSelection" in path) is np.int8

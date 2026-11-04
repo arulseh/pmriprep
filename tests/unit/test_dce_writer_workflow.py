@@ -265,6 +265,7 @@ def test_uncertainty_sidecar_records_collected_qc(
     """Collected fitting QC reaches uncertainty sidecars through the writer."""
     from pmriprep.workflows.dce._helpers import _collect_qc_metrics
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+    from pmriprep.models.dce.identification import identification_policy
 
     bids, src = minimal_bids
     out = tmp_path / "out"
@@ -274,15 +275,19 @@ def test_uncertainty_sidecar_records_collected_qc(
         subject_id="01",
         session_id="0001",
         pk_model="tofts", inference=inference,
-        present_inputs={"ktrans_uncertainty"},
+        present_inputs={"ktrans_uncertainty", "qc_mask"},
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
     inp.ktrans_uncertainty = _write_nii(tmp_path / "k_std.nii.gz")
+    inp.qc_mask = _write_nii(tmp_path / "qc.nii.gz", 1)
+    inp.provenance_dict = {"PerfusionProcessing": {"PKModeling": {"model": "tofts"}}}
     inp.config_dict = {"inference": inference}
     fit_qc = {
+        "qc_acceptance_policy": {"identification": identification_policy()},
+        "identification_qc": {"basis": "selected_nlls", "by_model": {"tofts": {"evaluated": 10}}},
         "parameter_uncertainty": {
             "aif_inflation_input_factor": 2.0,
             "aif_parameter_scale_factors": {"Ktrans": 1.5, "ve": 1.0},
@@ -302,6 +307,12 @@ def test_uncertainty_sidecar_records_collected_qc(
         aif_qc=None, pk_qc=fit_qc, validation_result=None,
     )
     wf.run()
+
+    qc_sidecar = next((out / "pmriprep").rglob("*desc-dceQc_mask.json"))
+    qc_meta = json.loads(qc_sidecar.read_text())
+    assert identification_policy()["description"] in qc_meta["Description"]
+    assert qc_meta["PerfusionProcessing"]["PKModeling"]["QCAcceptancePolicy"] == fit_qc["qc_acceptance_policy"]
+    assert qc_meta["PerfusionProcessing"]["PKModeling"]["IdentificationQC"] == fit_qc["identification_qc"]
 
     desc = "dceStandardErrorKtrans" if inference == "nlls" else "dcePosteriorSDKtrans"
     sidecar = next(

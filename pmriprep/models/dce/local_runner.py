@@ -18,8 +18,7 @@ from pmriprep.models.dce.delay_profiles import (
     build_delay_profile,
 )
 from pmriprep.models.dce.delayed import DelayedPchip
-from pmriprep.models.dce.fixed_inference import Refinement
-from pmriprep.models.dce.local_refinement import ConditionalInput, finish_conditional
+from pmriprep.models.dce.local_refinement import ConditionalInput, ConditionalResult, finish_conditional
 from pmriprep.models.dce.local_selection import (
     LocalSelection,
     SelectionMode,
@@ -289,8 +288,8 @@ class LocalDelayRunner:
             if next_start is not None:
                 pending.append((next_start, self._executor.submit(_fit_profile_block, block(next_start))))
 
-    def refine_selected(self, inputs: list[ConditionalInput]) -> list[Refinement]:
-        """Reuse the same bounded pool for uncertainty and fixed-delay inference.
+    def refine_selected(self, inputs: list[ConditionalInput]) -> list[ConditionalResult]:
+        """Reuse the bounded pool for NLLS identification and fixed-delay inference.
 
         Parameters
         ----------
@@ -299,15 +298,15 @@ class LocalDelayRunner:
 
         Returns
         -------
-        list of Refinement
+        list of ConditionalResult
             Conditional results in the same order. No new model/delay search or
             process pool is created, and unexpected failures abort owned workers.
         """
         if not self._active:
             raise RuntimeError("Use an active LocalDelayRunner context.")
         starts = iter(range(0, len(inputs), self.chunk_size))
-        results: list[Refinement] = []
-        pending: deque[Future[list[Refinement]]] = deque()
+        results: list[ConditionalResult] = []
+        pending: deque[Future[list[ConditionalResult]]] = deque()
         try:
             if self._executor is None:
                 for serial_start in starts:

@@ -1,6 +1,7 @@
 """Fixed-input VI reuse, model identity and same-delay fallback."""
 
 from copy import deepcopy
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -12,6 +13,8 @@ from pmriprep.models.dce.delay_profiles import ProfileFamily, build_delay_profil
 from pmriprep.models.dce.delayed import DelayedPchip
 from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.models.dce.local_selection import family_timing
+from pmriprep.models.dce.local_refinement import ConditionalInput, finish_conditional
+from pmriprep.models.dce.identification import identify_fixed_point
 from pmriprep.models.dce.native_exchange import predict
 from pmriprep.models.dce.profile_fitting import tofts_predict
 
@@ -48,7 +51,21 @@ def _model(family: ProfileFamily) -> inference.FixedDelayModel:
 def test_actual_vi_keeps_selected_family_delay_and_full_history(family: ProfileFamily) -> None:
     model = _model(family)
     seed = model.fit(model.tissue, model.input_aif, model.input_times)
-    result = inference.refine_vi(model)
+    item = ConditionalInput(
+        family, model.context.aif, np.arange(65) / 30, model.context.observed,
+        model.tissue, 2, seed, "nlls",
+        np.zeros(5 if family == "2cxm" else model.n_parameters), seed.residual_sum_squares,
+    )
+    nlls, vi = finish_conditional([item, replace(item, inference="vi")])
+    result = vi.refinement
+    params = np.array(model.dict_to_params(seed.parameters))
+    if family == "patlak":
+        params = np.array([params[0], np.nan, params[1]])
+    expected = identify_fixed_point(family, model.context, params, seed.residual_sum_squares)
+    for conditional in (nlls, vi):
+        np.testing.assert_array_equal(conditional.identification.effective, expected.effective)
+        assert conditional.identification.reasons == expected.reasons
+    assert nlls.refinement.fit.parameters == seed.parameters
     assert result.family == family and result.delay == 2
     assert result.actual_engine == "vi" and not result.fallback
     assert result.fit.converged and result.fit.uncertainties

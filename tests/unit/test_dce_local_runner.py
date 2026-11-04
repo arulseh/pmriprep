@@ -14,6 +14,7 @@ from pmriprep.models.dce.local_selection import select_pool
 from pmriprep.models.dce.native_exchange import ExchangeFit
 from pmriprep.models.dce.fixed_inference import selected_fit_result
 from pmriprep.models.dce.local_refinement import ConditionalInput
+from pmriprep.models.dce.identification import identify_profile_point, profile_excursion
 
 
 def _data() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -97,13 +98,24 @@ def test_chunk_boundaries_and_reused_pool_do_not_change_slice_results() -> None:
                         family, aif, times, observed, curves[i],
                         float(profile.delays_seconds[timing.index]), seed,
                         "vi" if i % 2 else "nlls",
+                        profile_excursion(profile, i, timing.index),
+                        float(profile.sse[timing.index, i]),
                     ))
                 final = engine.refine_selected(selected)
+                for i, item in enumerate(final):
+                    choice = result.selections[i]
+                    expected = identify_profile_point(
+                        result.profiles[choice.family], i, choice.timing[choice.family].index, aif, times,
+                    )
+                    np.testing.assert_array_equal(item.identification.effective, expected.effective)
+                    assert item.identification.reasons == expected.reasons
                 assert engine._executor is pool
                 if processes == 1:
                     serial_refinements[z] = final
                 else:
                     for first, second in zip(serial_refinements[z], final, strict=True):
+                        np.testing.assert_array_equal(first.identification.effective, second.identification.effective)
+                        first, second = first.refinement, second.refinement
                         assert first.fit.parameters == second.fit.parameters
                         assert first.actual_engine == second.actual_engine
                         assert first.fallback == second.fallback

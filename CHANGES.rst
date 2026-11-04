@@ -1,3 +1,11 @@
+1.0.0rc6.dev18 (2026-11-04)
+===========================
+
+* CHG: Combine reported-fit quality with selected-NLLS primary-parameter
+  identification in the DCE binary QC mask, including VI runs. Preserve fitted
+  maps and retention; record the screening policy and parameter-level failure
+  counts in derivative provenance.
+
 1.0.0rc6.dev17 (2026-11-04)
 ===========================
 

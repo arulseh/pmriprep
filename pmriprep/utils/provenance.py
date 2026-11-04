@@ -406,6 +406,8 @@ def _enrich_dce(
             pk_block["QCAcceptancePolicy"] = dict(pk["qc_acceptance_policy"])
         if isinstance(pk.get("qc_component_failures"), dict):
             pk_block["QCComponentFailures"] = dict(pk["qc_component_failures"])
+        if isinstance(pk.get("identification_qc"), dict):
+            pk_block["IdentificationQC"] = dict(pk["identification_qc"])
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
         if "qc_voxel_rsquared" in pk:

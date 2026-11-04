@@ -1726,10 +1726,13 @@ def init_dce_datasinks_wf(
             name="qc_mask", in_attr="qc_mask",
             desc_value="dceQc", suffix="",
             description=(
-                "DCE fit-quality mask (1=passes all recorded fit-review "
-                "criteria, 0=otherwise); quantitative derivatives remain "
-                "uncensored, and regional summaries include explicitly "
-                "labelled passing-voxel companions"
+                "DCE binary QC mask (1=passes, 0=otherwise). QC combines "
+                "fit-quality checks on the reported estimate with "
+                "data-identification checks evaluated at the corresponding "
+                "NLLS fit. VI posterior uncertainty is reported separately "
+                "and is not used for identification screening. Quantitative "
+                "derivatives remain uncensored; regional summaries include "
+                "labelled passing-voxel companions."
             ),
             units=None, extra={"Type": "ROI"},
             bids_suffix="mask",

@@ -500,8 +500,9 @@ def _build_dce_qc_mask(
     is_auto: bool,
     model_name: str,
     tsnr_threshold: float = 0.0,
+    *, identification_pass: npt.NDArray[np.bool_],
 ) -> npt.NDArray[np.uint8]:
-    """Build the fit-quality acceptance mask."""
+    """Combine reported-fit quality with selected-NLLS identification."""
     return _evaluate_dce_qc_mask(
         fitting_mask,
         optimizer_converged,
@@ -518,6 +519,7 @@ def _build_dce_qc_mask(
         is_auto,
         model_name,
         tsnr_threshold,
+        identification_pass=identification_pass,
     ).mask
 
 
@@ -545,8 +547,13 @@ def _evaluate_dce_qc_mask(
     is_auto: bool,
     model_name: str,
     tsnr_threshold: float = 0.0,
+    *, identification_pass: npt.NDArray[np.bool_],
 ) -> _DCEQCMaskEvaluation:
-    """Evaluate acquisition and model-aware fit acceptance."""
+    """Conjoin reported-fit quality and the corresponding NLLS identification."""
+    from pmriprep.models.dce.identification import identification_policy
+
+    if identification_pass.shape != fitting_mask.shape or identification_pass.dtype != np.bool_:
+        raise ValueError("Identification must be a boolean volume matching the fitting mask.")
     tsnr_ok = (
         tsnr >= tsnr_threshold
         if signal_qc_available and tsnr_threshold > 0
@@ -613,6 +620,7 @@ def _evaluate_dce_qc_mask(
         "r_squared": r_squared_ok,
         "volume_interior": volume_ok,
         "kep_range": kep_ok,
+        "primary_identification": identification_pass,
     }
     qc_mask = fitting_mask.copy()
     for component in components.values():
@@ -635,7 +643,7 @@ def _evaluate_dce_qc_mask(
             "requires_retained_nondegenerate_fit": True,
             "ktrans_minimum_per_min_exclusive": 0.0,
             "ktrans_maximum_per_min_exclusive": KTRANS_BOUNDS.max,
-            "uncertainty_used_for_acceptance": False,
+            "uncertainty_used_for_acceptance": True,
             "volume_endpoint_absolute_tolerance": _VOLUME_QC_ENDPOINT_ATOL,
             "model_specific_volume_checks": {
                 "patlak": {
@@ -669,6 +677,7 @@ def _evaluate_dce_qc_mask(
             "reversible_model_kep_maximum_per_min_inclusive": KEP_BOUNDS.max,
         },
     }
+    policy["identification"] = identification_policy()
     result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
     return _DCEQCMaskEvaluation(result, failures, policy)
 
@@ -851,6 +860,7 @@ def _write_dce_terminal_outputs(
         is_auto,
         model_name,
         tsnr_threshold,
+        identification_pass=maps.primary_identification,
     )
     qc_mask = qc_evaluation.mask
     if qc_metrics is not None:
@@ -1066,6 +1076,7 @@ class _DCEParameterMaps(NamedTuple):
     extraction_fraction: npt.NDArray[Any]
     optimizer_converged: npt.NDArray[Any]
     retained_nondegenerate: npt.NDArray[Any]
+    primary_identification: npt.NDArray[np.bool_]
     model_selection: npt.NDArray[Any]
     model_selection_codes: dict[str, int]
     delta_bic: npt.NDArray[Any]
@@ -1323,7 +1334,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     # QC outputs
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
-    out_qc_mask = File(desc="QC mask (1=good fit, 0=unfitted/poor)")
+    out_qc_mask = File(desc="Binary QC: reported-fit quality AND selected-NLLS primary identification")
     out_fitting_mask = File(desc="Internal fitting-eligibility mask")
     out_optimizer_converged_mask = File(
         desc="Internal optimizer-convergence mask"
@@ -2143,6 +2154,7 @@ class ComputeDCEMaps(BaseInterface):
             ),
             optimizer_converged=np.zeros(spatial_shape, dtype=bool),
             retained_nondegenerate=np.zeros(spatial_shape, dtype=bool),
+            primary_identification=np.zeros(spatial_shape, dtype=bool),
             model_selection=np.zeros(spatial_shape, dtype=np.int8),
             model_selection_codes=model_selection_codes,
             delta_bic=np.full(spatial_shape, np.nan, dtype=np.float32),
@@ -2182,6 +2194,7 @@ class ComputeDCEMaps(BaseInterface):
         from collections import Counter
         from pmriprep.models.dce.delay_profiles import MAX_LOCAL_DELAY_SECONDS
         from pmriprep.models.dce.fixed_inference import selected_fit_result
+        from pmriprep.models.dce.identification import profile_excursion
         from pmriprep.models.dce.local_refinement import ConditionalInput
         from pmriprep.models.dce.local_runner import LocalDelayRunner
         from pmriprep.models.dce.local_selection import SelectionMode
@@ -2191,6 +2204,8 @@ class ComputeDCEMaps(BaseInterface):
         fallbacks: Counter[str] = Counter()
         timing_counts: Counter[str] = Counter()
         failure_counts: Counter[str] = Counter()
+        identification_counts: dict[str, dict[str, Any]] = {}
+        identification_worker_seconds = refinement_worker_seconds = 0.0
         max_profile_bytes = 0
         start = time.monotonic()
         n_procs = max(1, int(self.inputs.n_procs))
@@ -2268,12 +2283,28 @@ class ComputeDCEMaps(BaseInterface):
                     inputs.append(ConditionalInput(
                         family, prepared.aif, fit_times, profile.observed,
                         curves[member], float(profile.delays_seconds[timing.index]), seed,
-                        engine, prior, constraint.vp_uncertainty, sloppy,
+                        engine, profile_excursion(profile, member, timing.index),
+                        float(profile.sse[timing.index, member]),
+                        prior, constraint.vp_uncertainty, sloppy,
                     ))
                     refined_members.append(member)
                 refinements = runner.refine_selected(inputs)
-                for member, refined in zip(refined_members, refinements, strict=True):
+                for member, conditional in zip(refined_members, refinements, strict=True):
+                    refined, identification = conditional.refinement, conditional.identification
+                    identification_worker_seconds += conditional.identification_seconds
+                    refinement_worker_seconds += conditional.refinement_seconds
                     result = results[member]
+                    maps.primary_identification[tuple(result["coords"])] = identification.primary_pass
+                    counts = identification_counts.setdefault(refined.family, {
+                        "evaluated": 0, "primary_pass": 0, "parameters": {},
+                    })
+                    counts["evaluated"] += 1
+                    counts["primary_pass"] += int(identification.primary_pass)
+                    for parameter, reasons in zip(identification.names, identification.reasons, strict=True):
+                        record = counts["parameters"].setdefault(parameter, {"passed": 0, "failures": {}})
+                        record["passed"] += int(not reasons)
+                        for reason in reasons:
+                            record["failures"][reason] = record["failures"].get(reason, 0) + 1
                     fit = refined.fit
                     result.update(
                         params=fit.parameters, r_squared=fit.r_squared,
@@ -2299,19 +2330,29 @@ class ComputeDCEMaps(BaseInterface):
             family_numerical_failures=dict(failure_counts),
         )
         qc["inference_fallback_reasons"] = dict(fallbacks)
+        qc["identification_qc"] = {
+            "basis": "selected_nlls",
+            "scope": "selected_nondegenerate_nlls_fits_before_vi",
+            "denominator": "evaluated count within each model; parameter failure counts overlap",
+            "unevaluated_primary_pass": False,
+            "by_model": identification_counts,
+        }
         qc["local_fitting_execution"] = dict(
             n_procs=n_procs, chunk_size=128, peak_slice_profile_bytes=max_profile_bytes,
             elapsed_seconds=time.monotonic() - start,
-            includes="profiles, selection, conditional uncertainty, VI and scattering",
+            includes="profiles, selection, NLLS identification, conditional uncertainty, VI and scattering",
+            identification_worker_seconds=identification_worker_seconds,
+            refinement_worker_seconds=refinement_worker_seconds,
+            worker_timing_basis="summed worker elapsed seconds, not parallel wall time",
         )
         combined: dict[str, Any] = {}
         for field in _DCEFitSummary._fields:
             values = [getattr(s, field) for s in summaries]
             if field == "failure_reasons":
-                counts: Counter[str] = Counter()
+                combined_counts: Counter[str] = Counter()
                 for value in values:
-                    counts.update(value)
-                combined[field] = dict(counts)
+                    combined_counts.update(value)
+                combined[field] = dict(combined_counts)
             elif field in ("r2_values", "vp_prior_departures"):
                 combined[field] = [item for value in values for item in value]
             else:
