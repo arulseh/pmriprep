@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 REQUIRED_PACKAGE_FILES = {
+    "pmriprep/models/dce/identification.py",
     "pmriprep/models/dce/cached_input.py",
     "pmriprep/models/dce/native_exchange.py",
     "pmriprep/models/dce/_native_backend.py",

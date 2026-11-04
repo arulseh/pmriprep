@@ -178,8 +178,20 @@ def in_plane_neighborhoods(
     return radius, [np.asarray(members, dtype=np.intp) for members in neighbors]
 
 
-def _validate_profile(profile: DelayProfile) -> None:
-    """Require aligned family arrays and unique common observation identity."""
+def validate_profile(profile: DelayProfile) -> None:
+    """Require aligned family arrays and unique common observation identity.
+
+    Parameters
+    ----------
+    profile : DelayProfile
+        Family profile consumed by selection or identification calculations.
+
+    Raises
+    ------
+    ValueError
+        If array geometry, observation indices or the delay grid are invalid.
+        Numerical availability of individual members is assessed separately.
+    """
     grid, observed = profile.delays_seconds, profile.observed
     if (
         profile.family not in _COUNTS
@@ -231,7 +243,7 @@ def family_timing(
     """
     if not np.isfinite(frame_interval_seconds) or frame_interval_seconds <= 0:
         raise ValueError("Positive finite original frame interval required.")
-    _validate_profile(profile)
+    validate_profile(profile)
     members = np.asarray(members)
     if (
         members.ndim != 1
@@ -389,7 +401,7 @@ def select_pool(
     first = profiles[names[0]]
     for name in names:
         profile = profiles[name]
-        _validate_profile(profile)
+        validate_profile(profile)
         if (
             not np.array_equal(profile.observed, first.observed)
             or not np.array_equal(profile.delays_seconds, first.delays_seconds)

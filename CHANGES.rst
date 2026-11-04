@@ -1,3 +1,10 @@
+1.0.0rc6.dev15 (2026-11-04)
+===========================
+
+* ENH: Package primary-parameter DCE identification from conditional NLLS
+  covariance and delay profiles, with per-parameter failure reasons.
+  Binary-mask and report integration remain pending.
+
 1.0.0rc6.dev14 (2026-11-04)
 ===========================
 

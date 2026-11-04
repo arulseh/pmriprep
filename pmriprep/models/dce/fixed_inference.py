@@ -30,8 +30,24 @@ _MODELS: dict[ProfileFamily, Callable[[], PKModel]] = {
 }
 
 
-def _evaluate(family: str, context: DelayedPchip, params: np.ndarray) -> np.ndarray:
-    """Evaluate only kinetics, retaining the full fixed delayed input history."""
+def evaluate_fixed_kinetics(family: str, context: DelayedPchip, params: np.ndarray) -> np.ndarray:
+    """Evaluate kinetics on a shared fixed-delay input and observation support.
+
+    Parameters
+    ----------
+    family : str
+        Selected kinetic family.
+    context : DelayedPchip
+        Full input history and retained observations at the fixed delay.
+    params : ndarray
+        Physical kinetic coordinates in the selected model's parameter order.
+        Patlak uses Ktrans/vp without an absent ve slot.
+
+    Returns
+    -------
+    ndarray
+        Tissue concentration at the context's retained observations.
+    """
     if family == "2cxm":
         return predict(context, params)
     if family == "patlak":
@@ -76,7 +92,7 @@ def selected_fit_result(
     if profile.family == "patlak":
         params = params[[0, 2]]
     context = DelayedPchip(aif, times, float(profile.delays_seconds[index]), profile.observed)
-    curve = _evaluate(profile.family, context, params)
+    curve = evaluate_fixed_kinetics(profile.family, context, params)
     tissue = np.asarray(tissue)
     if tissue.shape != curve.shape or not np.isfinite(tissue).all():
         raise ValueError("Selected tissue must match the retained observation support.")
@@ -173,7 +189,7 @@ class FixedDelayModel(PKModel):
     def evaluate(self, params: ParamsType, aif: np.ndarray, time_points: np.ndarray) -> np.ndarray:
         """Evaluate kinetics with unchanged offset and complete input history."""
         self._check_inputs(aif, time_points)
-        return _evaluate(self.name, self.context, np.asarray(params))
+        return evaluate_fixed_kinetics(self.name, self.context, np.asarray(params))
 
     def fit(
         self, tissue_curve: np.ndarray, aif: np.ndarray, time_points: np.ndarray,
