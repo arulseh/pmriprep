@@ -15,3 +15,6 @@ This software includes code derived from or inspired by:
 Bundled mask resources under pmriprep/data/atlases are distributed under the
 CC0 1.0 Universal dedication. See the resource README and license text in that
 directory for provenance and terms.
+
+The native DCE trust-region solver adapts SciPy algorithms under the BSD
+license. See pmriprep/models/dce/NOTICE_SCIPY.md and LICENSE_SCIPY.txt.

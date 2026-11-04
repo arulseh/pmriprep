@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "1.0.0rc6.dev7"
+version = "1.0.0rc6.dev8"
 description = "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
 readme = "README.md"
-license = "Apache-2.0 AND CC0-1.0"
+license = "Apache-2.0 AND CC0-1.0 AND BSD-3-Clause"
 keywords = [
     "neuroimaging",
     "perfusion MRI",
@@ -19,7 +19,7 @@ keywords = [
     "BIDS",
     "reproducible workflows",
 ]
-license-files = ["LICENSE", "NOTICE", "pmriprep/data/atlases/LICENSE-CC0-1.0.txt"]
+license-files = ["LICENSE", "NOTICE", "pmriprep/data/atlases/LICENSE-CC0-1.0.txt", "pmriprep/models/dce/LICENSE_SCIPY.txt"]
 requires-python = ">=3.11,<3.13"
 authors = [
     {name = "PMRIPrep Developers"}
@@ -38,7 +38,8 @@ dependencies = [
     "psutil>=5.9.0",
     "nibabel>=5.0.0",
     "numpy>=1.22.0",
-    "scipy>=1.9.0",
+    # Native DCE fitting uses verified SciPy compiled-call signatures and numerics.
+    "scipy==1.17.0",
     "scikit-image>=0.20.0",
     "nilearn>=0.10.0",
     # Neuroimaging tools
@@ -140,4 +141,5 @@ where = ["."]
 include = ["pmriprep*"]
 
 [tool.setuptools.package-data]
+"pmriprep.models.dce" = ["_trf_*.c", "LICENSE_SCIPY.txt", "NOTICE_SCIPY.md"]
 pmriprep = ["templates/**/*.html", "data/atlases/**/*.nii.gz", "data/atlases/**/*.md", "data/atlases/**/*.txt", "data/*.bib", "data/*.csl"]

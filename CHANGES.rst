@@ -1,3 +1,13 @@
+1.0.0rc6.dev8 (2026-11-04)
+==========================
+
+* ENH: Package the native bounded 2CXM fitter and compiled PCHIP evaluator,
+  preserving full starts and continuation inputs. Build through the package
+  extension machinery with strict floating-point settings. Workflow integration
+  and signed diagnostic fitting remain pending.
+* FIX: Pin SciPy to the verified 1.17.0 release and check its compiled interfaces
+  at DCE startup and image build time. Include BSD-3-Clause in image licence labels.
+
 1.0.0rc6.dev7 (2026-11-04)
 ==========================
 

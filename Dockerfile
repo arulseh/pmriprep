@@ -34,9 +34,9 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
-LABEL org.opencontainers.image.version="1.0.0rc6.dev7"
+LABEL org.opencontainers.image.version="1.0.0rc6.dev8"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
-LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
+LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0 AND BSD-3-Clause"
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -164,6 +164,7 @@ RUN pip install --no-cache-dir "setuptools>=77.0" wheel && \
     python setup.py build_ext --inplace && pip cache purge
 
 RUN cd /tmp && python -c "from pmriprep.models.dsc.signal_cpi import native; assert native.available(), 'compiled CPI kernel missing'"
+RUN cd /tmp && python -c "from pmriprep.models.dce._native_backend import check_backend; check_backend()"
 
 # Download required TemplateFlow templates to a shared location
 # (not under $HOME, which Apptainer auto-binds from the host)

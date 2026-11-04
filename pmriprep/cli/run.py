@@ -1021,6 +1021,15 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     os.environ["nnUNet_def_n_proc"] = "1"
     logger.info("Per-process threads: OMP_NUM_THREADS=%s", omp)
 
+    if not args.report_only and not args.skip_dce:
+        try:
+            from pmriprep.models.dce._native_backend import check_backend
+
+            check_backend()
+        except (ImportError, RuntimeError) as error:
+            logger.error("Native DCE backend unavailable: %s", error)
+            raise SystemExit(1) from error
+
     # Set random seed for reproducibility (numpy + stdlib random)
     if args.random_seed is not None:
         import random

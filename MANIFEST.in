@@ -3,3 +3,6 @@ include CITATION.cff
 include CODE_OF_CONDUCT.md
 include CONTRIBUTING.md
 include pmriprep/models/dsc/signal_cpi/_convolution.c
+include pmriprep/models/dce/_trf_*.c
+include pmriprep/models/dce/LICENSE_SCIPY.txt
+include pmriprep/models/dce/NOTICE_SCIPY.md

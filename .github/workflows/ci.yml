@@ -45,6 +45,8 @@ jobs:
       - run: pip install -e ".[test]"
       - name: Verify compiled CPI kernel
         run: python -c "from pmriprep.models.dsc.signal_cpi import native; assert native.available()"
+      - name: Verify compiled DCE kernel and SciPy interfaces
+        run: python -c "from pmriprep.models.dce._native_backend import check_backend; check_backend()"
       - name: Verify installed CLI version
         run: |
           python - <<'PY'

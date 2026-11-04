@@ -363,7 +363,8 @@ review; they do not replace acquisition- or study-specific quality criteria.
 
 PMRIPrep is licensed under Apache-2.0. Bundled atlas resources are CC0-1.0 and
 documented in [`pmriprep/data/atlases`](pmriprep/data/atlases/README.md). See
-[LICENSE](LICENSE) and [NOTICE](NOTICE).
+[LICENSE](LICENSE) and [NOTICE](NOTICE). The native DCE solver includes
+[SciPy-derived code under BSD-3-Clause](pmriprep/models/dce/NOTICE_SCIPY.md).
 
 ## Citation
 

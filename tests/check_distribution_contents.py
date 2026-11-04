@@ -9,6 +9,12 @@ from pathlib import Path
 
 
 REQUIRED_PACKAGE_FILES = {
+    "pmriprep/models/dce/native_exchange.py",
+    "pmriprep/models/dce/_native_backend.py",
+    "pmriprep/models/dce/LICENSE_SCIPY.txt",
+    "pmriprep/models/dce/NOTICE_SCIPY.md",
+    *{f"pmriprep/models/dce/_trf_{part}.c" for part in
+      ("module", "solver", "evaluator", "trust", "recurrence")},
     "pmriprep/models/dsc/signal_cpi/maps.py",
     "pmriprep/models/dsc/signal_cpi/execution.py",
     "pmriprep/models/dsc/signal_cpi/progress.py",
@@ -48,6 +54,19 @@ def _validate_members(path: Path, members: set[str]) -> None:
     assert not leaked, f"{path.name} contains local/test paths: {leaked}"
 
 
+def _validate_license_labels() -> None:
+    """Keep the package and both image publication labels consistent."""
+    import re
+    import tomllib
+
+    root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    for filename in ("Dockerfile", ".github/workflows/docker-publish.yml"):
+        match = re.search(r'org\.opencontainers\.image\.licenses="?([^"\n]+)',
+                          (root / filename).read_text())
+        assert match and match.group(1).strip() == project["license"], filename
+
+
 def _validate_wheel(path: Path) -> None:
     """Validate a wheel archive."""
     with zipfile.ZipFile(path) as archive:
@@ -61,6 +80,14 @@ def _validate_wheel(path: Path) -> None:
                   name.startswith("pmriprep/models/dsc/signal_cpi/_convolution.")
                   and name.endswith((".so", ".pyd"))]
         assert len(native) == 1, f"{path.name} must contain exactly one compiled CPI kernel"
+        native_dce = [name for name in members if
+                      name.startswith("pmriprep/models/dce/_native_trf.")
+                      and name.endswith((".so", ".pyd"))]
+        assert len(native_dce) == 1, f"{path.name} must contain exactly one compiled DCE kernel"
+        package_metadata = [name for name in members if name.endswith(".dist-info/METADATA")]
+        assert len(package_metadata) == 1
+        assert any(line.startswith("License-Expression:") and "BSD-3-Clause" in line
+                   for line in archive.read(package_metadata[0]).decode().splitlines())
         metadata = [name for name in members if name.endswith(".dist-info/WHEEL")]
         assert len(metadata) == 1
         assert "Root-Is-Purelib: false" in archive.read(metadata[0]).decode()
@@ -81,6 +108,7 @@ def _validate_sdist(path: Path) -> None:
 
 def main() -> None:
     """Validate one wheel and one source distribution from command-line paths."""
+    _validate_license_labels()
     paths = [Path(value) for value in sys.argv[1:]]
     wheels = [path for path in paths if path.suffix == ".whl"]
     sdists = [path for path in paths if path.name.endswith(".tar.gz")]
