@@ -127,7 +127,7 @@ class ExchangeFit:
 
 
 def fit_native(
-    context: NativeInput,
+    context: NativeInput | DelayedPchip,
     curve: np.ndarray,
     previous: np.ndarray | None = None,
     extra: np.ndarray | None = None,
@@ -137,8 +137,9 @@ def fit_native(
 
     Parameters
     ----------
-    context : NativeInput
-        Prepared nonnegative-offset input and observation support.
+    context : NativeInput or DelayedPchip
+        Prepared input and observation support. A general DelayedPchip permits
+        signed diagnostic offsets without changing the delay-selection grid.
     curve : ndarray
         Finite tissue concentrations at retained frames.
     previous : ndarray, optional

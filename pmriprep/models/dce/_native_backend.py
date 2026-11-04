@@ -13,6 +13,7 @@ from scipy.special import cython_special
 from scipy.optimize import OptimizeResult
 
 from pmriprep.models.dce.fit_errors import NumericalFitError
+from pmriprep.models.dce.delayed import DelayedPchip
 from pmriprep.utils.dce_constants import (
     EPSILON_FLOW,
     EPSILON_VE_FORWARD,
@@ -47,6 +48,7 @@ class _Context(ct.Structure):
         + [(k, INT_POINTER) for k in ["k", "inverse"]]
         + [(k, D) for k in ["moments", "states", "high_curve", "low_curve", "scratch"]]
         + [("hyper", ct.c_void_p)]
+        + [("interval_widths", D), ("interval_inverse", INT_POINTER)]
     )
 
 
@@ -95,8 +97,9 @@ class Evaluator:
 
     Parameters
     ----------
-    context : NativeInput
-        Prepared nonnegative-offset plasma input and observation support.
+    context : NativeInput or DelayedPchip
+        Prepared plasma input and observation support. The general context
+        supports signed diagnostic offsets on its original shifted knots.
     curve : ndarray
         Finite tissue concentration in mM at retained observations.
 
@@ -106,7 +109,9 @@ class Evaluator:
     so later changes to the input context do not invalidate native pointers.
     """
 
-    def __init__(self, context: NativeInput, curve: np.ndarray) -> None:
+    def __init__(self, context: NativeInput | DelayedPchip, curve: np.ndarray) -> None:
+        from pmriprep.models.dce.cached_input import CachedPchip
+
         self.curve = np.ascontiguousarray(curve, dtype=np.float64).copy()
         self.n = len(context.output_t)
         if not 1 <= self.n <= 100000:
@@ -118,12 +123,53 @@ class Evaluator:
         self._lock = Lock()
         self.arrays: dict[str, np.ndarray] = {}
         c = _Context()
-        c.frames, c.observations, c.unique = (
-            len(context.t),
-            self.n,
-            len(context.unique_s),
-        )
-        c.h, c.baseline = context.h, float(context.aif[0])
+        if not isinstance(context, CachedPchip):
+            widths = context.widths
+            if (
+                widths.ndim != 1 or not len(widths)
+                or not np.isfinite(widths).all() or np.any(widths <= 0)
+                or context.coefficients.shape != (4, len(widths))
+                or context.partial.shape != (self.n,)
+                or not np.isfinite(context.partial).all()
+                or np.any(context.partial < 0)
+                or context.k.shape != (self.n,)
+                or not np.issubdtype(context.k.dtype, np.integer)
+                or np.any(context.k < 0) or np.any(context.k >= len(widths))
+            ):
+                raise ValueError("Invalid native piecewise input geometry.")
+            if np.any(context.partial > widths[context.k]):
+                raise ValueError("Native partial intervals exceed their input intervals.")
+            unique, inverse = np.unique(np.r_[widths, context.partial], return_inverse=True)
+            arrays = {
+                "full": context.coefficients * widths ** np.arange(1, 5)[:, None],
+                "part": context.coefficients[:, context.k] * context.partial ** np.arange(1, 5)[:, None],
+                "s": context.partial, "q": context.output_t,
+                "held": np.zeros(self.n), "tail": np.zeros(self.n),
+                "unique_s": unique,
+            }
+            indices_by_name = {"k": context.k, "inverse": inverse[len(widths):]}
+            c.frames, c.unique = len(widths) + 1, len(unique)
+            c.baseline = 0.0  # Held endpoints are already intervals in this geometry.
+            for name, value, pointer in (
+                ("interval_widths", widths, D),
+                ("interval_inverse", inverse[:len(widths)], INT_POINTER),
+            ):
+                dtype = np.float64 if name == "interval_widths" else np.int64
+                owned = np.ascontiguousarray(value, dtype=dtype).copy()
+                self.arrays[name] = owned
+                setattr(c, name, owned.ctypes.data_as(pointer))
+        else:
+            arrays = {
+                name: getattr(context, attr) for name, attr in [
+                    ("full", "full_coeff"), ("part", "part_coeff"), ("s", "s"),
+                    ("q", "q"), ("held", "held"), ("tail", "tail"),
+                    ("unique_s", "unique_s"),
+                ]
+            }
+            indices_by_name = {"k": context._interval_index, "inverse": context.inverse_s}
+            c.frames, c.unique = len(context.t), len(context.unique_s)
+            c.baseline = float(context.aif[0])
+        c.observations, c.h = self.n, context.h
         if (
             c.frames < 2
             or c.unique < 1
@@ -138,16 +184,8 @@ class Evaluator:
             EPSILON_VP,
             EPSILON_EIGENVALUE,
         )
-        for name, attr in [
-            ("full", "full_coeff"),
-            ("part", "part_coeff"),
-            ("s", "s"),
-            ("q", "q"),
-            ("held", "held"),
-            ("tail", "tail"),
-            ("unique_s", "unique_s"),
-        ]:
-            a = np.ascontiguousarray(getattr(context, attr), dtype=np.float64).copy()
+        for name, value in arrays.items():
+            a = np.ascontiguousarray(value, dtype=np.float64).copy()
             expected = {
                 "full": (4, c.frames - 1),
                 "part": (4, self.n),
@@ -157,9 +195,9 @@ class Evaluator:
                 raise ValueError(f"Invalid native input array {name}.")
             self.arrays[name] = a
             setattr(c, name, a.ctypes.data_as(D))
-        for name, attr in [("k", "_interval_index"), ("inverse", "inverse_s")]:
+        for name, value in indices_by_name.items():
             indices = np.ascontiguousarray(
-                getattr(context, attr), dtype=np.int64
+                value, dtype=np.int64
             ).copy()
             limit = c.frames - 1 if name == "k" else c.unique
             if (

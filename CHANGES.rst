@@ -1,3 +1,10 @@
+1.0.0rc6.dev16 (2026-11-04)
+===========================
+
+* ENH: Support signed fixed-delay inputs in native DCE fitting using the shared
+  PCHIP geometry, for timing diagnostics outside the delay-selection grid.
+  Diagnostic output integration remains pending.
+
 1.0.0rc6.dev15 (2026-11-04)
 ===========================
 

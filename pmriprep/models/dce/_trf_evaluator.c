@@ -11,6 +11,8 @@ typedef struct {
     const int64_t *k, *inverse;
     double *moments, *states, *high_curve, *low_curve, *scratch;
     hyper_fn hyper;
+    const double *interval_widths;
+    const int64_t *interval_inverse;
 } Context;
 
 double bridge(Context *c, double a, double b, double z) {
@@ -29,11 +31,13 @@ static void convolution(Context *c, double rate, double *out) {
     double previous = 0.;
     c->states[0] = 0.;
     for (size_t j = 0; j < c->frames-1; ++j) {
-        double increment = c->moments[0]*c->full[j];
+        const size_t index = c->interval_widths ? 1+(size_t)c->interval_inverse[j] : 0;
+        double increment = c->moments[index]*c->full[j];
         for (size_t m = 1; m < 4; ++m) {
-            increment += c->moments[m*u]*c->full[m*(c->frames-1)+j];
+            increment += c->moments[m*u+index]*c->full[m*(c->frames-1)+j];
         }
-        previous = increment+decay*previous;
+        const double interval_decay = c->interval_widths ? exp(-rate*c->interval_widths[j]) : decay;
+        previous = increment+interval_decay*previous;
         c->states[j+1] = previous;
     }
     for (size_t j = 0; j < c->observations; ++j) {

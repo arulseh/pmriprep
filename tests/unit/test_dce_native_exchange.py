@@ -21,15 +21,17 @@ from pmriprep.models.dce.native_exchange import (
 )
 
 
-def _context(delay: float = 3.5) -> NativeInput:
+def _context(delay: float = 3.5) -> DelayedPchip:
     times = np.arange(100) / 30.0
     aif = 0.03 + 5 * np.exp(-(((times - 0.6) / 0.15) ** 2)) + 0.2 * (times > 0.8)
-    return NativeInput(aif, times, delay)
+    factory = DelayedPchip if delay < 0 or delay > 12 else NativeInput
+    return factory(aif, times, delay)
 
 
-def test_native_prediction_and_fit_match_independent_exchange_odes() -> None:
+@pytest.mark.parametrize("delay", [-3.7, 3.5, 16.8])
+def test_native_prediction_and_fit_match_independent_exchange_odes(delay: float) -> None:
     """Check physical units and model recovery without using its eigenvalue formula."""
-    context = _context()
+    context = _context(delay)
     truth = np.array([60.0, 12.0, 0.3, 0.06])
     fp, ps, ve, vp = truth
     fp, ps = fp / 100.0, ps / 100.0
@@ -61,8 +63,9 @@ def test_native_prediction_and_fit_match_independent_exchange_odes() -> None:
     np.testing.assert_allclose(fit.params, truth, rtol=1e-4, atol=1e-5)
 
 
-def test_native_jacobian_and_single_start_match_scipy() -> None:
-    context = _context()
+@pytest.mark.parametrize("delay", [-3.7, 3.5, 16.8])
+def test_native_jacobian_and_single_start_match_scipy(delay: float) -> None:
+    context = _context(delay)
     curve = predict(context, np.array([60.0, 12.0, 0.3, 0.06]))
     evaluator = Evaluator(context, curve)
     x = np.array([0.8, 0.2, 0.4, 0.1])
@@ -139,6 +142,26 @@ def test_reused_evaluator_outputs_and_budget_are_independent() -> None:
     np.testing.assert_array_equal(bound.x, [1e-10, 5.0 - 5e-10, 1e-10, 1.0 - 1e-10])
 
 
+def test_signed_native_geometry_preserves_observations_and_owns_buffers() -> None:
+    base = _context(-3.7)
+    ids = np.array([99, 0, 8, 23, 70])
+    context = DelayedPchip(base.aif, base.t, -3.7, ids)
+    evaluator = Evaluator(context, np.zeros(len(ids)))
+    points = ([60., 12., .3, .06], [0., 2., .4, .1],
+              [500., 500., 0., 1.], [60., 0., .3, .06])
+    for p in points:
+        x = encode(np.array(p))
+        predicted = evaluator.evaluate(x)[0]
+        np.testing.assert_allclose(predicted, predict(base, decode(x))[ids], atol=1e-12, rtol=1e-10)
+        assert predicted[1] == 0  # Original acquisition origin, not first retained frame.
+    assert context.held_after[0]
+    before = evaluator.evaluate(encode(np.array(points[0])))[0]
+    context.coefficients[:] = 0
+    context.widths[:] = 1
+    context.partial[:] = 0
+    np.testing.assert_array_equal(evaluator.evaluate(encode(np.array(points[0])))[0], before)
+
+
 def test_native_boundary_rejects_invalid_shapes_indices_and_controls() -> None:
     context = _context()
     evaluator = Evaluator(context, np.zeros(len(context.t)))
@@ -159,6 +182,10 @@ def test_native_boundary_rejects_invalid_shapes_indices_and_controls() -> None:
     context._interval_index[0] = len(context.t)
     with pytest.raises(ValueError, match="indices"):
         Evaluator(context, np.zeros(len(context.t)))
+    signed = _context(-3.7)
+    signed.k[0] = len(signed.widths)
+    with pytest.raises(ValueError, match="piecewise input geometry"):
+        Evaluator(signed, np.zeros(len(signed.t)))
 
 
 def test_native_svd_uses_installed_lapack_with_correct_layout() -> None:
