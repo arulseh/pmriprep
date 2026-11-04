@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import ctypes as ct
 from dataclasses import dataclass
-from threading import Lock
-from typing import Any
 
 import numpy as np
-from scipy.special import hyp1f1
 
 from pmriprep.models.dce.delayed import DelayedPchip
-from pmriprep.models.dce._native_backend import D, RECURRENCE, Evaluator, solve
+from pmriprep.models.dce._native_backend import Evaluator, solve
+from pmriprep.models.dce.cached_input import CachedPchip as NativeInput
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
@@ -23,110 +20,6 @@ from pmriprep.utils.dce_constants import (
 STARTS = np.array(
     [[20.0, 1.0, 0.1, 0.01], [80.0, 20.0, 0.3, 0.03], [200.0, 100.0, 0.6, 0.08]]
 )
-
-
-class NativeInput:
-    """Prepare held-endpoint PCHIP input for nonnegative-offset native fits.
-
-    Parameters
-    ----------
-    aif, times : ndarray
-        Finite plasma AIF in mM and uniform acquisition times in minutes.
-    delay_seconds : float
-        Nonnegative effective AIF offset in seconds.
-    observed : ndarray, optional
-        Original retained frame indices. Full input history is preserved.
-
-    Notes
-    -----
-    Convolution returns independent arrays; cached workspace access is locked.
-    Signed diagnostic offsets require a separately validated fitting path.
-    """
-
-    def __init__(
-        self,
-        aif: np.ndarray,
-        times: np.ndarray,
-        delay_seconds: float = 0.0,
-        observed: np.ndarray | None = None,
-    ) -> None:
-        if not np.isfinite(delay_seconds) or delay_seconds < 0:
-            raise ValueError("Native input requires a finite nonnegative delay.")
-        prepared = DelayedPchip(aif, times, delay_seconds, observed)
-        self.aif, self.t, self.h = prepared.aif, prepared.t, prepared.h
-        self.delay, self.observed = prepared.delay, prepared.observed
-        self.output_t, self.q, self.cp = prepared.output_t, prepared.q, prepared.cp
-        self.poly = prepared.poly
-        self.coefficients = self.poly.c[::-1]
-        clipped = np.clip(self.q, 0.0, self.t[-1])
-        self.k = np.clip(
-            np.searchsorted(self.t, clipped, side="right") - 1, 0, len(aif) - 2
-        )
-        self.s = clipped - self.t[self.k]
-        self.unique_s, self.inverse_s = np.unique(self.s, return_inverse=True)
-        self.full_coeff = self.coefficients * self.h ** np.arange(1, 5)[:, None]
-        self.part_coeff = (
-            self.coefficients[:, self.k] * self.s ** np.arange(1, 5)[:, None]
-        )
-        self.held = np.minimum(self.output_t, self.delay)
-        self.tail = np.maximum(self.output_t - self.delay, 0.0)
-        self.widths = np.r_[self.h, self.unique_s]
-        self.before = self.q < 0
-        self.buffers: dict[int, tuple[Any, ...]] = {}
-        self._lock = Lock()
-
-    def convolution(self, rate: float | np.ndarray) -> np.ndarray:
-        """Evaluate the same PCHIP exponential integrals, returning fresh storage.
-
-        Parameters
-        ----------
-        rate : float or ndarray
-            Nonnegative scalar or one-dimensional rates.
-
-        Returns
-        -------
-        ndarray
-            Independent output, unaffected by later calls on this context.
-        """
-        with self._lock:
-            return self._convolution(rate)
-
-    def _convolution(self, rate: float | np.ndarray) -> np.ndarray:
-        """Evaluate with exclusive access to the context buffers."""
-        scalar = np.ndim(rate) == 0
-        rates = np.atleast_1d(np.asarray(rate, float))
-        if rates.ndim != 1 or not np.isfinite(rates).all() or np.any(rates < 0):
-            raise ValueError("Finite nonnegative rates required.")
-        count = len(rates)
-        if count not in self.buffers:
-            increments = np.empty((count, self.full_coeff.shape[1]), dtype=np.float64)
-            decay = np.empty(count, dtype=np.float64)
-            states = np.empty((count, len(self.t)), dtype=np.float64)
-            ptrs = tuple(a.ctypes.data_as(D) for a in [increments, decay, states])
-            self.buffers[count] = (increments, decay, states, *ptrs)
-        increments, decay, states, ip, dp, sp = self.buffers[count]
-        x = rates[:, None] * self.widths
-        negative_x = -x
-        moment = np.stack(
-            [hyp1f1(1.0, m + 2.0, negative_x) / (m + 1.0) for m in range(4)]
-        )
-        np.matmul(moment[:, :, 0].T, self.full_coeff, out=increments)
-        np.exp(-rates * self.h, out=decay)
-        RECURRENCE(ip, dp, sp, ct.c_size_t(count), ct.c_size_t(increments.shape[1]))
-        out = np.exp(-rates[:, None] * self.s) * states[:, self.k]
-        out += np.sum(
-            moment[:, :, 1:][:, :, self.inverse_s] * self.part_coeff[:, None, :], axis=0
-        )
-        out[:, self.before] = 0.0
-        if self.aif[0] != 0:
-            held_moment = hyp1f1(1.0, 2.0, -rates[:, None] * self.held)
-            out += (
-                self.aif[0]
-                * np.exp(-rates[:, None] * self.tail)
-                * self.held
-                * held_moment
-            )
-        return np.asarray(out[0] if scalar else out)
 
 
 def predict(context: NativeInput | DelayedPchip, params: np.ndarray) -> np.ndarray:

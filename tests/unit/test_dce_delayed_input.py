@@ -7,6 +7,7 @@ from scipy.interpolate import PchipInterpolator
 from scipy.optimize import least_squares, lsq_linear, minimize
 
 from pmriprep.models.dce.delayed import DelayedPchip
+from pmriprep.models.dce.cached_input import CachedPchip
 from pmriprep.models.dce.profile_fitting import (
     fit_extended_tofts,
     fit_patlak,
@@ -48,6 +49,9 @@ def test_delayed_input_matches_independent_quadrature(delay: float) -> None:
     rates = np.array([0., 1e-12, 0.7, 30.])
     expected = np.stack([_quadrature(aif, times, delay, rate) for rate in rates])
     np.testing.assert_allclose(context.convolution(rates), expected, atol=1e-11, rtol=1e-10)
+    if delay >= 0:
+        cached = CachedPchip(aif, times, delay)
+        np.testing.assert_allclose(cached.convolution(rates), expected, atol=1e-11, rtol=1e-10)
     np.testing.assert_array_equal(context.convolution(rates)[:, 0], 0.)
     np.testing.assert_array_equal(context.convolution(.7), context.convolution(rates)[2])
     interpolant = PchipInterpolator(times, aif)

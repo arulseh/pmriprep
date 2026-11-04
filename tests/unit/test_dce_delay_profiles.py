@@ -5,6 +5,7 @@ import pytest
 
 from pmriprep.models.dce import delay_profiles as profiles
 from pmriprep.models.dce.delayed import DelayedPchip
+from pmriprep.models.dce.cached_input import CachedPchip
 from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.models.dce.native_exchange import (
     ExchangeFit,
@@ -55,7 +56,8 @@ def test_profiles_equal_direct_fits_with_full_input_history(family: str) -> None
                 "tofts": fit_tofts,
                 "extended_tofts": fit_extended_tofts,
             }[family]
-            fit = fitter(DelayedPchip(aif, times, delay, observed), curves)
+            input_type = DelayedPchip if family == "patlak" else CachedPchip
+            fit = fitter(input_type(aif, times, delay, observed), curves)
             np.testing.assert_array_equal(actual.params[i], fit.params)
             assert actual.evaluations[i, 0] == -1
             assert actual.status[i, 0] == 1

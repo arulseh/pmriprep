@@ -98,12 +98,18 @@ def test_native_jacobian_and_single_start_match_scipy() -> None:
     np.testing.assert_allclose(native.cost, reference.cost, atol=1e-12)
 
 
-def test_native_input_preserves_history_and_owns_outputs() -> None:
-    base = _context()
+@pytest.mark.parametrize("delay", [0.0, 3.5, 12.0])
+def test_native_input_preserves_history_and_owns_outputs(delay: float) -> None:
+    base = _context(delay)
     ids = np.array([1, 8, 23, 70, 99])
-    native = NativeInput(base.aif, base.t, 3.5, ids)
-    common = DelayedPchip(base.aif, base.t, 3.5, ids)
+    native = NativeInput(base.aif, base.t, delay, ids)
+    common = DelayedPchip(base.aif, base.t, delay, ids)
+    for name in ("coefficients", "k", "widths", "knots", "partial"):
+        np.testing.assert_array_equal(getattr(native, name), getattr(common, name))
     rates = np.array([0.0, 1e-12, 0.5, 30.0, 1e5])
+    np.testing.assert_array_equal(
+        DelayedPchip.convolution(native, rates), common.convolution(rates)
+    )
     first = native.convolution(rates)
     saved = first.copy()
     native.convolution(rates * 2)
@@ -150,7 +156,7 @@ def test_native_boundary_rejects_invalid_shapes_indices_and_controls() -> None:
         Evaluator(context, np.zeros(len(context.t) - 1))
     with pytest.raises(ValueError, match="previous"):
         fit_native(context, np.zeros(len(context.t)), previous=np.zeros(3))
-    context.k[0] = len(context.t)
+    context._interval_index[0] = len(context.t)
     with pytest.raises(ValueError, match="indices"):
         Evaluator(context, np.zeros(len(context.t)))
 

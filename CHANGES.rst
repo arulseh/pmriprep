@@ -1,3 +1,9 @@
+1.0.0rc6.dev14 (2026-11-04)
+===========================
+
+* PERF: Reuse cached PCHIP convolution in Tofts and Extended Tofts delay
+  profiles, sharing the input evaluator used by native 2CXM fitting.
+
 1.0.0rc6.dev13 (2026-11-04)
 ===========================
 

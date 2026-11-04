@@ -8,6 +8,7 @@ from typing import Literal
 import numpy as np
 
 from pmriprep.models.dce.delayed import DelayedPchip
+from pmriprep.models.dce.cached_input import CachedPchip
 from pmriprep.models.dce.fit_errors import NumericalFitError
 from pmriprep.models.dce.native_exchange import ExchangeFit, NativeInput, fit_native
 from pmriprep.models.dce.profile_fitting import (
@@ -303,7 +304,8 @@ def build_delay_profile(
                 profile.optimality[i, member] = result.optimality
                 profile.seed_index[i, member] = i - 1
         else:
-            context = DelayedPchip(aif, times, float(delay), indices)
+            input_type = DelayedPchip if family == "patlak" else CachedPchip
+            context = input_type(aif, times, float(delay), indices)
             fitted = (
                 fit_patlak(context, y)
                 if family == "patlak"

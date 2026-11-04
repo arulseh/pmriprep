@@ -157,7 +157,7 @@ class Evaluator:
                 raise ValueError(f"Invalid native input array {name}.")
             self.arrays[name] = a
             setattr(c, name, a.ctypes.data_as(D))
-        for name, attr in [("k", "k"), ("inverse", "inverse_s")]:
+        for name, attr in [("k", "_interval_index"), ("inverse", "inverse_s")]:
             indices = np.ascontiguousarray(
                 getattr(context, attr), dtype=np.int64
             ).copy()
