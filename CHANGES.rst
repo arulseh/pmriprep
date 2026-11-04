@@ -1,3 +1,11 @@
+1.0.0rc6.dev9 (2026-11-04)
+==========================
+
+* ENH: Build conditional DCE delay profiles with common original observation
+  indices and recorded continuation. Finalize failed native 2CXM points with
+  bounded full-start retries after the sweep, preserving later seeds and fit
+  status. Local selection and workflow routing remain pending.
+
 1.0.0rc6.dev8 (2026-11-04)
 ==========================
 
