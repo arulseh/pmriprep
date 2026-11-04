@@ -944,7 +944,7 @@ class TestBayesianMAPFitSynthetic:
 # ---------------------------------------------------------------------------
 
 class TestWeightedLogLikelihoodWithSigma:
-    """Tests for _log_likelihood_with_sigma with motion weights."""
+    """Tests for _log_likelihood_with_sigma with per-frame likelihood weights."""
 
     def test_weights_ones_matches_unweighted(self) -> None:
         """weights=np.ones(n) should produce the same result as weights=None."""

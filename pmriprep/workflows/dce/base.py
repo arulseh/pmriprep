@@ -100,8 +100,8 @@ def init_dce_pk_modeling_wf(
     concentration_file, aif_file, aif_detection_method, aif_uncertainty_inflation_factor
         Tissue concentration time series and arterial input function (with
         detection provenance).
-    brain_mask_file, dce_signal_file, baseline_frames, fd_values, bolus_arrival_frame
-        DCE brain mask, raw signal (for tSNR), baseline/bolus timing, and motion.
+    brain_mask_file, dce_signal_file, baseline_frames, bolus_arrival_frame
+        DCE brain mask, raw signal (for tSNR), baseline/bolus timing.
     volume_tr
         Interval between DCE volumes in seconds.
     dsc_dose, dsc_agent_standard_dose
@@ -133,7 +133,6 @@ def init_dce_pk_modeling_wf(
                 "dsc_agent_standard_dose",
                 "dce_signal_file",
                 "baseline_frames",
-                "fd_values",
                 "bolus_arrival_frame",
                 "dsc_ncbv_file",
                 "nawm_exclusion_reason",
@@ -199,7 +198,6 @@ def init_dce_pk_modeling_wf(
             ("dsc_agent_standard_dose", "dsc_agent_standard_dose"),
             ("dce_signal_file", "dce_signal_file"),
             ("baseline_frames", "baseline_frames"),
-            ("fd_values", "fd_values"),
             ("bolus_arrival_frame", "bolus_arrival_frame"),
             ("dsc_ncbv_file", "dsc_ncbv_file"),
             ("nawm_exclusion_reason", "nawm_exclusion_reason"),
@@ -2363,7 +2361,6 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, pk_wf, [
             ("outputnode.out_file", "inputnode.dce_signal_file"),
             ("outputnode.baseline_frames", "inputnode.baseline_frames"),
-            ("outputnode.fd", "inputnode.fd_values"),
             ("outputnode.bolus_arrival_frame", "inputnode.bolus_arrival_frame"),
         ]),
     ])

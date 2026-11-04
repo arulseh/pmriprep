@@ -39,6 +39,9 @@ def captured_maps(monkeypatch: pytest.MonkeyPatch) -> list[CPIMaps]:
     captured: list[CPIMaps] = []
 
     def capture(*args: Any, **kwargs: Any) -> CPIMaps:
+        for branch in args[0].branches:
+            assert branch.weights is None
+            assert branch.signals.shape[-1] == branch.time.size
         result = original(*args, **kwargs)
         captured.append(result)
         return result
@@ -148,6 +151,8 @@ def test_actual_interface_uses_signal_and_preserves_selected_fit(
         interface, "_save_qc_fit_data_svd", lambda *a, **k: pytest.fail("QC must use the selected CPI fit")
     )
     output = interface.run().outputs
+    assert output.qc_metrics["temporal_weighting"] == "unit"
+    assert "motion_weighting" not in output.qc_metrics
     assert len(captured_maps) == 1
     native = captured_maps[0]
     assert not any(isinstance(value, CPIMaps) for value in vars(interface).values())
@@ -184,6 +189,7 @@ def test_actual_interface_uses_signal_and_preserves_selected_fit(
             0.03,
             leakage_method="none",
             baseline_frames=4,
+            temporal_weights=np.ones(files["time"].size),
             options=CPIOptions(
                 control_points=5,
                 infer_delay=infer_delay,

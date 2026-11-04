@@ -437,7 +437,7 @@ class TwoCompartmentExchangeModel(PKModel):
             Optional initial parameter values [Fp, PS, ve, vp].
             If None, uses data-driven estimate or default.
         weights : np.ndarray, optional
-            Optional per-frame weights for motion-weighted fitting.
+            Optional per-frame likelihood weights.
 
         Returns
         -------

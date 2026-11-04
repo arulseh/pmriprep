@@ -297,7 +297,7 @@ def batched_patlak_lstsq(
     time_points : numpy.ndarray
         Time points in minutes, shape (T,).
     weights : numpy.ndarray or None, optional
-        Per-frame motion weights, shape (T,).
+        Per-frame likelihood weights, shape (T,).
     save_fitted_curves : bool, optional
         Whether to store fitted curves in result.
     compute_uncertainties : bool, optional
@@ -741,7 +741,7 @@ def batched_lm_fit(
     time_points : numpy.ndarray
         Time points in minutes, shape (T,).
     weights : numpy.ndarray or None, optional
-        Per-frame motion weights, shape (T,).
+        Per-frame likelihood weights, shape (T,).
     max_iter : int, optional
         Maximum LM iterations. Default 100.
     ftol : float, optional

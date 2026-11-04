@@ -344,7 +344,7 @@ def batched_dsc_vi_fit(
         Pre-computed prior stds in transformed space,
         shape (P,). Must be provided alongside prior_means_transformed.
     weights : npt.NDArray[np.floating], optional
-        Per-frame motion weights, shape (T,). None = uniform.
+        Per-frame likelihood weights, shape (T,). None = uniform.
     n_iterations : int, optional
         Maximum VB iterations (default 10).
     sloppy : bool, optional

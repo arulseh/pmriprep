@@ -350,12 +350,6 @@
     ],
     [
       "dce_preprocess",
-      "fd",
-      "pk_modeling",
-      "fd_values"
-    ],
-    [
-      "dce_preprocess",
       "mean_img",
       "combine_masks",
       "reference_file"

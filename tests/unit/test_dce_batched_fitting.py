@@ -239,9 +239,7 @@ def test_2cxm_small_step_requires_successful_improving_refit(
 
 @pytest.fixture(scope="module")
 def parker_exchange_case() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Independent exchange curve with bolus-centered motion weights."""
-    from pmriprep.interfaces.dce_compute import _compute_motion_weights
-
+    """Independent exchange curve with unequal likelihood weights."""
     time = np.arange(121) * 3 / 60
     u = np.maximum(time - .5, 0.)
     aif = sum(
@@ -260,10 +258,10 @@ def parker_exchange_case() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarr
                           method="Radau", rtol=1e-9, atol=1e-12, max_step=3/240)
     assert reference.success
     tissue = .05 * reference.y[0] + .2 * reference.y[1]
-    fd = np.zeros(time.size)
+    weights = np.ones(time.size)
     peak = int(np.argmax(aif))
-    fd[peak-1:peak+3] = 1.
-    weights = _compute_motion_weights(fd.tolist(), 10, time.size, 2.)
+    weights[peak-1:peak+2] = .0625
+    weights[peak+2] = .25
     return tissue, aif, time, weights
 
 
@@ -280,8 +278,8 @@ def test_2cxm_small_cost_change_recovery(
     for name, ceiling in zip(("FP", "PS"), ceilings):
         monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, ceiling))
         monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0., ceiling))
-    tissue, aif, time, motion_weights = parker_exchange_case
-    weights = motion_weights if weighted else None
+    tissue, aif, time, temporal_weights = parker_exchange_case
+    weights = temporal_weights if weighted else None
     result = batched_lm_fit("2cxm", tissue[None], aif, time, weights=weights,
                             save_fitted_curves=True, compute_uncertainties=True)
     assert result.converged[0]
@@ -290,7 +288,7 @@ def test_2cxm_small_cost_change_recovery(
         [120., 80., .2, .05], rtol=1e-3,
     )
     assert result.fitted_curves is not None
-    w = motion_weights if weighted else np.ones(time.size)
+    w = temporal_weights if weighted else np.ones(time.size)
     assert np.sum(w * (result.fitted_curves[0]-tissue)**2) / np.sum(w*tissue**2) < 1e-10
     assert all(np.isfinite(values[0]) for values in result.uncertainties.values())
 
@@ -352,7 +350,7 @@ def test_auto_selection_uses_confirmed_exchange_fit(
         mask_coords=(np.array([0]), np.array([0]), np.array([0])),
         aif=aif, time_points=time, model_name=candidates[-1],
         inference="nlls", is_auto=True, candidate_names=candidates,
-        motion_weights=weights, save_fitted_curves=True, sloppy=False,
+        temporal_weights=weights, save_fitted_curves=True, sloppy=False,
         mcmc_samples=0, baseline_frames=10, n_procs=1, random_seed=None,
         init_args=(), voxel_data_list=[],
     )
@@ -621,7 +619,7 @@ class TestPatlakExact:
                 mask_coords=(np.array([0]), np.array([0]), np.array([0])),
                 aif=aif, time_points=time, model_name=candidates[-1],
                 inference=inference, is_auto=True, candidate_names=candidates,
-                motion_weights=None, save_fitted_curves=True, sloppy=False,
+                temporal_weights=None, save_fitted_curves=True, sloppy=False,
                 mcmc_samples=0, baseline_frames=5, n_procs=1, random_seed=None,
                 init_args=(aif, time, candidates[-1], inference, 0, 5, "skip", 0.,
                            True, None, False, None, candidates),
@@ -909,7 +907,7 @@ class TestResultDictFormat:
 
 class TestWeightedFitting:
     def test_weighted_patlak(self, aif_and_time):
-        """Motion weights applied to Patlak fitting."""
+        """Unequal likelihood weights are applied to Patlak fitting."""
         aif, time_points = aif_and_time
         tissue, kt_true, vp_true = _generate_patlak_data(
             aif, time_points, n_voxels=100,
@@ -917,7 +915,7 @@ class TestWeightedFitting:
 
         # Create weights: downweight a few frames
         weights = np.ones(len(time_points))
-        weights[10:15] = 0.1  # Simulate motion frames
+        weights[10:15] = 0.1  # Unequal likelihood weights
 
         result = batched_patlak_lstsq(
             tissue, aif, time_points, weights=weights,
@@ -929,7 +927,7 @@ class TestWeightedFitting:
         )
 
     def test_weighted_lm(self, aif_and_time):
-        """Motion weights applied to LM fitting."""
+        """Unequal likelihood weights are applied to LM fitting."""
         aif, time_points = aif_and_time
         tissue, _, _ = _generate_tofts_data(
             aif, time_points, n_voxels=100,
@@ -1300,7 +1298,7 @@ class TestChunkedMultiproc:
             inference="nlls",
             is_auto=True,
             candidate_names=["patlak"],
-            motion_weights=None,
+            temporal_weights=None,
             save_fitted_curves=False,
             sloppy=False,
             mcmc_samples=0,
@@ -1353,7 +1351,7 @@ class TestChunkedMultiproc:
                 inference="nlls",
                 is_auto=True,
                 candidate_names=["patlak", "extended_tofts"],
-                motion_weights=None,
+                temporal_weights=None,
                 save_fitted_curves=False,
                 sloppy=False,
                 mcmc_samples=0,
@@ -1402,7 +1400,7 @@ class TestChunkedMultiproc:
             inference="nlls",
             is_auto=True,
             candidate_names=["patlak", "extended_tofts"],
-            motion_weights=None,
+            temporal_weights=None,
             save_fitted_curves=False,
             sloppy=False,
             mcmc_samples=0,
@@ -1471,7 +1469,7 @@ class TestChunkedMultiproc:
                 "baseline_frames": 1,
                 "constraint_mode_str": "skip",
                 "constraint_vp_uncertainty": 0.0,
-                "motion_weights": None,
+                "temporal_weights": None,
                 "sloppy": False,
                 "is_auto": True,
                 "bic_candidates": {"extended_tofts": BrokenCandidate()},
@@ -1539,7 +1537,7 @@ class TestChunkedMultiproc:
             inference="vi",
             is_auto=True,
             candidate_names=["patlak"],
-            motion_weights=None,
+            temporal_weights=None,
             save_fitted_curves=False,
             sloppy=False,
             mcmc_samples=0,
@@ -1603,7 +1601,7 @@ class TestChunkedMultiproc:
                 "baseline_frames": 1,
                 "constraint_mode_str": "soft",
                 "constraint_vp_uncertainty": 0.4,
-                "motion_weights": None,
+                "temporal_weights": None,
                 "sloppy": False,
                 "is_auto": False,
                 "bic_candidates": {},

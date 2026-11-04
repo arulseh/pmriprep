@@ -128,38 +128,6 @@ def test_load_compute_inputs_rejects_off_grid_mask(tmp_path: Path) -> None:
         interface._load_compute_inputs()
 
 
-def test_prepare_motion_weighting_matches_fitting_array_and_qc() -> None:
-    """Motion QC describes the exact weights forwarded to parametric fitting."""
-    header = SimpleNamespace(get_zooms=lambda: (2.0, 2.5, 3.0, 1.0))
-    interface = ComputeDSCMaps(
-        fd_values=[0.0, 0.2, 1.0, 0.1, 0.8, 0.0],
-        baseline_frames=2,
-    )
-
-    result = interface._prepare_motion_weighting("cpi", header, 6, 1.5, 3)
-
-    assert result.weights is not None
-    assert result.weights.shape == (6,)
-    assert result.qc["applied"] is True
-    assert result.qc["n_downweighted_frames"] == int(np.sum(result.weights < 0.95))
-    assert result.qc["min_weight"] == float(np.min(result.weights))
-    assert result.qc["first_pass_weights"] == result.weights[3:6].tolist()
-
-
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov", "cpi"])
-def test_prepare_motion_weighting_disabled_paths(method: str) -> None:
-    """SVD methods and missing FD values retain stable disabled state."""
-    header = SimpleNamespace(get_zooms=lambda: (2.0, 2.5, 3.0, 1.0))
-    interface = ComputeDSCMaps()
-    if method != "cpi":
-        interface.inputs.fd_values = [0.0, 0.5, 0.0]
-
-    result = interface._prepare_motion_weighting(method, header, 3, 1.5, 2)
-
-    assert result.weights is None
-    assert result.qc == {"applied": False}
-
-
 def test_prepare_baseline_preserves_pass_through_k2(
     tmp_path: Path,
 ) -> None:

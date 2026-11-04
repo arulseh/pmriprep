@@ -345,7 +345,7 @@ class PKModel(ABC):
             Optional initial parameter values. If None, uses
             default initial guess from get_initial_guess().
         weights : np.ndarray, optional
-            Optional per-frame weights for motion-weighted fitting.
+            Optional per-frame likelihood weights.
             Values in [0, 1] where 1.0 = full weight. If None, uniform
             weighting is used.
 

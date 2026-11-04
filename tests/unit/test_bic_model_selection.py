@@ -340,7 +340,7 @@ class TestAutoBICDecisionSeam:
         assert not valid[0]
         assert np.isnan(delta[0])
 
-    def test_motion_weighted_bic_uses_fitted_likelihood(self) -> None:
+    def test_weighted_bic_uses_fitted_likelihood(self) -> None:
         """A downweighted outlier cannot re-enter through unweighted BIC."""
         tissue = np.zeros((1, 20), dtype=np.float64)
         patlak_fit = np.zeros_like(tissue)

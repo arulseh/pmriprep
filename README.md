@@ -350,6 +350,8 @@ Smoothed maps are additional derivatives. DCE kep is recomputed from smoothed
 Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at
 native resolution. Unsmoothed maps are used for quantitative regional analysis.
 
+DSC/CPI and DCE fitting use equal temporal weights; motion estimates are used for QC.
+
 The HTML report summarizes anatomy, masks, registration, motion, AIF selection,
 T1/B1 processing, leakage correction, model fits, parameter maps, voxel
 accounting, and cross-modal checks when available. Quantitative acceptance and

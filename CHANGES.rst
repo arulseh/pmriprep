@@ -1,3 +1,9 @@
+1.0.0rc6.dev3 (2026-11-04)
+==========================
+
+* CHG: Use unit temporal weights for DSC/CPI and DCE fitting and model
+  comparison, including inference. Motion estimates remain available for QC.
+
 1.0.0rc6.dev2 (2026-11-04)
 ==========================
 

@@ -609,7 +609,7 @@ class BayesianPKFitter:
             Whether to compute Laplace uncertainties.
             Set to False to skip the expensive Hessian computation.
         weights : numpy.ndarray or None, optional
-            Optional per-frame weights for motion-weighted fitting.
+            Optional per-frame likelihood weights.
             Values in [0, 1] where 1.0 = full weight.
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
@@ -888,7 +888,7 @@ class BayesianPKFitter:
             on the measured pre-bolus noise (or ``noise_std`` when supplied
             to the constructor).
         weights : numpy.ndarray or None, optional
-            Optional per-frame motion weights (1.0 = full weight).
+            Optional per-frame likelihood weights (1.0 = full weight).
             Weights modify data fidelity terms and contribute
             ``sum(weights)`` effective observations to the noise posterior.
         sloppy : bool, optional
@@ -925,7 +925,7 @@ class BayesianPKFitter:
         upper_bounds_t = [prior.upper_bound for prior in self.priors]
         y = np.asarray(tissue_curve, dtype=np.float64)
 
-        # Motion weights for data fidelity terms
+        # Likelihood weights for data fidelity terms
         if weights is not None:
             w = np.asarray(weights, dtype=np.float64)
         else:
@@ -1250,7 +1250,7 @@ class BayesianPKFitter:
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
         weights : numpy.ndarray or None, optional
-            Optional per-frame weights for motion-weighted fitting.
+            Optional per-frame likelihood weights.
             Values in [0, 1] where 1.0 = full weight.
 
         Returns

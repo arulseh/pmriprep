@@ -211,7 +211,7 @@ class ToftsModel(PKModel):
             Optional initial parameter values [Ktrans, ve].
             If None, uses data-driven estimate or default.
         weights : np.ndarray, optional
-            Optional per-frame weights for motion-weighted fitting.
+            Optional per-frame likelihood weights.
 
         Returns
         -------

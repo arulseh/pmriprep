@@ -1,7 +1,7 @@
 """Characterization tests for DCE fit-input and domain preparation."""
 
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any
 
 import nibabel as nib
 import numpy as np
@@ -331,34 +331,47 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     assert maps.iauc_qc["detected_bolus_arrival_frame"] == 0
 
 
-def test_prepare_motion_weighting_returns_weights_and_matching_qc() -> None:
-    """Motion-weight QC describes the exact array passed to fitting."""
-    header = SimpleNamespace(get_zooms=lambda: (2.0, 2.5, 3.0, 1.0))
+@pytest.mark.parametrize("inference", ["nlls", "vi"])
+def test_interface_uses_unit_weights_without_dropping_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inference: str,
+) -> None:
+    """Catch non-unit likelihoods or frame removal in production fit dispatch."""
+    from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+
+    time = np.arange(40) * .125
+    u = np.maximum(time - .375, 0.)
+    aif = 100 * u**2 * np.exp(-u / .15)
+    tissue = ExtendedToftsModel().evaluate([.2, .3, .04], aif, time)
+    concentration = tissue[None, None, None, :]
+    conc_file, mask_file, aif_file = (tmp_path / name for name in
+                                    ("conc.nii.gz", "mask.nii.gz", "aif.txt"))
+    nib.save(nib.Nifti1Image(concentration, np.eye(4)), conc_file)
+    nib.save(nib.Nifti1Image(np.ones((1, 1, 1)), np.eye(4)), mask_file)
+    np.savetxt(aif_file, aif)
     interface = ComputeDCEMaps(
-        fd_values=[0.0, 0.2, 1.0, 0.1, 0.8, 0.0],
-        bolus_arrival_frame=2,
+        concentration_file=str(conc_file), brain_mask_file=str(mask_file),
+        aif_file=str(aif_file), volume_tr=7.5, baseline_frames=3,
+        bolus_arrival_frame=3, model="auto", inference=inference,
+        aif_bat_alignment="off", tsnr_threshold=0., save_fitted_curves=True,
     )
+    original = interface._fit_batched
+    calls = []
 
-    result = interface._prepare_motion_weighting(header, 6)
+    def checked_fit(**kwargs: Any) -> Any:
+        assert kwargs["temporal_weights"] is None
+        assert kwargs["init_args"][9] is None
+        np.testing.assert_allclose(kwargs["conc_data"], concentration)
+        np.testing.assert_allclose(kwargs["time_points"], time)
+        calls.append(True)
+        return original(**kwargs)
 
-    assert result.weights is not None
-    assert result.weights.shape == (6,)
-    assert result.qc["applied"] is True
-    assert result.qc["n_downweighted_frames"] == int(
-        np.sum(result.weights < 0.95)
-    )
-    assert result.qc["min_weight"] == float(np.min(result.weights))
-    assert result.qc["washin_weights"] == result.weights[2:6].tolist()
-
-
-def test_prepare_motion_weighting_noops_without_fd() -> None:
-    """Missing motion inputs produce no weights and stable disabled QC."""
-    header = SimpleNamespace(get_zooms=lambda: (2.0, 2.5, 3.0, 1.0))
-
-    result = ComputeDCEMaps()._prepare_motion_weighting(header, 6)
-
-    assert result.weights is None
-    assert result.qc == {"applied": False}
+    monkeypatch.setattr(interface, "_fit_batched", checked_fit)
+    output = interface.run(cwd=str(tmp_path)).outputs
+    assert calls == [True]
+    assert output.qc_metrics["temporal_weighting"] == "unit"
+    assert "motion_weighting" not in output.qc_metrics
+    assert nib.load(output.out_fitted_curves).shape == concentration.shape
+    assert np.isfinite(nib.load(output.out_ktrans).get_fdata()).all()
 
 
 def test_initialize_parameter_maps_preserves_auto_and_uncertainty_state() -> None:

@@ -414,7 +414,7 @@ class PatlakModel(PKModel):
             Optional initial parameter values [Ktrans, vp].
             Used only for nonlinear fitting (use_graphical=False).
         weights : np.ndarray, optional
-            Optional per-frame weights for motion-weighted fitting.
+            Optional per-frame likelihood weights.
         use_graphical : bool, optional
             If True, use fast graphical analysis. If False (default), use
             nonlinear least squares optimization.

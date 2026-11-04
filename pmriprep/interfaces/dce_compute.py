@@ -134,7 +134,7 @@ def _compute_auto_bic(
 ) -> npt.NDArray[np.floating]:
     """Compute per-voxel BIC using the likelihood fitted by NLLS.
 
-    Motion weights are inverse-variance reliability weights in the fitting
+    Optional weights are inverse-variance reliability weights in the fitting
     objective. When present, the same weighted RSS must determine model
     selection so deliberately downweighted frames cannot dominate BIC. The
     observation count remains the acquired frame count; weights do not
@@ -1277,13 +1277,6 @@ class _DCEModelFreeMaps(NamedTuple):
     ser_qc: dict[str, Any]
 
 
-class _DCEMotionWeighting(NamedTuple):
-    """Optional phase-adaptive motion weights and their QC record."""
-
-    weights: Optional[npt.NDArray[np.floating]]
-    qc: dict[str, Any]
-
-
 class _DCEParameterMaps(NamedTuple):
     """Allocated mutable PK, uncertainty, status, and fit-curve maps."""
 
@@ -1363,53 +1356,6 @@ assert BatchedChunkArgs.__module__ == __name__, (
 _worker_ctx: dict[str, Any] = {}
 
 
-def _compute_motion_weights(
-    fd_values: list[float],
-    bolus_frame: int,
-    n_frames: int,
-    min_voxel_dim: float,
-) -> npt.NDArray[np.floating]:
-    """Compute per-frame motion weights using phase-adaptive FD thresholds.
-
-    Weight function: w_i = (threshold / FD_i)^2 for FD_i > threshold, else 1.0
-    Frames from bolus arrival through four frames after arrival, inclusive,
-    use half the threshold. The base threshold is
-    max(min_voxel_dim * 0.25, 0.1) mm.
-
-    Parameters
-    ----------
-    fd_values : list of float
-        Framewise displacement per volume (mm).
-    bolus_frame : int
-        Bolus arrival frame index.
-    n_frames : int
-        Number of time frames.
-    min_voxel_dim : float
-        Minimum voxel dimension (mm) for threshold scaling.
-
-    Returns
-    -------
-    numpy.ndarray
-        Per-frame weight array (1.0 = full weight, <1.0 = downweighted).
-
-    """
-    weights = np.ones(n_frames, dtype=np.float64)
-    fd_arr = np.array(fd_values[:n_frames], dtype=np.float64)
-    base_threshold = max(min_voxel_dim * 0.25, 0.1)  # floor at 0.1mm
-    washin_end = min(bolus_frame + 4, n_frames - 1)
-
-    for i in range(n_frames):
-        if bolus_frame <= i <= washin_end:
-            eff_thresh = base_threshold * 0.5  # 2x stricter during wash-in
-        else:
-            eff_thresh = base_threshold
-
-        if fd_arr[i] > eff_thresh:
-            weights[i] = (eff_thresh / fd_arr[i]) ** 2
-
-    return weights
-
-
 def _init_worker(
     aif: "np.ndarray[Any, Any]",
     time_points: "np.ndarray[Any, Any]",
@@ -1420,7 +1366,7 @@ def _init_worker(
     constraint_mode_str: str,
     constraint_vp_uncertainty: float,
     save_fitted_curves: bool = False,
-    motion_weights: Optional[npt.NDArray[np.floating]] = None,
+    temporal_weights: Optional[npt.NDArray[np.floating]] = None,
     sloppy: bool = False,
     random_seed: Optional[int] = None,
     candidate_names: Optional[list[str]] = None,
@@ -1480,7 +1426,7 @@ def _init_worker(
     _worker_ctx["constraint_mode_str"] = constraint_mode_str
     _worker_ctx["constraint_vp_uncertainty"] = constraint_vp_uncertainty
     _worker_ctx["save_fitted_curves"] = save_fitted_curves
-    _worker_ctx["motion_weights"] = motion_weights
+    _worker_ctx["temporal_weights"] = temporal_weights
     _worker_ctx["sloppy"] = sloppy
     _worker_ctx["bic_candidates"] = bic_candidates
     _worker_ctx["is_auto"] = is_auto
@@ -1522,7 +1468,7 @@ def _fit_single_voxel(
     baseline_frames = _worker_ctx["baseline_frames"]
     constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
     constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
-    motion_weights = _worker_ctx["motion_weights"]
+    temporal_weights = _worker_ctx["temporal_weights"]
     sloppy = _worker_ctx.get("sloppy", False)
     is_auto = _worker_ctx.get("is_auto", False)
 
@@ -1569,7 +1515,7 @@ def _fit_single_voxel(
                 # DSC-informed prior only during Bayesian refinement.
                 result = model.fit(
                     prepared_curve, aif, time_points,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                 )
             elif inference == "vi":
                 soft_fitter = BayesianPKFitter(
@@ -1577,7 +1523,7 @@ def _fit_single_voxel(
                 )
                 result = soft_fitter.fit_vi(
                     prepared_curve, aif, time_points,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                     sloppy=sloppy,
                     initial_parameters=initial_parameters,
                 )
@@ -1589,7 +1535,7 @@ def _fit_single_voxel(
                 result = soft_fitter.fit_map(
                     prepared_curve, aif, time_points,
                     compute_uncertainties=not sloppy,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                     sloppy=sloppy,
                     initial_parameters=initial_parameters,
                 )
@@ -1600,7 +1546,7 @@ def _fit_single_voxel(
                 )
                 result = soft_fitter.fit_mcmc(
                     prepared_curve, aif, time_points, n_samples=mcmc_samples,
-                    sloppy=sloppy, weights=motion_weights,
+                    sloppy=sloppy, weights=temporal_weights,
                 )
                 constrained = True
 
@@ -1610,12 +1556,12 @@ def _fit_single_voxel(
                 # is_auto: NLLS for BIC comparison; MAP applied to winner later
                 result = model.fit(
                     prepared_curve, aif, time_points,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                 )
             elif inference == "vi" and fitter is not None:
                 result = fitter.fit_vi(
                     prepared_curve, aif, time_points,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                     sloppy=sloppy,
                     initial_parameters=initial_parameters,
                 )
@@ -1623,7 +1569,7 @@ def _fit_single_voxel(
                 result = fitter.fit_map(
                     prepared_curve, aif, time_points,
                     compute_uncertainties=not sloppy,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                     sloppy=sloppy,
                     initial_parameters=initial_parameters,
                 )
@@ -1631,12 +1577,12 @@ def _fit_single_voxel(
                 result = fitter.fit_mcmc(
                     prepared_curve, aif, time_points,
                     n_samples=mcmc_samples,
-                    sloppy=sloppy, weights=motion_weights,
+                    sloppy=sloppy, weights=temporal_weights,
                 )
             else:
                 result = model.fit(
                     prepared_curve, aif, time_points,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                 )
 
         # N-model BIC selection (auto mode)
@@ -1648,7 +1594,7 @@ def _fit_single_voxel(
             for cname, cmodel in bic_candidates.items():
                 cand_result = cmodel.fit(
                     prepared_curve, aif, time_points,
-                    weights=motion_weights,
+                    weights=temporal_weights,
                 )
                 if cand_result.converged and np.isfinite(cand_result.bic):
                     all_results.append(cand_result)
@@ -1684,7 +1630,7 @@ def _fit_single_voxel(
                     try:
                         best = winner_fitter.fit_vi(
                             prepared_curve, aif, time_points,
-                            weights=motion_weights, sloppy=sloppy,
+                            weights=temporal_weights, sloppy=sloppy,
                             initial_parameters=initial_parameters,
                         )
                         constrained = (
@@ -1711,7 +1657,7 @@ def _fit_single_voxel(
                         best = winner_fitter.fit_map(
                             prepared_curve, aif, time_points,
                             compute_uncertainties=not sloppy,
-                            weights=motion_weights, sloppy=sloppy,
+                            weights=temporal_weights, sloppy=sloppy,
                             initial_parameters=initial_parameters,
                         )
                         constrained = (
@@ -1738,7 +1684,7 @@ def _fit_single_voxel(
                         best = winner_fitter.fit_mcmc(
                             prepared_curve, aif, time_points,
                             n_samples=mcmc_samples, sloppy=sloppy,
-                            weights=motion_weights,
+                            weights=temporal_weights,
                         )
                         constrained = (
                             vp_prior is not None
@@ -2148,13 +2094,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Save fitted concentration curves (large output)",
     )
 
-    # Motion weighting inputs (from dce_preprocess)
-    fd_values = traits.List(
-        traits.Float,
-        desc="Framewise displacement per volume (mm) from motion correction",
-    )
     bolus_arrival_frame = traits.Int(
-        desc="Bolus arrival frame index for phase-adaptive weighting",
+        desc="Bolus arrival frame index for model-free enhancement metrics",
     )
 
     # AIF detection method (gates AIF->tissue BAT pre-alignment)
@@ -3096,43 +3037,6 @@ class ComputeDCEMaps(BaseInterface):
             ser_qc,
         )
 
-    def _prepare_motion_weighting(
-        self,
-        header: Any,
-        n_timepoints: int,
-    ) -> _DCEMotionWeighting:
-        """Build phase-adaptive motion weights from framewise displacement."""
-        if not (
-            isdefined(self.inputs.fd_values)
-            and self.inputs.fd_values
-            and isdefined(self.inputs.bolus_arrival_frame)
-        ):
-            return _DCEMotionWeighting(None, {"applied": False})
-
-        min_voxel_dim = float(min(header.get_zooms()[:3]))
-        bolus_frame = int(self.inputs.bolus_arrival_frame)
-        weights = _compute_motion_weights(
-            fd_values=self.inputs.fd_values,
-            bolus_frame=bolus_frame,
-            n_frames=n_timepoints,
-            min_voxel_dim=min_voxel_dim,
-        )
-        n_downweighted = int(np.sum(weights < 0.95))
-        washin_end = min(bolus_frame + 4, n_timepoints - 1)
-        qc = {
-            "applied": True,
-            "n_downweighted_frames": n_downweighted,
-            "min_weight": float(np.min(weights)),
-            "washin_weights": weights[bolus_frame:washin_end + 1].tolist(),
-        }
-        logger.info(
-            "Motion weighting: %d/%d frames downweighted (min weight=%.3f)",
-            n_downweighted,
-            n_timepoints,
-            float(np.min(weights)),
-        )
-        return _DCEMotionWeighting(weights, qc)
-
     def _initialize_parameter_maps(
         self,
         prepared: _DCEFitPreparation,
@@ -3202,7 +3106,7 @@ class ComputeDCEMaps(BaseInterface):
         prepared: _DCEFitPreparation,
         aif: npt.NDArray[Any],
         vp_constraint: _DCEVPConstraint,
-        motion_weights: Optional[npt.NDArray[np.floating]],
+        temporal_weights: Optional[npt.NDArray[np.floating]],
     ) -> _DCEFitDispatch:
         """Build ordered voxel inputs and shared worker initialization state."""
         from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
@@ -3238,7 +3142,7 @@ class ComputeDCEMaps(BaseInterface):
             vp_constraint.mode.value,
             vp_constraint.vp_uncertainty,
             prepared.save_fitted_curves,
-            motion_weights,
+            temporal_weights,
             sloppy,
             random_seed,
             vp_constraint.candidate_names if prepared.is_auto else None,
@@ -3261,7 +3165,6 @@ class ComputeDCEMaps(BaseInterface):
         mask = prepared.mask
         aif = prepared.aif
         time_points = prepared.time_points
-        n_timepoints = prepared.n_timepoints
         model_name = prepared.model_name
         is_auto = prepared.is_auto
         candidate_names = prepared.candidate_names
@@ -3330,12 +3233,11 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["iauc"] = model_free.iauc_qc
         qc_metrics["ser"] = model_free.ser_qc
 
-        motion = self._prepare_motion_weighting(header, n_timepoints)
-        motion_weights = motion.weights
-        qc_metrics["motion_weighting"] = motion.qc
+        temporal_weights = None
+        qc_metrics["temporal_weighting"] = "unit"
 
         dispatch = self._prepare_fit_dispatch(
-            prepared, aif, vp_constraint, motion_weights,
+            prepared, aif, vp_constraint, temporal_weights,
         )
         mask_coords = dispatch.mask_coords
         voxel_data_list = dispatch.voxel_data
@@ -3354,7 +3256,7 @@ class ComputeDCEMaps(BaseInterface):
             inference=inference,
             is_auto=is_auto,
             candidate_names=candidate_names,
-            motion_weights=motion_weights,
+            temporal_weights=temporal_weights,
             save_fitted_curves=save_fitted_curves,
             sloppy=sloppy,
             mcmc_samples=mcmc_samples,
@@ -3680,7 +3582,7 @@ class ComputeDCEMaps(BaseInterface):
         inference: str,
         is_auto: bool,
         candidate_names: list[str],
-        motion_weights: Optional[npt.NDArray[np.floating]],
+        temporal_weights: Optional[npt.NDArray[np.floating]],
         save_fitted_curves: bool,
         sloppy: bool,
         mcmc_samples: int,
@@ -3713,8 +3615,8 @@ class ComputeDCEMaps(BaseInterface):
             Whether auto-mode BIC selection is active.
         candidate_names : list
             List of candidate model names for auto mode.
-        motion_weights : numpy.ndarray or None
-            Per-frame motion weights or None.
+        temporal_weights : numpy.ndarray or None
+            Optional per-frame likelihood weights; None uses unit weights.
         save_fitted_curves : bool
             Whether to save fitted curves.
         sloppy : bool
@@ -3796,7 +3698,7 @@ class ComputeDCEMaps(BaseInterface):
                 tissue_curves=tissue_curves,
                 aif=aif,
                 time_points=time_points,
-                weights=motion_weights,
+                weights=temporal_weights,
                 save_fitted_curves=(
                     save_fitted_curves or inference == "map"
                 ) if model_name != "patlak" else save_fitted_curves,
@@ -3825,7 +3727,7 @@ class ComputeDCEMaps(BaseInterface):
                 tissue_curves=tissue_curves,
                 aif=aif,
                 time_points=time_points,
-                weights=motion_weights,
+                weights=temporal_weights,
                 save_fitted_curves=True,
                 compute_uncertainties=inference == "nlls",
                 n_procs=n_procs,
@@ -3847,7 +3749,7 @@ class ComputeDCEMaps(BaseInterface):
                 result.fitted_curves,
                 result.converged,
                 _N_PARAMS[cname],
-                motion_weights,
+                temporal_weights,
             )
 
         # Select min-BIC model per voxel
@@ -4128,7 +4030,7 @@ class ComputeDCEMaps(BaseInterface):
             constraint_mode_str,
             constraint_vp_uncertainty,
             save_fitted_curves,
-            motion_weights,
+            temporal_weights,
             sloppy,
             random_seed,
             _candidate_names,
@@ -4169,7 +4071,7 @@ class ComputeDCEMaps(BaseInterface):
                 constraint_mode_str,
                 constraint_vp_uncertainty,
                 save_fitted_curves,
-                motion_weights,
+                temporal_weights,
                 sloppy,
                 random_seed,
                 None,

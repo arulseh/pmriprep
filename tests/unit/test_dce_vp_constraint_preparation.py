@@ -334,11 +334,11 @@ def test_prepare_fit_dispatch_preserves_voxel_order_and_prior_admission() -> Non
         model_name="extended_tofts",
         candidate_names=["patlak", "extended_tofts"],
     )
-    motion_weights = np.array([1.0, 0.5, 1.0, 1.0])
+    temporal_weights = np.array([1.0, 0.5, 1.0, 1.0])
     interface = ComputeDCEMaps(n_procs=0, sloppy=True, random_seed=17)
 
     dispatch = interface._prepare_fit_dispatch(
-        prepared, prepared.aif, constraint, motion_weights,
+        prepared, prepared.aif, constraint, temporal_weights,
     )
 
     assert len(dispatch.voxel_data) == 125
@@ -352,5 +352,5 @@ def test_prepare_fit_dispatch_preserves_voxel_order_and_prior_admission() -> Non
     assert dispatch.sloppy is True
     assert dispatch.random_seed == 17
     assert dispatch.init_args[0] is prepared.aif
-    assert dispatch.init_args[9] is motion_weights
+    assert dispatch.init_args[9] is temporal_weights
     assert dispatch.init_args[-1] == ["patlak", "extended_tofts"]

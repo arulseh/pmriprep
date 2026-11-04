@@ -691,8 +691,8 @@ def init_dsc_deconvolution_wf(
         Leakage-correction coefficient map and exact CPI guidance archive.
     brain_mask_file, enhancing_mask_file
         DSC-space brain and enhancing-tumor masks.
-    tr, te, fd_values
-        Acquisition timing, echo time and framewise displacement.
+    tr, te
+        Acquisition timing and echo time.
 
     Outputs
     -------
@@ -727,7 +727,6 @@ def init_dsc_deconvolution_wf(
                 "enhancing_mask_file",
                 "tr",
                 "te",
-                "fd_values",
                 "signal_file",
                 "raw_concentration_file",
             ]
@@ -782,7 +781,6 @@ def init_dsc_deconvolution_wf(
             ("enhancing_mask_file", "enhancing_mask_file"),
             ("tr", "tr"),
             ("te", "te"),
-            ("fd_values", "fd_values"),
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
         ]),
@@ -2331,9 +2329,6 @@ def init_dsc_preproc_wf(
         (inputnode, deconvolution_wf, [
             ("tr", "inputnode.tr"),
             ("te", "inputnode.te"),
-        ]),
-        (motion_wf, deconvolution_wf, [
-            ("outputnode.fd_values", "inputnode.fd_values"),
         ]),
         (conc_aif_wf, deconvolution_wf, [
             ("outputnode.signal_file", "inputnode.signal_file"),

@@ -902,12 +902,6 @@
     ],
     [
       "motion_correct",
-      "fd",
-      "compute_maps",
-      "fd_values"
-    ],
-    [
-      "motion_correct",
       "mean_img",
       "outputnode",
       "dsc_mean"

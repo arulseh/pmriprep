@@ -269,7 +269,7 @@ def batched_dsc_spatial_vi_fit(
     prior_stds_transformed : npt.NDArray[np.floating], optional
         Pre-computed transformed prior stds.
     weights : npt.NDArray[np.floating], optional
-        Per-frame motion weights or None.
+        Per-frame likelihood weights or None.
     sloppy : bool, optional
         Use fast settings (fewer sweeps and inner iterations).
     save_fitted_curves : bool, optional
