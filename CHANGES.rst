@@ -1,3 +1,10 @@
+1.0.0rc6.dev7 (2026-11-04)
+==========================
+
+* ENH: Package bounded Patlak and rate-profile Extended Tofts fitting with
+  the shared delayed input. Preserve the joint ET volume constraint and
+  recompute residual sums directly. Workflow integration remains pending.
+
 1.0.0rc6.dev6 (2026-11-04)
 ==========================
 

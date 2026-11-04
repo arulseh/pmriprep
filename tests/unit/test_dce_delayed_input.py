@@ -4,10 +4,15 @@ import numpy as np
 import pytest
 from scipy.integrate import quad
 from scipy.interpolate import PchipInterpolator
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, lsq_linear, minimize
 
 from pmriprep.models.dce.delayed import DelayedPchip
-from pmriprep.models.dce.profile_fitting import fit_tofts, tofts_predict
+from pmriprep.models.dce.profile_fitting import (
+    fit_extended_tofts,
+    fit_patlak,
+    fit_tofts,
+    tofts_predict,
+)
 
 
 def _input(dt: float = 7.4) -> tuple[np.ndarray, np.ndarray]:
@@ -137,3 +142,80 @@ def test_tofts_zero_empty_and_invalid_inputs() -> None:
         fit_tofts(context, np.full((1, len(times)), np.nan))
     with pytest.raises(ValueError, match="physical bounds"):
         tofts_predict(context, np.array([-.1, .2]))
+
+
+def test_patlak_box_matches_independent_linear_solver() -> None:
+    """Protect interior, lower/upper edges and residuals on retained observations."""
+    times, aif = _input()
+    context = DelayedPchip(aif, times, -2., np.arange(2, len(times), 2))
+    design = np.column_stack((context.convolution(0.), context.cp))
+    curves = np.array([[.1, .03], [-.2, .2], [.2, 1.4], [5.5, .1]]) @ design.T
+    curves += np.random.default_rng(7).normal(size=curves.shape) * .001
+    fitted = fit_patlak(context, curves)
+    assert np.isnan(fitted.params[:, 1]).all()
+    for i, y in enumerate(curves):
+        independent = lsq_linear(design, y, bounds=([0., 0.], [5., 1.]), tol=1e-14)
+        np.testing.assert_allclose(fitted.params[i, [0, 2]], independent.x, atol=1e-8)
+        np.testing.assert_allclose(fitted.sse[i], np.sum((design @ independent.x - y)**2), atol=1e-10)
+
+
+@pytest.mark.parametrize("dt,delay", [(2., -1.3), (7.4, 5.)])
+def test_et_recovery_feasible_benchmark_and_aif_scaling(dt: float, delay: float) -> None:
+    """Catch an avoidable poorer optimum or failure of feasible scale reciprocity."""
+    times, aif = _input(dt)
+    context = DelayedPchip(aif, times, delay)
+    truth = np.array([[.03, .2, .01], [.3, .4, .1]])
+    curves = np.stack([k * _quadrature(aif, times, delay, k / ve) + vp * context.cp
+                       for k, ve, vp in truth])
+    fitted = fit_extended_tofts(context, curves)
+    np.testing.assert_allclose(fitted.params, truth, atol=2e-6, rtol=1e-5)
+    np.testing.assert_allclose(fitted.sse, 0., atol=1e-12)
+    noisy = curves + np.random.default_rng(12).normal(size=curves.shape) * .002
+    fitted = fit_extended_tofts(context, noisy)
+    assert np.all(fitted.sse <= np.sum((curves - noisy)**2, axis=1) + 1e-12)
+    assert np.all(fitted.params[:, 1:].sum(axis=1) <= 1. + 1e-12)
+    scaled = fit_extended_tofts(DelayedPchip(aif * 1.7, times, delay), noisy)
+    np.testing.assert_allclose(scaled.params * 1.7, fitted.params, atol=1e-6)
+    np.testing.assert_allclose(scaled.sse, fitted.sse, atol=1e-10)
+    prediction = np.stack([k * context.convolution(k / ve) + vp * context.cp
+                           for k, ve, vp in fitted.params])
+    np.testing.assert_allclose(fitted.sse, np.sum((prediction - noisy)**2, axis=1), atol=1e-12)
+
+
+def test_et_joint_volume_edge_matches_constrained_optimizer() -> None:
+    """The coupled constraint must be optimized, not clipped after fitting."""
+    times, aif = _input()
+    context = DelayedPchip(aif, times, 3.5)
+    y = .5 * context.convolution(.5 / .85) + .35 * context.cp
+
+    def objective(p: np.ndarray) -> float:
+        prediction = p[0] * context.convolution(p[0] / p[1]) + p[2] * context.cp
+        return float(np.sum((prediction - y)**2))
+
+    solutions = [minimize(objective, start, method="SLSQP",
+                          bounds=[(0., 5.), (1e-4, 1.), (0., 1.)],
+                          constraints=[{"type": "ineq", "fun": lambda p: 1. - p[1] - p[2]}],
+                          options={"ftol": 1e-12, "maxiter": 300})
+                 for start in ([.2, .5, .1], [.6, .7, .25])]
+    assert all(result.success for result in solutions)
+    fitted = fit_extended_tofts(context, y[None])
+    np.testing.assert_allclose(fitted.params[0, 1:].sum(), 1., atol=1e-8)
+    assert fitted.sse[0] <= min(result.fun for result in solutions) + 1e-9
+    np.testing.assert_allclose(fitted.sse[0], objective(fitted.params[0]), atol=1e-12)
+
+
+def test_vascular_fitters_handle_degenerate_and_invalid_batches() -> None:
+    times, aif = _input()
+    context = DelayedPchip(aif, times)
+    for fit in (fit_patlak, fit_extended_tofts):
+        zero = fit(context, np.zeros((1, len(times))))
+        assert zero.params[0, 0] == 0. and zero.params[0, 2] == 0. and zero.sse[0] == 0.
+        assert fit(context, np.empty((0, len(times)))).params.shape == (0, 3)
+        rank_zero = fit(DelayedPchip(np.zeros_like(aif), times), np.ones((1, len(times))))
+        np.testing.assert_allclose(rank_zero.sse, len(times))
+        with pytest.raises(ValueError, match="member-by-frame"):
+            fit(context, np.ones((1, len(times) - 1)))
+        with pytest.raises(ValueError, match="member-by-frame"):
+            fit(context, np.full((1, len(times)), np.nan))
+        with pytest.raises(ValueError, match="retained observation"):
+            fit(DelayedPchip(aif, times, observed=np.array([], dtype=int)), np.empty((1, 0)))
