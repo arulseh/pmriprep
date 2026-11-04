@@ -222,7 +222,7 @@ class Refinement:
     """Retained kinetics with fixed-selection and fallback provenance."""
 
     fit: FitResult
-    requested_engine: Literal["vi"]
+    requested_engine: Literal["vi", "nlls"]
     actual_engine: Literal["vi", "nlls"]
     family: str
     delay: float

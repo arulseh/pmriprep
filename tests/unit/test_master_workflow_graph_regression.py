@@ -1052,6 +1052,13 @@ def test_prepare_master_context_resolves_session_policy(
         "pmriprep.workflows.base.discover_session_data", lambda *args, **kwargs: session_data
     )
     monkeypatch.setattr("pmriprep.utils.mem.estimate_4d_mem_gb", _estimate)
+    dce_estimates = []
+
+    def _estimate_dce(path: Path, model: str, n_procs: int, delay: bool, sloppy: bool) -> float:
+        dce_estimates.append((path, model, n_procs, delay, sloppy))
+        return 6.0
+
+    monkeypatch.setattr("pmriprep.utils.mem.estimate_dce_mem_gb", _estimate_dce)
     monkeypatch.setattr("pmriprep.utils.mem._system_ram_gb", lambda: 128.0)
     monkeypatch.setattr("pmriprep.workflows.base.shutil.which", lambda _: None)
 
@@ -1076,11 +1083,11 @@ def test_prepare_master_context_resolves_session_policy(
     assert context.work_dir == (tmp_path / "work").resolve()
     assert context.is_postcon_ref is True
     assert context.dsc_mem_gb == 4.0
-    assert context.dce_mem_gb == 5.0
+    assert context.dce_mem_gb == 6.0
     assert estimates == [
         (tmp_path / "dsc.nii.gz", 4, 4.0),
-        (tmp_path / "dce.nii.gz", 5, 4.0),
     ]
+    assert dce_estimates == [(tmp_path / "dce.nii.gz", "auto", 0, True, False)]
     assert context.decision.run_anat is run_anat
     assert context.decision.run_dsc is run_dsc
     assert context.decision.run_dce is run_dce
@@ -1312,7 +1319,7 @@ def test_dce_r1_policy_reaches_preflight_workflow_and_provenance(
     kwargs = dict(
         workflow=workflow, inputnode=inputnode, session_data=session,
         dce_config=config, bids_dir=tmp_path, output_dir=tmp_path / "out",
-        subject_id="0001", session_id="0001", random_seed=None,
+        subject_id="0001", session_id="0001",
         mem_gb=1.0, mem_limit_gb=None, user_specified=None,
     )
     if expected is None:

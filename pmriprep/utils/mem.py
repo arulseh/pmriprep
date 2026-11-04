@@ -73,3 +73,44 @@ def estimate_4d_mem_gb(
     raw_estimate = (n_voxels * n_timepoints * 8 * n_buffers) / 1e9
 
     return cap_mem_gb(raw_estimate, mem_limit_gb), raw_estimate
+
+
+def estimate_dce_mem_gb(
+    nifti_path: Path, model: str, n_procs: int,
+    delay_correction: bool = True, sloppy: bool = False,
+) -> float:
+    """Reserve volume buffers, complete-slice profiles and bounded worker space.
+
+    Parameters
+    ----------
+    nifti_path : Path
+        Dynamic input; only its header is read.
+    model : str
+        Requested family or automatic mode. Auto reserves all three families.
+    n_procs : int
+        Resolved process budget, each with one numerical-library thread.
+    delay_correction, sloppy : bool
+        Select one, thirteen or 121 conditional delay points.
+
+    Returns
+    -------
+    float
+        Uncapped scheduling estimate in GB. Worker/library overhead is estimated
+        at 0.35 GB per process plus 0.5 GB in the parent, in addition to arrays.
+        This is a reservation, not an enforced operating-system memory limit.
+    """
+    import nibabel as nib
+    from pmriprep.models.dce.delay_profiles import MAX_LOCAL_DELAY_SECONDS
+
+    shape = nib.load(nifti_path).header.get_data_shape()  # type: ignore[attr-defined]
+    workers = max(1, n_procs)
+    points = int(MAX_LOCAL_DELAY_SECONDS * (1 if sloppy else 10)) + 1 if delay_correction else 1
+    counts = {"patlak": 3, "tofts": 2, "extended_tofts": 3, "2cxm": 4}
+    families = ["patlak", "extended_tofts", "2cxm"] if model == "auto" else [model]
+    # Parameters plus SSE, status, evaluations, optimality and seed index.
+    point_bytes = sum(8 * counts[f] + 32 for f in families)
+    # Full plane is an upper bound on eligible brain members; two block copies
+    # cover worker results and their serialized transport while assembling.
+    profile_bytes = (shape[0] * shape[1] + 2 * 128 * workers) * points * point_bytes
+    _, buffers = estimate_4d_mem_gb(nifti_path, n_buffers=5)
+    return float(buffers + profile_bytes / 1e9 + 0.5 + 0.35 * workers)

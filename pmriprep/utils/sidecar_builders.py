@@ -1943,13 +1943,10 @@ def enrich_dce_pk_map_sidecar(
         from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
         apply_aif_sidecar(sidecar, map_key, qc_metrics, modality="DCE")
-    # AIF->tissue BAT pre-alignment provenance (records the applied shift, or
-    # the reason none was applied) on every AIF-dependent PK map. Read from both
-    # nesting levels (top-level for a direct node qc dict; under "pk_modeling"
-    # for the merged pipeline qc) — same both-levels handling as the AIF block.
-    bat = qc_metrics.get("bat_correction") or qc_metrics.get("pk_modeling", {}).get("bat_correction")
-    if isinstance(bat, dict):
-        sidecar.setdefault("PerfusionProcessing", {})["BATCorrection"] = dict(bat)
+    # Accept direct node QC or the same record nested in pipeline QC.
+    delay = qc_metrics.get("delay_correction") or qc_metrics.get("pk_modeling", {}).get("delay_correction")
+    if isinstance(delay, dict):
+        sidecar.setdefault("PerfusionProcessing", {})["DelayCorrection"] = dict(delay)
     pk_modeling = qc_metrics.get("pk_modeling")
     fallback = qc_metrics.get("inference_fallback")
     if fallback is None and isinstance(pk_modeling, dict):

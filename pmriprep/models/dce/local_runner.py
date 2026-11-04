@@ -18,6 +18,8 @@ from pmriprep.models.dce.delay_profiles import (
     build_delay_profile,
 )
 from pmriprep.models.dce.delayed import DelayedPchip
+from pmriprep.models.dce.fixed_inference import Refinement
+from pmriprep.models.dce.local_refinement import ConditionalInput, finish_conditional
 from pmriprep.models.dce.local_selection import (
     LocalSelection,
     SelectionMode,
@@ -274,6 +276,7 @@ class LocalDelayRunner:
             next_start = next(starts, None)
             if next_start is not None:
                 pending.append((next_start, self._executor.submit(_fit_profile_block, block(next_start))))
+
         while pending:
             start, future = pending.popleft()
             try:
@@ -285,3 +288,43 @@ class LocalDelayRunner:
             next_start = next(starts, None)
             if next_start is not None:
                 pending.append((next_start, self._executor.submit(_fit_profile_block, block(next_start))))
+
+    def refine_selected(self, inputs: list[ConditionalInput]) -> list[Refinement]:
+        """Reuse the same bounded pool for uncertainty and fixed-delay inference.
+
+        Parameters
+        ----------
+        inputs : list of ConditionalInput
+            Eligible selected fits from the current slice only, in voxel order.
+
+        Returns
+        -------
+        list of Refinement
+            Conditional results in the same order. No new model/delay search or
+            process pool is created, and unexpected failures abort owned workers.
+        """
+        if not self._active:
+            raise RuntimeError("Use an active LocalDelayRunner context.")
+        starts = iter(range(0, len(inputs), self.chunk_size))
+        results: list[Refinement] = []
+        pending: deque[Future[list[Refinement]]] = deque()
+        try:
+            if self._executor is None:
+                for serial_start in starts:
+                    results.extend(finish_conditional(inputs[serial_start:serial_start + self.chunk_size]))
+                return results
+            for _ in range(self.n_procs):
+                start = next(starts, None)
+                if start is not None:
+                    pending.append(self._executor.submit(finish_conditional, inputs[start:start + self.chunk_size]))
+            while pending:
+                future = pending.popleft()
+                results.extend(future.result())
+                del future
+                start = next(starts, None)
+                if start is not None:
+                    pending.append(self._executor.submit(finish_conditional, inputs[start:start + self.chunk_size]))
+        except BaseException:
+            self._close(abort=True)
+            raise
+        return results

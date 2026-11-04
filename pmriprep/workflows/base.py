@@ -2239,7 +2239,6 @@ def _init_master_dce_workflow(
     output_dir: Path,
     subject_id: str,
     session_id: Optional[str],
-    random_seed: Optional[int],
     mem_gb: float,
     mem_limit_gb: Optional[float],
     user_specified: Optional[dict[str, bool]],
@@ -2301,7 +2300,6 @@ def _init_master_dce_workflow(
         session_id=session_id,
         config=dce_config,
         has_tissue_seg=bool(session_data.modalities.t1w_pre),
-        random_seed=random_seed,
         mem_gb=mem_gb,
         mem_limit_gb=mem_limit_gb,
         t1_skip_reason=t1_skip_reason,
@@ -3444,7 +3442,8 @@ def _prepare_master_workflow_context(
     work_dir : path-like, optional
         Nipype working directory used for precomputed-output lookup.
     mem_limit_gb : float, optional
-        User memory ceiling applied to workflow resource estimates.
+        Scheduling budget. DCE reserves its full fitting estimate even when
+        that exceeds the budget; the caller must provide sufficient memory.
     layout : BIDSLayout, optional
         Reusable BIDS index for session discovery.
 
@@ -3455,7 +3454,7 @@ def _prepare_master_workflow_context(
     """
     import copy
 
-    from pmriprep.utils.mem import _system_ram_gb, cap_mem_gb, estimate_4d_mem_gb
+    from pmriprep.utils.mem import _system_ram_gb, cap_mem_gb, estimate_4d_mem_gb, estimate_dce_mem_gb
 
     resolved_bids_dir = Path(bids_dir).resolve()
     resolved_output_dir = Path(output_dir).resolve()
@@ -3493,9 +3492,12 @@ def _prepare_master_workflow_context(
     else:
         dsc_mem_gb, dsc_mem_raw = cap_mem_gb(4.0, mem_limit_gb), 4.0
     if session_data.modalities.dce:
-        dce_mem_gb, dce_mem_raw = estimate_4d_mem_gb(
-            session_data.modalities.dce, n_buffers=5, mem_limit_gb=mem_limit_gb
+        dce_mem_raw = estimate_dce_mem_gb(
+            session_data.modalities.dce, resolved_dce_config.model,
+            resolved_dce_config.num_processes, resolved_dce_config.delay_correction,
+            resolved_dce_config.sloppy,
         )
+        dce_mem_gb = dce_mem_raw
     else:
         dce_mem_gb, dce_mem_raw = cap_mem_gb(6.0, mem_limit_gb), 6.0
 
@@ -3854,7 +3856,6 @@ def init_pmriprep_wf(
             output_dir=output_dir,
             subject_id=subject_id,
             session_id=session_id,
-            random_seed=random_seed,
             mem_gb=dce_mem_gb,
             mem_limit_gb=mem_limit_gb,
             user_specified=user_specified,

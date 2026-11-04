@@ -11,7 +11,6 @@ import pytest
 from pmriprep.interfaces.dce_compute import (
     ComputeDCEMaps,
     _DCEFitPreparation,
-    _DCEVPConstraint,
 )
 from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
@@ -44,7 +43,6 @@ def _prepared(
         peak_enhancement=None,
         fitting_mask=fitting_mask,
         inference=inference,
-        mcmc_samples=500,
         save_fitted_curves=False,
     )
 
@@ -188,7 +186,7 @@ def test_patlak_vi_maps_use_qualified_dsc_prior(tmp_path: Path, model: str) -> N
         aif_file=str(tmp_path / "aif.txt"),
         dsc_ncbv_file=str(tmp_path / "ncbv.nii.gz"),
         model=model, inference="vi", volume_tr=2.0, baseline_frames=15,
-        aif_bat_alignment="off", n_procs=1,
+        delay_correction=False, n_procs=1,
         dsc_aif_qc={
             "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995, "mean_cnr": 10.0},
             "aif_peak_height": 0.4, "baseline_return_ratio": 0.15,
@@ -318,39 +316,3 @@ def test_prepare_vp_constraint_clears_soft_state_after_diagnostic_failure(
     assert result.qc["skip_reason"] == "constraint_preparation_failed"
     assert result.model_name == "patlak"
     assert result.candidate_names == ["patlak"]
-
-
-def test_prepare_fit_dispatch_preserves_voxel_order_and_prior_admission() -> None:
-    """Dispatch state keeps NumPy mask order and admits only finite positive vp."""
-    prepared = _prepared(populated=True)
-    vp_map = np.full(prepared.mask.shape, 0.1, dtype=float)
-    vp_map[0, 0, 0] = np.nan
-    vp_map[0, 0, 1] = -0.1
-    constraint = _DCEVPConstraint(
-        vp_map=vp_map,
-        mode=ConstraintMode.SOFT,
-        vp_uncertainty=0.25,
-        qc={"mode": "soft"},
-        model_name="extended_tofts",
-        candidate_names=["patlak", "extended_tofts"],
-    )
-    temporal_weights = np.array([1.0, 0.5, 1.0, 1.0])
-    interface = ComputeDCEMaps(n_procs=0, sloppy=True, random_seed=17)
-
-    dispatch = interface._prepare_fit_dispatch(
-        prepared, prepared.aif, constraint, temporal_weights,
-    )
-
-    assert len(dispatch.voxel_data) == 125
-    assert dispatch.voxel_data[0].x == 0
-    assert dispatch.voxel_data[0].y == 0
-    assert dispatch.voxel_data[0].z == 0
-    assert dispatch.voxel_data[0].voxel_vp is None
-    assert dispatch.voxel_data[1].voxel_vp is None
-    assert dispatch.voxel_data[2].voxel_vp == 0.1
-    assert dispatch.n_procs == 1
-    assert dispatch.sloppy is True
-    assert dispatch.random_seed == 17
-    assert dispatch.init_args[0] is prepared.aif
-    assert dispatch.init_args[9] is temporal_weights
-    assert dispatch.init_args[-1] == ["patlak", "extended_tofts"]

@@ -6,10 +6,8 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
-    ComputeDCEMaps,
     VoxelInput,
     _account_retained_dce_fit,
-    _accumulate_mcmc_diagnostics,
     _compute_vp_prior_departure,
     _fraction_fxl_risk,
     _is_degenerate_dce_fit,
@@ -23,12 +21,9 @@ from pmriprep.interfaces.dce_compute import (
     _summarize_dce_fitted_parameters,
     _summarize_dce_fit_outcomes,
     _summarize_dce_r2,
-    _summarize_map_uncertainty_sources,
     _summarize_inference_fallback,
-    _summarize_mcmc_diagnostics,
     _summarize_vp_prior_departures,
 )
-from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
 from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
@@ -344,56 +339,6 @@ def test_vp_prior_departure_skips_inapplicable_paths(
     ) is None
 
 
-def test_accumulate_mcmc_diagnostics_groups_parameters_and_counts_voxel() -> None:
-    """One non-empty R-hat record counts once and groups R-hat/ESS by parameter."""
-    rhat: dict[str, list[float]] = {"Ktrans": [1.01]}
-    ess: dict[str, list[float]] = {}
-    increment = _accumulate_mcmc_diagnostics(
-        {
-            "rhat": {"Ktrans": 1.02, "vp": 1.03},
-            "ess": {"Ktrans": 250.0, "vp": 180.0},
-        },
-        rhat,
-        ess,
-    )
-    assert increment == 1
-    assert rhat == {"Ktrans": [1.01, 1.02], "vp": [1.03]}
-    assert ess == {"Ktrans": [250.0], "vp": [180.0]}
-
-
-def test_accumulate_mcmc_diagnostics_retains_ess_without_rhat() -> None:
-    """Ensemble ESS identifies MCMC output when R-hat is unavailable."""
-    rhat: dict[str, list[float]] = {}
-    ess: dict[str, list[float]] = {}
-    increment = _accumulate_mcmc_diagnostics(
-        {"rhat": {}, "ess": {"Ktrans": 250.0}}, rhat, ess,
-    )
-    assert increment == 1
-    assert rhat == {}
-    assert ess == {"Ktrans": [250.0]}
-
-
-def test_summarize_map_uncertainty_sources_counts_actual_outcomes() -> None:
-    """MAP QC separates Hessian covariance, unavailable spread, and no estimate."""
-    summary = _summarize_map_uncertainty_sources(
-        [
-            "laplace_hessian",
-            "hessian_unavailable",
-            "hessian_unavailable",
-            "not_computed",
-        ]
-    )
-
-    assert summary == {
-        "n_retained_voxels": 4,
-        "n_evaluated": 3,
-        "n_laplace_hessian": 1,
-        "n_hessian_unavailable": 2,
-        "n_not_computed": 1,
-        "hessian_unavailable_fraction": pytest.approx(2 / 3),
-    }
-
-
 def test_summarize_inference_fallback_names_denominator() -> None:
     """Bayesian fallback QC reports its engines, count, and retained fraction."""
     assert _summarize_inference_fallback("nlls", 8, 0) is None
@@ -441,26 +386,6 @@ def test_retained_fit_accounting_skip_mode_never_marks_fallback() -> None:
         ConstraintMode.SKIP,
     )
     assert update.n_unconstrained_fallback == 0
-
-
-def test_summarize_mcmc_diagnostics_preserves_threshold_fractions() -> None:
-    """MCMC summary uses inclusive R-hat and strict ESS failure thresholds."""
-    summary = _summarize_mcmc_diagnostics(
-        2,
-        {"Ktrans": [QC_RHAT_MAX - 0.1, QC_RHAT_MAX]},
-        {"Ktrans": [QC_ESS_MIN - 1.0, QC_ESS_MIN]},
-    )
-    assert summary is not None
-    assert summary["n_mcmc_voxels"] == 2
-    assert summary["rhat_median_Ktrans"] == pytest.approx(QC_RHAT_MAX - 0.05)
-    assert summary["rhat_frac_poor_Ktrans"] == 0.5
-    assert summary["ess_median_Ktrans"] == pytest.approx(QC_ESS_MIN - 0.5)
-    assert summary["ess_frac_low_Ktrans"] == 0.5
-
-
-def test_summarize_mcmc_diagnostics_returns_none_without_voxels() -> None:
-    """No MCMC voxels omit the diagnostics block entirely."""
-    assert _summarize_mcmc_diagnostics(0, {}, {}) is None
 
 
 def test_summarize_vp_prior_departures_preserves_strict_categories() -> None:
@@ -647,75 +572,6 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
     assert summary.r2_values == []
 
 
-def test_nonconverged_very_poor_r2_is_unsuccessful_not_execution_error() -> None:
-    """A completed fixed-model fit with very poor R² has fit-stage provenance."""
-    fit_result = SimpleNamespace(
-        params={"Ktrans": np.array([0.1]), "ve": np.array([0.3])},
-        r_squared=np.array([-0.75]),
-        converged=np.array([False]),
-        uncertainties={},
-        fitted_curves=None,
-    )
-
-    result = ComputeDCEMaps()._fit_result_to_dicts(
-        fit_result,
-        np.array([[0, 0, 0]]),
-        "tofts",
-    )[0]
-
-    assert result["failed"] is True
-    assert result["failure_stage"] == "fit"
-    assert result["failure_reason"] == "nonconverged_very_poor_r2"
-
-
-@pytest.mark.parametrize("rejected_rate", [KTRANS_BOUNDS.max, np.nan, np.inf])
-def test_map_uncertainty_accounting_excludes_postfit_rejection(rejected_rate: float) -> None:
-    """MAP retained-voxel accounting excludes a degenerate rejected fit."""
-    voxels = [
-        VoxelInput(0, 0, 0, np.zeros(3), None),
-        VoxelInput(0, 0, 0, np.zeros(3), None),
-    ]
-    base_result = {
-        "failed": False,
-        "coords": (0, 0, 0),
-        "selected_model_name": "tofts",
-        "delta_bic": np.nan,
-        "constrained": False,
-        "r_squared": 0.9,
-        "converged": True,
-        "uncertainties": {},
-        "fitted_curve": None,
-        "rhat": {},
-        "ess": {},
-    }
-    rejected = {
-        **base_result,
-        "params": {"Ktrans": rejected_rate, "ve": 0.3},
-        "uncertainty_source": "hessian_unavailable",
-    }
-    retained = {
-        **base_result,
-        "params": {"Ktrans": 0.1, "ve": 0.3},
-        "uncertainty_source": "laplace_hessian",
-        "inference_fallback": True,
-    }
-
-    summary = _scatter_dce_fit_results(
-        voxels,
-        [rejected, retained],
-        _uncertainty_maps(),
-        "tofts",
-        False,
-        "map",
-        ConstraintMode.SKIP,
-        0.0,
-    )
-
-    assert summary.n_rejected_postfit == 1
-    assert summary.map_uncertainty_sources == ["laplace_hessian"]
-    assert summary.n_inference_fallback == 1
-
-
 def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
     """Initial QC state retains counts, settings, and alignment provenance."""
     prepared = SimpleNamespace(
@@ -729,12 +585,12 @@ def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
         n_timepoints=80,
     )
     constraint_qc = {"mode": "soft"}
-    bat_correction = {"applied": True}
+    delay_correction = {"applied": True}
     summary = _initialize_dce_qc_metrics(
         prepared,
         "extended_tofts",
         constraint_qc,
-        bat_correction,
+        delay_correction,
         3.0,
         1e-6,
     )
@@ -747,5 +603,5 @@ def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
         "acquisition_duration_seconds": 197.5,
         "two_cxm_auto_sampling_eligible": True,
         "dsc_cbv_constraint": constraint_qc,
-        "bat_correction": bat_correction,
+        "delay_correction": delay_correction,
     }

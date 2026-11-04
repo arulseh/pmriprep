@@ -9,7 +9,7 @@ import logging
 import time
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple, Optional, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -24,7 +24,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
-    EPSILON_RATIO,
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
     KEP_BOUNDS,
@@ -35,14 +34,24 @@ from pmriprep.utils.dce_constants import (
     VP_VE_TOTAL_MAX,
 )
 from pmriprep.models.dce.retention import is_degenerate_fit as _is_degenerate_dce_fit
-from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
-from pmriprep.utils.dce_metrics import compute_kep
 
 logger = logging.getLogger("nipype.interface")
 
 # Absolute fraction tolerance used only to classify optimizer contact with the
 # physical volume endpoints in the secondary quantitative QC mask.
 _VOLUME_QC_ENDPOINT_ATOL: float = 1e-6
+
+_K2_QC_KEYS = {
+    "k2_mean", "k2_std", "k2_min", "k2_max", "k2_median", "k2_p05", "k2_p95",
+    "percent_negative_k2", "percent_k2_undefined",
+    "n_brain_voxels", "n_k2_valid", "auc_mean",
+    "k2_signed", "k2_reference_available",
+    "k2_reference_total_voxels", "k2_reference_selected_voxels",
+    "k2_reference_selected_fraction", "k2_reference_baseline_frames",
+    "k2_reference_tail_frames", "k2_reference_selection",
+    "k2_reference_selection_domain", "k2_reference_peak",
+    "k2_reference_failure_reason", "leakage_correction_disabled",
+}
 
 
 def _scatter_dce_uncertainties(
@@ -86,103 +95,6 @@ def _scatter_dce_uncertainties(
             maps.ps_std[x, y, z] = uncertainties["PS"] * (
                 maps.sigma_factor.get("PS", 1.0)
             )
-
-
-def _compute_auto_bic(
-    tissue_curves: npt.NDArray[np.floating],
-    fitted_curves: npt.NDArray[np.floating],
-    converged: npt.NDArray[np.bool_],
-    n_parameters: int,
-    weights: Optional[npt.NDArray[np.floating]] = None,
-) -> npt.NDArray[np.floating]:
-    """Compute per-voxel BIC using the likelihood fitted by NLLS.
-
-    Optional weights are inverse-variance reliability weights in the fitting
-    objective. When present, the same weighted RSS must determine model
-    selection so deliberately downweighted frames cannot dominate BIC. The
-    observation count remains the acquired frame count; weights do not
-    represent replicated observations.
-    """
-    from pmriprep.models.dce.base import EPSILON_RSS
-
-    n_timepoints = tissue_curves.shape[1]
-    frame_weights: npt.NDArray[np.float64]
-    if weights is None:
-        frame_weights = np.ones(n_timepoints, dtype=np.float64)
-    else:
-        frame_weights = np.maximum(np.asarray(weights, dtype=np.float64), 0.0)
-    n_observations = max(n_timepoints, 1)
-    residuals = tissue_curves - fitted_curves
-    rss = np.sum(frame_weights[None, :] * residuals**2, axis=1)
-    rss_safe = np.maximum(rss, EPSILON_RSS)
-    bic: npt.NDArray[np.float64] = np.asarray(
-        n_observations * np.log(rss_safe / n_observations)
-        + float(n_parameters) * np.log(n_observations),
-        dtype=np.float64,
-    )
-    bic[~converged] = np.inf
-    return bic
-
-
-def _select_auto_bic_winners(
-    candidate_names: list[str],
-    bic_arrays: dict[str, npt.NDArray[np.floating]],
-    n_parameters: dict[str, int],
-    min_upgrade_bic: float = 6.0,
-) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.floating], npt.NDArray[np.bool_]]:
-    """Select auto-mode models with evidence measured against the simplest.
-
-    ``delta_bic`` retains the exported winner-versus-runner-up convention.
-    The conservative upgrade guard is a separate comparison: a more complex
-    raw winner is retained when its BIC improves on the simplest converged
-    candidate by at least ``min_upgrade_bic``.
-    """
-    bic_stack = np.stack([bic_arrays[name] for name in candidate_names])
-    finite = np.isfinite(bic_stack)
-    valid = np.any(finite, axis=0)
-    winner_idx = np.argmin(bic_stack, axis=0).astype(np.intp, copy=False)
-
-    sorted_bics = np.sort(bic_stack, axis=0)
-    if len(candidate_names) > 1:
-        both_finite = np.isfinite(sorted_bics[0]) & np.isfinite(sorted_bics[1])
-        delta_bic = np.full(bic_stack.shape[1], np.nan)
-        np.subtract(
-            sorted_bics[1],
-            sorted_bics[0],
-            out=delta_bic,
-            where=both_finite,
-        )
-    else:
-        delta_bic = np.full(bic_stack.shape[1], np.nan)
-
-    parameter_counts = np.array(
-        [n_parameters[name] for name in candidate_names]
-    )
-    simplest_idx = int(np.argmin(parameter_counts))
-    simplest_bic = bic_stack[simplest_idx]
-    best_bic = bic_stack[winner_idx, np.arange(bic_stack.shape[1])]
-    finite_evidence = np.isfinite(simplest_bic) & np.isfinite(best_bic)
-    evidence_over_simplest = np.full(bic_stack.shape[1], np.nan)
-    np.subtract(
-        simplest_bic,
-        best_bic,
-        out=evidence_over_simplest,
-        where=finite_evidence,
-    )
-    downgrade = (
-        valid
-        & (winner_idx != simplest_idx)
-        & np.isfinite(simplest_bic)
-        & (evidence_over_simplest < min_upgrade_bic)
-    )
-    winner_idx[downgrade] = simplest_idx
-    delta_bic[downgrade] = np.nan
-    return winner_idx, delta_bic, valid
-
-
-def _candidate_bic_for_selection(candidate: Any) -> float:
-    """Return a candidate BIC only when its optimizer converged."""
-    return float(candidate.bic) if bool(candidate.converged) else np.inf
 
 
 def _scatter_dce_fit_artifacts(
@@ -260,23 +172,6 @@ def _compute_vp_prior_departure(
     return abs(fitted_vp - voxel_prior) / prior_sigma
 
 
-def _accumulate_mcmc_diagnostics(
-    result: dict[str, Any],
-    rhat_lists: dict[str, list[float]],
-    ess_lists: dict[str, list[float]],
-) -> int:
-    """Accumulate one voxel's MCMC diagnostics and return its count increment."""
-    voxel_rhat = result.get("rhat", {})
-    voxel_ess = result.get("ess", {})
-    if not voxel_rhat and not voxel_ess:
-        return 0
-    for parameter, value in voxel_rhat.items():
-        rhat_lists.setdefault(parameter, []).append(value)
-    for parameter, value in voxel_ess.items():
-        ess_lists.setdefault(parameter, []).append(value)
-    return 1
-
-
 def _account_retained_dce_fit(
     voxel: "VoxelInput",
     result: dict[str, Any],
@@ -316,11 +211,7 @@ def _scatter_dce_fit_results(
     n_unconstrained_fallback = n_rejected_postfit = 0
     r2_values: list[float] = []
     failure_reasons: dict[str, int] = {}
-    mcmc_rhat: dict[str, list[float]] = {}
-    mcmc_ess: dict[str, list[float]] = {}
-    n_mcmc_voxels = 0
     vp_prior_departures: list[float] = []
-    map_uncertainty_sources: list[str] = []
     n_inference_fallback = 0
     for voxel, result in zip(voxel_data, results):
         if result["failed"]:
@@ -350,10 +241,6 @@ def _scatter_dce_fit_results(
         n_retained += 1
         maps.retained_nondegenerate[coords] = True
         n_inference_fallback += int(bool(result.get("inference_fallback", False)))
-        if inference == "map":
-            map_uncertainty_sources.append(
-                str(result.get("uncertainty_source", "not_computed"))
-            )
         _scatter_dce_parameters(
             maps, coords, selected_model, params, result["r_squared"],
         )
@@ -377,9 +264,6 @@ def _scatter_dce_fit_results(
         n_unconstrained_fallback += accounting.n_unconstrained_fallback
         if accounting.r_squared is not None:
             r2_values.append(accounting.r_squared)
-        n_mcmc_voxels += _accumulate_mcmc_diagnostics(
-            result, mcmc_rhat, mcmc_ess
-        )
     return _DCEFitSummary(
         n_optimizer_converged,
         n_prefit_rejected,
@@ -391,37 +275,9 @@ def _scatter_dce_fit_results(
         n_rejected_postfit,
         r2_values,
         failure_reasons,
-        mcmc_rhat,
-        mcmc_ess,
-        n_mcmc_voxels,
         vp_prior_departures,
-        map_uncertainty_sources,
         n_inference_fallback,
     )
-
-
-def _summarize_mcmc_diagnostics(
-    n_mcmc_voxels: int,
-    rhat_lists: dict[str, list[float]],
-    ess_lists: dict[str, list[float]],
-) -> Optional[dict[str, Any]]:
-    """Summarize accumulated MCMC convergence diagnostics."""
-    if n_mcmc_voxels <= 0:
-        return None
-    from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
-
-    summary: dict[str, Any] = {"n_mcmc_voxels": n_mcmc_voxels}
-    for parameter, values in rhat_lists.items():
-        array = np.array(values)
-        summary[f"rhat_median_{parameter}"] = float(np.median(array))
-        summary[f"rhat_frac_poor_{parameter}"] = float(
-            np.mean(array >= QC_RHAT_MAX)
-        )
-    for parameter, values in ess_lists.items():
-        array = np.array(values)
-        summary[f"ess_median_{parameter}"] = float(np.median(array))
-        summary[f"ess_frac_low_{parameter}"] = float(np.mean(array < QC_ESS_MIN))
-    return summary
 
 
 def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
@@ -434,24 +290,6 @@ def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
         "z_departure_p90": float(np.percentile(array, 90)),
         "frac_prior_dominated": float(np.mean(array < 0.5)),
         "frac_strong_departure": float(np.mean(array > 2.0)),
-    }
-
-
-def _summarize_map_uncertainty_sources(
-    sources: list[str],
-) -> dict[str, int | float]:
-    """Summarize run-time MAP Hessian uncertainty availability."""
-    n_laplace = sources.count("laplace_hessian")
-    n_hessian_unavailable = sources.count("hessian_unavailable")
-    n_not_computed = sources.count("not_computed")
-    n_evaluated = n_laplace + n_hessian_unavailable
-    return {
-        "n_retained_voxels": len(sources),
-        "n_evaluated": n_evaluated,
-        "n_laplace_hessian": n_laplace,
-        "n_hessian_unavailable": n_hessian_unavailable,
-        "n_not_computed": n_not_computed,
-        "hessian_unavailable_fraction": n_hessian_unavailable / max(1, n_evaluated),
     }
 
 
@@ -1060,7 +898,7 @@ def _initialize_dce_qc_metrics(
     prepared: "_DCEFitPreparation",
     model_name: str,
     constraint_qc: dict[str, Any],
-    bat_correction: dict[str, Any],
+    delay_correction: dict[str, Any],
     two_cxm_max_tr_seconds: float,
     tr_comparison_tolerance_seconds: float,
 ) -> dict[str, Any]:
@@ -1079,7 +917,7 @@ def _initialize_dce_qc_metrics(
             <= two_cxm_max_tr_seconds + tr_comparison_tolerance_seconds
         ),
         "dsc_cbv_constraint": constraint_qc,
-        "bat_correction": bat_correction,
+        "delay_correction": delay_correction,
     }
 
 
@@ -1166,27 +1004,10 @@ class VoxelInput(NamedTuple):
     z: int
     tissue_curve: npt.NDArray[Any]
     voxel_vp: Optional[float]
-    initial_parameters: Optional[dict[str, float]] = None
-
-
-class BatchedChunkArgs(NamedTuple):
-    """Typed container for batched NLLS chunk-worker arguments.
-
-    Defined at module scope for process-pool pickling. Named fields keep
-    chunk-worker inputs explicit and type-checkable.
-    """
-
-    model_name: str
-    tissue_curves: npt.NDArray[Any]
-    aif: npt.NDArray[Any]
-    time_points: npt.NDArray[Any]
-    weights: Optional[npt.NDArray[Any]]
-    save_fitted_curves: bool
-    compute_uncertainties: bool
 
 
 class _DCEFitPreparation(NamedTuple):
-    """Validated DCE inputs and pre-BAT fitting-domain state."""
+    """Validated DCE inputs and pre-fit fitting-domain state."""
 
     concentration: npt.NDArray[Any]
     affine: npt.NDArray[Any]
@@ -1205,15 +1026,7 @@ class _DCEFitPreparation(NamedTuple):
     peak_enhancement: Optional[npt.NDArray[Any]]
     fitting_mask: npt.NDArray[np.bool_]
     inference: str
-    mcmc_samples: int
     save_fitted_curves: bool
-
-
-class _DCEBATAlignment(NamedTuple):
-    """AIF curve and QC state after optional tissue-arrival alignment."""
-
-    aif: npt.NDArray[Any]
-    correction: dict[str, Any]
 
 
 class _DCEVPConstraint(NamedTuple):
@@ -1266,17 +1079,6 @@ class _DCEParameterMaps(NamedTuple):
     save_2cxm: bool
 
 
-class _DCEFitDispatch(NamedTuple):
-    """Voxel ordering and worker state shared by all DCE fitting paths."""
-
-    mask_coords: tuple[npt.NDArray[Any], ...]
-    voxel_data: list[VoxelInput]
-    init_args: tuple[Any, ...]
-    n_procs: int
-    sloppy: bool
-    random_seed: Optional[int]
-
-
 class _DCEFitAccountingUpdate(NamedTuple):
     """Constraint diagnostics contributed by one retained DCE fit result."""
 
@@ -1298,615 +1100,8 @@ class _DCEFitSummary(NamedTuple):
     n_rejected_postfit: int
     r2_values: list[float]
     failure_reasons: dict[str, int]
-    mcmc_rhat: dict[str, list[float]]
-    mcmc_ess: dict[str, list[float]]
-    n_mcmc_voxels: int
     vp_prior_departures: list[float]
-    map_uncertainty_sources: list[str]
     n_inference_fallback: int
-
-
-# BatchedChunkArgs must be defined at module scope so process-pool workers
-# can pickle it.
-assert BatchedChunkArgs.__module__ == __name__, (
-    "BatchedChunkArgs must be defined at module top-level for pickle safety"
-)
-
-
-# =========================================================================
-# Module-level worker functions for multiprocessing (must be picklable)
-# =========================================================================
-_worker_ctx: dict[str, Any] = {}
-
-
-def _init_worker(
-    aif: "np.ndarray[Any, Any]",
-    time_points: "np.ndarray[Any, Any]",
-    model_name: str,
-    inference: str,
-    mcmc_samples: int,
-    baseline_frames: int,
-    constraint_mode_str: str,
-    constraint_vp_uncertainty: float,
-    save_fitted_curves: bool = False,
-    temporal_weights: Optional[npt.NDArray[np.floating]] = None,
-    sloppy: bool = False,
-    random_seed: Optional[int] = None,
-    candidate_names: Optional[list[str]] = None,
-) -> None:
-    """Initialize per-worker model and fitter objects (called once per process)."""
-    from pmriprep.utils.parallel import limit_worker_threads
-    limit_worker_threads()
-
-    import warnings
-
-    from pmriprep.models.dce import BayesianPKFitter
-    from pmriprep.models.dce import (
-        ToftsModel,
-        ExtendedToftsModel,
-        PatlakModel,
-        TwoCompartmentExchangeModel,
-    )
-    from pmriprep.models.dce.bayesian import create_vp_prior_from_dsc
-    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
-
-    # Suppress Nelder-Mead RuntimeWarnings in worker processes
-    warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-    # Seed RNG in worker process for reproducibility — offset by PID
-    # so parallel workers explore different random sequences
-    if random_seed is not None:
-        import os
-        np.random.seed(random_seed + os.getpid() % (2**31))
-
-    model_map: dict[str, type] = {
-        "tofts": ToftsModel,
-        "extended_tofts": ExtendedToftsModel,
-        "patlak": PatlakModel,
-        "2cxm": TwoCompartmentExchangeModel,
-    }
-    model = model_map[model_name]()
-
-    fitter = None
-    if inference != "nlls":
-        fitter = BayesianPKFitter(model)
-
-    # BIC model selection: instantiate all candidate models
-    bic_candidates: dict[str, Any] = {}
-    is_auto = bool(candidate_names)
-    for cname in (candidate_names or []):
-        if cname != model_name:
-            bic_candidates[cname] = model_map[cname]()
-
-    _worker_ctx["aif"] = aif
-    _worker_ctx["time_points"] = time_points
-    _worker_ctx["model"] = model
-    _worker_ctx["model_name"] = model_name
-    _worker_ctx["fitter"] = fitter
-    _worker_ctx["inference"] = inference
-    _worker_ctx["mcmc_samples"] = mcmc_samples
-    _worker_ctx["baseline_frames"] = baseline_frames
-    _worker_ctx["constraint_mode_str"] = constraint_mode_str
-    _worker_ctx["constraint_vp_uncertainty"] = constraint_vp_uncertainty
-    _worker_ctx["save_fitted_curves"] = save_fitted_curves
-    _worker_ctx["temporal_weights"] = temporal_weights
-    _worker_ctx["sloppy"] = sloppy
-    _worker_ctx["bic_candidates"] = bic_candidates
-    _worker_ctx["is_auto"] = is_auto
-    _worker_ctx["model_map"] = model_map
-    _worker_ctx["BayesianPKFitter"] = BayesianPKFitter
-    _worker_ctx["create_vp_prior_from_dsc"] = create_vp_prior_from_dsc
-    _worker_ctx["ConstraintMode"] = ConstraintMode
-
-
-def _fit_single_voxel(
-    voxel_data: VoxelInput,
-) -> dict[str, Any]:
-    """Fit a single voxel using the worker-local model/fitter.
-
-    Parameters
-    ----------
-    voxel_data : VoxelInput
-        VoxelInput with (x, y, z, tissue_curve, voxel_vp).
-
-    Returns
-    -------
-    dict
-        Dict with keys: coords, params, r_squared, converged, uncertainties,
-        fitted_curve, failed, failure_reason, failure_stage,
-        constrained.
-    """
-    BayesianPKFitter = _worker_ctx["BayesianPKFitter"]
-    create_vp_prior_from_dsc = _worker_ctx["create_vp_prior_from_dsc"]
-    ConstraintMode = _worker_ctx["ConstraintMode"]
-
-    x, y, z, tissue_curve, voxel_vp, initial_parameters = voxel_data
-
-    model = _worker_ctx["model"]
-    fitter = _worker_ctx["fitter"]
-    aif = _worker_ctx["aif"]
-    time_points = _worker_ctx["time_points"]
-    inference = _worker_ctx["inference"]
-    mcmc_samples = _worker_ctx["mcmc_samples"]
-    baseline_frames = _worker_ctx["baseline_frames"]
-    constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
-    constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
-    temporal_weights = _worker_ctx["temporal_weights"]
-    sloppy = _worker_ctx.get("sloppy", False)
-    is_auto = _worker_ctx.get("is_auto", False)
-
-    # Validate voxel without adding a concentration-variation gate: the shared
-    # upstream domain is deliberately permissive, and quantitative acceptance
-    # is represented separately by the QC mask for every inference path.
-    prep = prepare_voxel_for_fitting(
-        tissue_curve, baseline_frames, skip_variation_check=True
-    )
-    if not prep.is_valid:
-        return {
-            "coords": (x, y, z),
-            "failed": True,
-            "failure_reason": prep.failure_reason,
-            "failure_stage": "prefit",
-        }
-
-    # Preserve the signed concentration supplied by signal conversion.
-    prepared_curve = prep.concentration
-
-    try:
-        result = None
-        constrained = False
-        prior_vp: Optional[float] = None
-        vp_prior = None  # Shared with Bayesian refinement of the BIC winner.
-        delta_bic = np.nan
-
-        # Determine constraint state
-        if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
-            prior_vp = voxel_vp
-
-        # SOFT constraint: Bayesian with informative vp prior
-        if (
-            prior_vp is not None
-            and constraint_mode == ConstraintMode.SOFT
-            and inference != "nlls"
-            and (is_auto or model.name in _MODEL_HAS_VP)
-        ):
-            vp_prior = create_vp_prior_from_dsc(
-                prior_vp, relative_uncertainty=constraint_vp_uncertainty
-            )
-            if is_auto:
-                # Select the model from bounded DCE fits, then apply the
-                # DSC-informed prior only during Bayesian refinement.
-                result = model.fit(
-                    prepared_curve, aif, time_points,
-                    weights=temporal_weights,
-                )
-            elif inference == "vi":
-                soft_fitter = BayesianPKFitter(
-                    model, vp_prior_override=vp_prior
-                )
-                result = soft_fitter.fit_vi(
-                    prepared_curve, aif, time_points,
-                    weights=temporal_weights,
-                    sloppy=sloppy,
-                    initial_parameters=initial_parameters,
-                )
-                constrained = True
-            elif inference == "map":
-                soft_fitter = BayesianPKFitter(
-                    model, vp_prior_override=vp_prior
-                )
-                result = soft_fitter.fit_map(
-                    prepared_curve, aif, time_points,
-                    compute_uncertainties=not sloppy,
-                    weights=temporal_weights,
-                    sloppy=sloppy,
-                    initial_parameters=initial_parameters,
-                )
-                constrained = True
-            elif inference == "mcmc":
-                soft_fitter = BayesianPKFitter(
-                    model, vp_prior_override=vp_prior
-                )
-                result = soft_fitter.fit_mcmc(
-                    prepared_curve, aif, time_points, n_samples=mcmc_samples,
-                    sloppy=sloppy, weights=temporal_weights,
-                )
-                constrained = True
-
-        # Retry with the model's ordinary priors.
-        if result is None:
-            if is_auto or inference == "nlls":
-                # is_auto: NLLS for BIC comparison; MAP applied to winner later
-                result = model.fit(
-                    prepared_curve, aif, time_points,
-                    weights=temporal_weights,
-                )
-            elif inference == "vi" and fitter is not None:
-                result = fitter.fit_vi(
-                    prepared_curve, aif, time_points,
-                    weights=temporal_weights,
-                    sloppy=sloppy,
-                    initial_parameters=initial_parameters,
-                )
-            elif inference == "map" and fitter is not None:
-                result = fitter.fit_map(
-                    prepared_curve, aif, time_points,
-                    compute_uncertainties=not sloppy,
-                    weights=temporal_weights,
-                    sloppy=sloppy,
-                    initial_parameters=initial_parameters,
-                )
-            elif inference == "mcmc" and fitter is not None:
-                result = fitter.fit_mcmc(
-                    prepared_curve, aif, time_points,
-                    n_samples=mcmc_samples,
-                    sloppy=sloppy, weights=temporal_weights,
-                )
-            else:
-                result = model.fit(
-                    prepared_curve, aif, time_points,
-                    weights=temporal_weights,
-                )
-
-        # N-model BIC selection (auto mode)
-        bic_candidates = _worker_ctx.get("bic_candidates", {})
-
-        if is_auto and bic_candidates:
-            all_results = [result]  # primary model already fitted
-
-            for cname, cmodel in bic_candidates.items():
-                cand_result = cmodel.fit(
-                    prepared_curve, aif, time_points,
-                    weights=temporal_weights,
-                )
-                if cand_result.converged and np.isfinite(cand_result.bic):
-                    all_results.append(cand_result)
-
-            result_names = [candidate.model_name for candidate in all_results]
-            winner_idx, selected_delta_bic, _ = _select_auto_bic_winners(
-                result_names,
-                {
-                    candidate.model_name: np.asarray(
-                        [_candidate_bic_for_selection(candidate)]
-                    )
-                    for candidate in all_results
-                },
-                {
-                    candidate.model_name: candidate.n_parameters
-                    for candidate in all_results
-                },
-            )
-            best = all_results[int(winner_idx[0])]
-            delta_bic = float(selected_delta_bic[0])
-
-            # Bayesian refinement of BIC winner
-            if inference == "vi":
-                model_map = _worker_ctx.get("model_map", {})
-                winner_model_cls = model_map.get(best.model_name)
-                if winner_model_cls is not None:
-                    winner_model = winner_model_cls()
-                    vp_prior_kw = (
-                        {"vp_prior_override": vp_prior}
-                        if vp_prior is not None else {}
-                    )
-                    winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
-                    try:
-                        best = winner_fitter.fit_vi(
-                            prepared_curve, aif, time_points,
-                            weights=temporal_weights, sloppy=sloppy,
-                            initial_parameters=initial_parameters,
-                        )
-                        constrained = (
-                            vp_prior is not None
-                            and best.model_name in _MODEL_HAS_VP
-                        )
-                    except Exception:
-                        logger.debug(
-                            "VI refinement failed at (%d,%d,%d), keeping NLLS",
-                            x, y, z, exc_info=True,
-                        )
-
-            elif inference == "map":
-                model_map = _worker_ctx.get("model_map", {})
-                winner_model_cls = model_map.get(best.model_name)
-                if winner_model_cls is not None:
-                    winner_model = winner_model_cls()
-                    vp_prior_kw = (
-                        {"vp_prior_override": vp_prior}
-                        if vp_prior is not None else {}
-                    )
-                    winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
-                    try:
-                        best = winner_fitter.fit_map(
-                            prepared_curve, aif, time_points,
-                            compute_uncertainties=not sloppy,
-                            weights=temporal_weights, sloppy=sloppy,
-                            initial_parameters=initial_parameters,
-                        )
-                        constrained = (
-                            vp_prior is not None
-                            and best.model_name in _MODEL_HAS_VP
-                        )
-                    except Exception:
-                        logger.debug(
-                            "MAP refinement failed at (%d,%d,%d), keeping NLLS",
-                            x, y, z, exc_info=True,
-                        )
-
-            elif inference == "mcmc":
-                model_map = _worker_ctx.get("model_map", {})
-                winner_model_cls = model_map.get(best.model_name)
-                if winner_model_cls is not None:
-                    winner_model = winner_model_cls()
-                    vp_prior_kw = (
-                        {"vp_prior_override": vp_prior}
-                        if vp_prior is not None else {}
-                    )
-                    winner_fitter = BayesianPKFitter(winner_model, **vp_prior_kw)
-                    try:
-                        best = winner_fitter.fit_mcmc(
-                            prepared_curve, aif, time_points,
-                            n_samples=mcmc_samples, sloppy=sloppy,
-                            weights=temporal_weights,
-                        )
-                        constrained = (
-                            vp_prior is not None
-                            and best.model_name in _MODEL_HAS_VP
-                        )
-                    except Exception:
-                        logger.debug(
-                            "MCMC refinement failed at (%d,%d,%d), keeping NLLS",
-                            x, y, z, exc_info=True,
-                        )
-
-            result = best
-
-        # Determine effective model name for this voxel
-        selected_model_name = result.model_name
-
-        # Build output dict
-        effective_model = selected_model_name
-        has_vp = effective_model in ("extended_tofts", "patlak", "2cxm")
-        uncertainties = {}
-        if result.has_uncertainty():
-            if effective_model != "2cxm":
-                uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
-            if effective_model not in ("patlak",):
-                uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
-            if has_vp:
-                uncertainties["vp"] = result.get_uncertainty("vp", 0.0)
-            # 2CXM-specific: Fp and PS uncertainties
-            if effective_model == "2cxm":
-                uncertainties["Fp"] = result.get_uncertainty("Fp", 0.0)
-                uncertainties["PS"] = result.get_uncertainty("PS", 0.0)
-
-        fitted_curve = None
-        if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
-            fitted_curve = result.fitted_curve
-
-        params = dict(result.parameters)
-        _compute_derived_params(params, effective_model)
-
-        return {
-            "coords": (x, y, z),
-            "params": params,
-            "r_squared": result.r_squared,
-            "converged": result.converged,
-            "uncertainties": uncertainties,
-            "uncertainty_source": result.uncertainty_source,
-            "fitted_curve": fitted_curve,
-            "rhat": getattr(result, "rhat", {}),
-            "ess": getattr(result, "ess", {}),
-            "failed": False,
-            "failure_reason": None,
-            "constrained": constrained,
-            "selected_model_name": selected_model_name,
-            "delta_bic": float(delta_bic) if is_auto else np.nan,
-        }
-
-    except Exception:
-        # Recoverable optimizer nonconvergence is represented in-band by the
-        # fitters.  In automatic mode an escaping exception would silently
-        # change the candidate set and potentially the winning model, so fail
-        # the run rather than converting it to a per-voxel execution failure.
-        # Fixed-model mode retains explicit failed-voxel accounting because no
-        # alternative model can be selected in response to that failure.
-        if is_auto:
-            raise
-        return {
-            "coords": (x, y, z),
-            "failed": True,
-            "failure_reason": "exception",
-            "failure_stage": "execution",
-        }
-
-
-_MODEL_HAS_VP = {"extended_tofts", "patlak", "2cxm"}
-
-#: Minimum enhancing-tumor voxels (after intersecting with the PK fitting mask)
-#: needed to estimate a tissue arrival time for AIF BAT pre-alignment. Below
-#: this the reference is too small to be reliable and BAT no-ops.
-BAT_TUMOR_REFERENCE_MIN_VOXELS = 10
-
-
-def _resolve_bat_tissue_reference(
-    tumor_mask_file: str,
-    fitting_mask: npt.NDArray[Any],
-    conc_data: npt.NDArray[Any],
-) -> tuple[Optional[npt.NDArray[Any]], dict[str, Any]]:
-    """Select the enhancing-tumor ROI used as the BAT tissue-arrival reference.
-
-    Parameters
-    ----------
-    tumor_mask_file : str
-        Path to the enhancing-tumor mask (HD-GLIO label 2) resampled to the DCE
-        grid, or an empty string when tumor segmentation is unavailable.
-    fitting_mask : numpy.ndarray
-        Boolean PK fitting mask (brain & tSNR & enhancement) on the DCE grid.
-    conc_data : numpy.ndarray
-        4-D concentration-time data; only its spatial shape is used here.
-
-    Returns
-    -------
-    tuple of (numpy.ndarray or None, dict)
-        ``(roi_mask, info)``. ``roi_mask`` is the boolean reference ROI
-        (enhancing tumor intersected with the fitting mask) when a reliable
-        reference is available, else ``None``. When ``None``, ``info`` carries
-        the no-op ``reason``; otherwise ``info`` carries the reference voxel
-        count.
-
-    Notes
-    -----
-    The enhancing tumor is a tissue-arrival *proxy* (leaky, delayed tissue),
-    not arterial ground truth; the BAT correction targets the AIF-to-tissue
-    transit interval. The mask is intersected with the fitting mask so the
-    reference is enhancing tumor that also passed the tSNR/enhancement gate,
-    dropping necrotic and partial-volume voxels a nearest-neighbour resample
-    clips in. Without a tumor segmentation there is no reliable reference
-    (whole-brain arrival is too noisy and white matter's arrival is not the
-    tumor's), so the caller no-ops.
-    """
-    import nibabel as nib  # type: ignore[import-untyped]
-
-    if not tumor_mask_file:
-        return None, {"applied": False, "reason": "no_tumor_reference"}
-    enhancing = nib.load(tumor_mask_file).get_fdata() > 0  # type: ignore[attr-defined]
-    if enhancing.shape != conc_data.shape[:3]:
-        return None, {"applied": False, "reason": "tumor_reference_grid_mismatch"}
-    roi_mask = enhancing & fitting_mask
-    n_roi = int(roi_mask.sum())
-    if n_roi < BAT_TUMOR_REFERENCE_MIN_VOXELS:
-        return None, {
-            "applied": False,
-            "reason": "tumor_reference_too_small",
-            "n_reference_voxels": n_roi,
-        }
-    return roi_mask, {"n_reference_voxels": n_roi}
-
-
-#: K2 leakage correction metric keys to extract from preload QC dict.
-#:
-#: These keys are part of the producer-shape ``preload_qc`` dict that the
-#: ``--skip-dsc`` resume checkpoint (``work/<wf>/dsc_resume.json``)
-#: preserves verbatim.
-_K2_QC_KEYS = {
-    "k2_mean", "k2_std", "k2_min", "k2_max", "k2_median", "k2_p05", "k2_p95",
-    "percent_negative_k2", "percent_k2_undefined",
-    "n_brain_voxels", "n_k2_valid", "auc_mean",
-    "k2_signed", "k2_reference_available",
-    "k2_reference_total_voxels", "k2_reference_selected_voxels",
-    "k2_reference_selected_fraction", "k2_reference_baseline_frames",
-    "k2_reference_tail_frames", "k2_reference_selection",
-    "k2_reference_selection_domain", "k2_reference_peak",
-    "k2_reference_failure_reason",
-    "leakage_correction_disabled",
-}
-
-
-def _normalize_param_name(pname: str) -> str:
-    """Normalize batched result param name to output format.
-
-    Parameters
-    ----------
-    pname : str
-        Raw parameter name from batched result (e.g. 'ktrans', 'fp', 'ps').
-
-    Returns
-    -------
-    str
-        Normalized name matching output format.
-    """
-    if pname == "ktrans":
-        return "Ktrans"
-    if pname == "fp":
-        return "Fp"
-    if pname == "ps":
-        return "PS"
-    return pname
-
-
-def _compute_derived_params(
-    params_out: dict[str, float],
-    model_name: str,
-) -> None:
-    """Compute derived parameters (kep, E, Ktrans) in place.
-
-    Parameters
-    ----------
-    params_out : dict
-        Parameter dict to augment with derived values.
-    model_name : str
-        Model name for determining which derivations to apply.
-
-    """
-    if model_name in ("tofts", "extended_tofts"):
-        ktrans = params_out.get("Ktrans", np.nan)
-    elif model_name == "2cxm":
-        fp_val = params_out.get("Fp", 0.0)
-        ps_val = params_out.get("PS", 0.0)
-        E = ps_val / (fp_val + ps_val + EPSILON_RATIO)
-        params_out["E"] = E
-        params_out["Ktrans"] = E * fp_val / 100.0
-        ktrans = params_out["Ktrans"]
-    else:
-        return
-    kep = compute_kep(ktrans, params_out.get("ve", np.nan))
-    params_out["kep"] = kep
-
-
-def _init_batched_worker() -> None:
-    """Minimal ProcessPool initializer for batched LM chunk workers.
-
-    Caps BLAS threads to 1 per worker so ``n_procs × OpenBLAS_threads``
-    does not oversubscribe the CPU. Does NOT build models / fitters /
-    priors — those belong to the per-voxel VI/MCMC ``_init_worker``.
-    """
-    from pmriprep.utils.parallel import limit_worker_threads
-
-    limit_worker_threads()
-    import warnings
-
-    warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-
-def _fit_chunk_nlls(args: BatchedChunkArgs) -> Any:
-    """Fit one voxel chunk via batched LM or bounded linear least squares.
-
-    Picklable entry point for ``ProcessPoolExecutor``. Deterministic:
-    ``batched_lm_fit`` carries no RNG, so no seed plumbing is needed
-    unless that changes in the future.
-
-    Returns
-    -------
-    Any
-        Per-chunk FitResult.
-    """
-    from pmriprep.models.dce.batched_fitting import (
-        batched_lm_fit,
-        batched_patlak_lstsq,
-    )
-
-    model_name = args.model_name
-    tissue_curves = args.tissue_curves
-    aif = args.aif
-    time_points = args.time_points
-    weights = args.weights
-    save_fitted_curves = args.save_fitted_curves
-    compute_uncertainties = args.compute_uncertainties
-
-    if model_name == "patlak":
-        return batched_patlak_lstsq(
-            tissue_curves, aif, time_points,
-            weights=weights,
-            save_fitted_curves=save_fitted_curves,
-            compute_uncertainties=compute_uncertainties,
-        )
-    return batched_lm_fit(
-        model_name, tissue_curves, aif, time_points,
-        weights=weights,
-        save_fitted_curves=save_fitted_curves,
-        compute_uncertainties=compute_uncertainties,
-    )
 
 
 class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
@@ -1958,18 +1153,9 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     inference = traits.Enum(
         "nlls",
         "vi",
-        "map",
-        "mcmc",
         usedefault=True,
-        desc="Inference engine: nlls (default, scipy least_squares), "
-        "vi (variational Bayes), map (Laplace MAP), mcmc (emcee).",
+        desc="Inference engine: nlls (bounded least squares) or vi (variational Bayes).",
     )
-    mcmc_samples = traits.Int(
-        500,
-        usedefault=True,
-        desc="Number of MCMC samples for Bayesian inference",
-    )
-
     # tSNR filtering
     tsnr_threshold = traits.Float(
         DEFAULT_TSNR_THRESHOLD,
@@ -1993,11 +1179,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     nawm_exclusion_reason = traits.Str(
         desc="Reason an automatically generated NAWM mask was excluded from "
              "quantitative use; reported when the DSC-informed vp prior skips.",
-    )
-    tumor_mask_file = traits.Str(
-        desc="Enhancing-tumor mask (HD-GLIO label 2) on the DCE grid, used as "
-             "the tissue-arrival reference for AIF BAT pre-alignment. Empty "
-             "string when tumor segmentation is unavailable → BAT no-ops.",
     )
     dsc_aif_qc = traits.Dict(
         mandatory=False,
@@ -2061,23 +1242,13 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Bolus arrival frame index for model-free enhancement metrics",
     )
 
-    # AIF detection method (gates AIF->tissue BAT pre-alignment)
     aif_detection_method = traits.Str(
-        "population",
-        usedefault=True,
-        desc="AIF detection method: 'population', 'whole_brain', 'atlas', "
-             "'external'. Gates BAT pre-alignment, which applies only to "
-             "measured 'whole_brain'/'atlas' AIFs (see aif_bat_alignment).",
+        "population", usedefault=True,
+        desc="AIF source for provenance; all sources use the configured delay policy.",
     )
-
-    aif_bat_alignment = traits.Enum(
-        "auto",
-        "off",
-        usedefault=True,
-        desc="AIF-to-tissue bolus-arrival pre-alignment. 'auto' shifts a "
-             "measured (whole_brain/atlas) AIF in time to correct the "
-             "arterial-to-tissue delay (guarded: no-op below temporal "
-             "resolution; benefits fine temporal resolution). 'off' = no shift.",
+    delay_correction = traits.Bool(
+        True, usedefault=True,
+        desc="Estimate local effective AIF delay; false fixes delay to zero.",
     )
 
     aif_uncertainty_inflation_factor = traits.Float(
@@ -2089,14 +1260,11 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
              "unchanged.",
     )
 
-    # Sloppy / reproducibility
+    # Test-mode settings
     sloppy = traits.Bool(
         False,
         usedefault=True,
         desc="Use fast, low-quality settings for testing (NOT for production)",
-    )
-    random_seed = traits.Int(
-        desc="Random seed for reproducibility in worker processes",
     )
 
     # Output files
@@ -2187,7 +1355,9 @@ class ComputeDCEMaps(BaseInterface):
 
     - Patlak is always included
     - Extended Tofts is always included
-    - 2CXM included if the volume interval is <= 2 s, with numerical tolerance
+    - 2CXM considered if the volume interval is <= 2 s, with numerical tolerance,
+      and admitted only when the conditional ET fit passes the detection and
+      residual-improvement requirements
     - Converged candidates compared by BIC; a more complex winner must improve
       BIC by at least 6 over a converged Patlak fit
     - Standard Tofts is available through explicit model selection
@@ -2221,12 +1391,12 @@ class ComputeDCEMaps(BaseInterface):
     time_points_file : str, optional
         Text file with uniformly spaced time points in minutes. If omitted,
         the time axis is generated from volume_tr. The validated axis controls
-        fitting, model eligibility and bolus-arrival alignment.
+        fitting and model eligibility.
     inference : str
         Public inference engines: nlls (default, bounded least squares) or
         vi (variational Bayes).
-    mcmc_samples : int
-        MCMC samples for Bayesian. Default: 500.
+    delay_correction : bool
+        Estimate local effective input delay, or fix delay to zero when false.
     tsnr_threshold : float
         tSNR threshold for voxel inclusion (0 = no threshold). Default: 0.
     baseline_frames : int
@@ -2291,7 +1461,8 @@ class ComputeDCEMaps(BaseInterface):
     - Concentration is in mM (millimolar)
 
     Uncertainty maps contain NLLS standard errors or Bayesian posterior
-    standard deviations, with parameter-specific AIF-confidence inflation.
+    standard deviations, conditional on the selected family and delay, with
+    parameter-specific AIF-confidence inflation.
     Unavailable estimates remain NaN within the brain mask.
 
     The tSNR threshold can exclude noisy voxels from fitting. tSNR is
@@ -2480,7 +1651,7 @@ class ComputeDCEMaps(BaseInterface):
         return candidates
 
     def _prepare_fit_inputs(self) -> _DCEFitPreparation:
-        """Load and validate DCE inputs and construct the pre-BAT fit domain.
+        """Load and validate DCE inputs and construct the pre-fit fit domain.
 
         Returns
         -------
@@ -2530,7 +1701,7 @@ class ComputeDCEMaps(BaseInterface):
             n_aif_samples=int(np.size(aif)),
             volume_tr=volume_tr,
         )
-        # Fitting, model eligibility and BAT alignment share the validated axis.
+        # Fitting and model eligibility share the validated axis.
         selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
 
         model_name = str(self.inputs.model)
@@ -2592,7 +1763,6 @@ class ComputeDCEMaps(BaseInterface):
             )
 
         inference = str(self.inputs.inference)
-        mcmc_samples = int(self.inputs.mcmc_samples)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
         # Preserve the identifiability warning for every 2CXM fitting method.
         if model_name == "2cxm":
@@ -2621,83 +1791,8 @@ class ComputeDCEMaps(BaseInterface):
             peak_enhancement,
             fitting_mask,
             inference,
-            mcmc_samples,
             save_fitted_curves,
         )
-
-    def _align_aif_to_tissue(
-        self,
-        prepared: _DCEFitPreparation,
-    ) -> _DCEBATAlignment:
-        """Apply optional measured-AIF arrival alignment to enhancing tissue.
-
-        Parameters
-        ----------
-        prepared : _DCEFitPreparation
-            Validated pre-BAT inputs and fitting domain.
-
-        Returns
-        -------
-        _DCEBATAlignment
-            Possibly shifted AIF and the corresponding correction QC record.
-
-        Notes
-        -----
-        Population AIFs are pre-aligned at generation and external AIF timing
-        is unknown, so neither is shifted. Measured AIFs use the median
-        enhancing-tissue curve; sub-resolution or unreliable delays remain
-        no-ops in the existing delay estimator.
-        """
-        aif_detection_method = str(self.inputs.aif_detection_method)
-        bat_alignment_mode = str(self.inputs.aif_bat_alignment)
-        if bat_alignment_mode == "off":
-            return _DCEBATAlignment(
-                prepared.aif,
-                {"applied": False, "reason": "alignment_off"},
-            )
-        if aif_detection_method in ("population", "external"):
-            return _DCEBATAlignment(
-                prepared.aif,
-                {
-                    "applied": False,
-                    "reason": f"{aif_detection_method}_aif_not_aligned",
-                },
-            )
-        if not np.any(prepared.fitting_mask):
-            return _DCEBATAlignment(
-                prepared.aif,
-                {"applied": False, "reason": "bat_detection_failed"},
-            )
-
-        from pmriprep.utils.dce_bat import compute_aif_tissue_delay, shift_aif
-
-        tumor_mask_file = (
-            self.inputs.tumor_mask_file
-            if isdefined(self.inputs.tumor_mask_file)
-            else ""
-        )
-        roi_mask, ref_info = _resolve_bat_tissue_reference(
-            tumor_mask_file,
-            prepared.fitting_mask,
-            prepared.concentration,
-        )
-        if roi_mask is None:
-            return _DCEBATAlignment(prepared.aif, ref_info)
-
-        roi_curve = np.median(prepared.concentration[roi_mask], axis=0)
-        delay_s, correction = compute_aif_tissue_delay(
-            aif_curve=prepared.aif,
-            tissue_roi_curve=roi_curve,
-            time_points_min=prepared.time_points,
-            tr_seconds=prepared.selection_tr_seconds,
-            baseline_frames=prepared.baseline_frames,
-        )
-        correction["granularity"] = "enhancing_tumor"
-        correction["n_reference_voxels"] = ref_info["n_reference_voxels"]
-        aligned_aif = prepared.aif
-        if delay_s != 0.0:
-            aligned_aif = shift_aif(prepared.aif, prepared.time_points, delay_s)
-        return _DCEBATAlignment(aligned_aif, correction)
 
     def _prepare_vp_constraint(
         self,
@@ -2750,7 +1845,7 @@ class ComputeDCEMaps(BaseInterface):
         ncbv_available = isdefined(self.inputs.dsc_ncbv_file) and bool(
             self.inputs.dsc_ncbv_file
         )
-        needs_vp_constraint = model_name in _MODEL_HAS_VP or prepared.is_auto
+        needs_vp_constraint = self._has_vp(model_name) or prepared.is_auto
         dsc_inputs_present = (
             (isdefined(self.inputs.dsc_ncbv_file) and bool(self.inputs.dsc_ncbv_file))
             or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
@@ -3064,60 +2159,164 @@ class ComputeDCEMaps(BaseInterface):
             ),
         )
 
-    def _prepare_fit_dispatch(
-        self,
-        prepared: _DCEFitPreparation,
-        aif: npt.NDArray[Any],
-        vp_constraint: _DCEVPConstraint,
-        temporal_weights: Optional[npt.NDArray[np.floating]],
-    ) -> _DCEFitDispatch:
-        """Build ordered voxel inputs and shared worker initialization state."""
+    def _fit_local_slices(
+        self, prepared: _DCEFitPreparation, constraint: _DCEVPConstraint,
+        maps: _DCEParameterMaps, qc: dict[str, Any],
+    ) -> _DCEFitSummary:
+        """Fit, refine and scatter each complete slice before releasing profiles.
+
+        Parameters
+        ----------
+        prepared, constraint : named tuples
+            Validated fitting domain, original input/time axis and qualified prior.
+        maps : _DCEParameterMaps
+            Mutable volume outputs. Only these and small summaries span slices.
+        qc : dict
+            Run diagnostics updated with actual timing, inference and memory use.
+
+        Returns
+        -------
+        _DCEFitSummary
+            Aggregate fit accounting across all attempted slices.
+        """
+        from collections import Counter
+        from pmriprep.models.dce.delay_profiles import MAX_LOCAL_DELAY_SECONDS
+        from pmriprep.models.dce.fixed_inference import selected_fit_result
+        from pmriprep.models.dce.local_refinement import ConditionalInput
+        from pmriprep.models.dce.local_runner import LocalDelayRunner
+        from pmriprep.models.dce.local_selection import SelectionMode
         from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
-        mask_coords = np.where(prepared.fitting_mask)
-        voxel_data: list[VoxelInput] = []
-        for x_raw, y_raw, z_raw in zip(*mask_coords):
-            x, y, z = int(x_raw), int(y_raw), int(z_raw)
-            voxel_vp: Optional[float] = None
-            if (
-                prepared.inference != "nlls"
-                and vp_constraint.vp_map is not None
-                and vp_constraint.mode != ConstraintMode.SKIP
-            ):
-                vp_value = float(vp_constraint.vp_map[x, y, z])
-                if np.isfinite(vp_value) and vp_value > 0:
-                    voxel_vp = vp_value
-            voxel_data.append(
-                VoxelInput(x, y, z, prepared.concentration[x, y, z, :], voxel_vp)
-            )
-
-        sloppy = bool(self.inputs.sloppy)
-        random_seed = (
-            int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
+        summaries: list[_DCEFitSummary] = []
+        fallbacks: Counter[str] = Counter()
+        timing_counts: Counter[str] = Counter()
+        failure_counts: Counter[str] = Counter()
+        max_profile_bytes = 0
+        start = time.monotonic()
+        n_procs = max(1, int(self.inputs.n_procs))
+        mode = cast(SelectionMode, "auto" if prepared.is_auto else prepared.model_name)
+        engine = cast(Literal["nlls", "vi"], prepared.inference)
+        delay_enabled, sloppy = bool(self.inputs.delay_correction), bool(self.inputs.sloppy)
+        fit_times = prepared.time_points
+        interval = float(fit_times[1] - fit_times[0])
+        if not np.allclose(np.diff(fit_times), interval, rtol=1e-12, atol=1e-14):
+            # The input validator has already accepted uniformity at text-file
+            # precision. Resolve serialization jitter for the exact operator;
+            # original metric times and the validated frame interval stay intact.
+            fit_times = fit_times[0] + np.arange(len(fit_times)) * interval
+        qc["delay_correction"]["time_axis_rounding_max_seconds"] = float(
+            np.max(np.abs(fit_times - prepared.time_points)) * 60
         )
-        init_args = (
-            aif,
-            prepared.time_points,
-            vp_constraint.model_name,
-            prepared.inference,
-            prepared.mcmc_samples,
-            prepared.baseline_frames,
-            vp_constraint.mode.value,
-            vp_constraint.vp_uncertainty,
-            prepared.save_fitted_curves,
-            temporal_weights,
-            sloppy,
-            random_seed,
-            vp_constraint.candidate_names if prepared.is_auto else None,
+        with LocalDelayRunner(n_procs) as runner:
+            for z in range(prepared.concentration.shape[2]):
+                xy = np.argwhere(prepared.fitting_mask[:, :, z])
+                if not len(xy):
+                    continue
+                xyz = np.column_stack([xy, np.full(len(xy), z, dtype=int)])
+                curves = prepared.concentration[tuple(xyz.T)]
+                fits = runner.fit_slice(
+                    prepared.aif, fit_times, curves, xyz, prepared.affine,
+                    mode=mode, delay_correction=delay_enabled, sloppy=sloppy,
+                )
+                max_profile_bytes = max(max_profile_bytes, sum(
+                    getattr(p, key).nbytes for p in fits.profiles.values()
+                    for key in ("params", "sse", "status", "evaluations", "optimality", "seed_index")
+                ))
+                for profile in fits.profiles.values():
+                    timing_counts["retried_profile_points"] += len(profile.retries)
+                    for failure in profile.failures.values():
+                        failure_counts[failure.reason] += 1
+                inputs: list[ConditionalInput] = []
+                refined_members: list[int] = []
+                voxels: list[VoxelInput] = []
+                results: list[dict[str, Any]] = []
+                for member, coordinates in enumerate(xyz):
+                    coords = (int(coordinates[0]), int(coordinates[1]), int(coordinates[2]))
+                    prior = None
+                    if (engine == "vi" and constraint.mode == ConstraintMode.SOFT
+                            and constraint.vp_map is not None):
+                        value = float(constraint.vp_map[coords])
+                        if np.isfinite(value) and value > 0:
+                            prior = value
+                    voxels.append(VoxelInput(*coords, curves[member], prior))
+                    choice = fits.selections[member]
+                    family = choice.family
+                    timing = choice.timing.get(family) if family is not None else None
+                    if family is None or timing is None or timing.reason is not None:
+                        reason = timing.reason if timing is not None else "no_eligible_model"
+                        results.append(dict(coords=coords, failed=True, failure_stage="fit", failure_reason=reason))
+                        continue
+                    timing_counts["selected"] += 1
+                    timing_counts["free_delay"] += int(timing.free)
+                    if timing.fallback is not None:
+                        timing_counts[timing.fallback] += 1
+                    for flag in ("free_optimum_near_lower", "free_optimum_near_upper", "reference_at_bound"):
+                        timing_counts[flag] += int(getattr(timing, flag) is True)
+                    if timing.upper_edge is not None:
+                        timing_counts[timing.upper_edge] += 1
+                    profile = fits.profiles[family]
+                    seed = selected_fit_result(
+                        profile, timing, member, prepared.aif, fit_times, curves[member],
+                    )
+                    results.append(dict(
+                        coords=coords, failed=False, converged=True, params=seed.parameters,
+                        selected_model_name=family, delta_bic=choice.delta_bic,
+                        r_squared=seed.r_squared, uncertainties={},
+                    ))
+                    if _is_degenerate_dce_fit(family, seed.parameters):
+                        continue
+                    inputs.append(ConditionalInput(
+                        family, prepared.aif, fit_times, profile.observed,
+                        curves[member], float(profile.delays_seconds[timing.index]), seed,
+                        engine, prior, constraint.vp_uncertainty, sloppy,
+                    ))
+                    refined_members.append(member)
+                refinements = runner.refine_selected(inputs)
+                for member, refined in zip(refined_members, refinements, strict=True):
+                    result = results[member]
+                    fit = refined.fit
+                    result.update(
+                        params=fit.parameters, r_squared=fit.r_squared,
+                        uncertainties=fit.uncertainties, converged=fit.converged,
+                        constrained=(refined.actual_engine == "vi" and voxels[member].voxel_vp is not None
+                                     and self._has_vp(refined.family)),
+                        inference_fallback=refined.fallback,
+                        fitted_curve=fit.fitted_curve if prepared.save_fitted_curves else None,
+                    )
+                    if refined.fallback:
+                        fallbacks[refined.reason or "unknown"] += 1
+                summaries.append(_scatter_dce_fit_results(
+                    voxels, results, maps, prepared.model_name, prepared.is_auto,
+                    engine, constraint.mode, constraint.vp_uncertainty,
+                ))
+                logger.info("DCE slice %d/%d: %d attempted voxels", z + 1, prepared.concentration.shape[2], len(xy))
+                # Consume profile-dependent diagnostics here, before the next slice.
+                del fits, profile, curves, inputs, refinements, results, voxels
+        qc["delay_correction"].update(
+            grid_step_seconds=(1.0 if sloppy else 0.1) if delay_enabled else None,
+            maximum_seconds=MAX_LOCAL_DELAY_SECONDS if delay_enabled else 0.0,
+            approximate_test_mode=sloppy, counts=dict(timing_counts),
+            family_numerical_failures=dict(failure_counts),
         )
-        return _DCEFitDispatch(
-            mask_coords,
-            voxel_data,
-            init_args,
-            max(1, int(self.inputs.n_procs)),
-            sloppy,
-            random_seed,
+        qc["inference_fallback_reasons"] = dict(fallbacks)
+        qc["local_fitting_execution"] = dict(
+            n_procs=n_procs, chunk_size=128, peak_slice_profile_bytes=max_profile_bytes,
+            elapsed_seconds=time.monotonic() - start,
+            includes="profiles, selection, conditional uncertainty, VI and scattering",
         )
+        combined: dict[str, Any] = {}
+        for field in _DCEFitSummary._fields:
+            values = [getattr(s, field) for s in summaries]
+            if field == "failure_reasons":
+                counts: Counter[str] = Counter()
+                for value in values:
+                    counts.update(value)
+                combined[field] = dict(counts)
+            elif field in ("r2_values", "vp_prior_departures"):
+                combined[field] = [item for value in values for item in value]
+            else:
+                combined[field] = sum(values)
+        return _DCEFitSummary(**combined)
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
@@ -3126,28 +2325,18 @@ class ComputeDCEMaps(BaseInterface):
         affine = prepared.affine
         header = prepared.header
         mask = prepared.mask
-        aif = prepared.aif
-        time_points = prepared.time_points
         model_name = prepared.model_name
         is_auto = prepared.is_auto
         candidate_names = prepared.candidate_names
-        baseline_frames = prepared.baseline_frames
         tsnr_threshold = prepared.tsnr_threshold
         tsnr_map = prepared.tsnr_map
         peak_enh = prepared.peak_enhancement
         fitting_mask = prepared.fitting_mask
         mask_bool = mask > 0
         inference = prepared.inference
-        mcmc_samples = prepared.mcmc_samples
         save_fitted_curves = prepared.save_fitted_curves
 
-        bat_alignment = self._align_aif_to_tissue(prepared)
-        aif = bat_alignment.aif
-        bat_correction = bat_alignment.correction
-
         vp_constraint = self._prepare_vp_constraint(prepared)
-        constraint_mode = vp_constraint.mode
-        constraint_vp_uncertainty = vp_constraint.vp_uncertainty
         constraint_qc = vp_constraint.qc
         model_name = vp_constraint.model_name
         candidate_names = vp_constraint.candidate_names
@@ -3189,62 +2378,17 @@ class ComputeDCEMaps(BaseInterface):
             prepared,
             model_name,
             constraint_qc,
-            bat_correction,
+            {"enabled": bool(self.inputs.delay_correction), "method": "local_profile"},
             self._MAX_VOLUME_TR_2CXM,
             self._VOLUME_TR_COMPARISON_TOLERANCE,
         )
         qc_metrics["iauc"] = model_free.iauc_qc
         qc_metrics["ser"] = model_free.ser_qc
 
-        temporal_weights = None
         qc_metrics["temporal_weighting"] = "unit"
-
-        dispatch = self._prepare_fit_dispatch(
-            prepared, aif, vp_constraint, temporal_weights,
-        )
-        mask_coords = dispatch.mask_coords
-        voxel_data_list = dispatch.voxel_data
-        init_args = dispatch.init_args
-        n_procs = dispatch.n_procs
-        sloppy = dispatch.sloppy
-        random_seed = dispatch.random_seed
-
-        # Always use batched fitting (vectorized operations)
-        results = self._fit_batched(
-            conc_data=conc_data,
-            mask_coords=mask_coords,
-            aif=aif,
-            time_points=time_points,
-            model_name=model_name,
-            inference=inference,
-            is_auto=is_auto,
-            candidate_names=candidate_names,
-            temporal_weights=temporal_weights,
-            save_fitted_curves=save_fitted_curves,
-            sloppy=sloppy,
-            mcmc_samples=mcmc_samples,
-            baseline_frames=baseline_frames,
-            n_procs=n_procs,
-            random_seed=random_seed,
-            init_args=init_args,
-            voxel_data_list=voxel_data_list,
-        )
-
-        # Clear worker state to avoid stale references across runs
-        _worker_ctx.clear()
-
         save_ve = is_auto or self._has_ve(model_name)
         save_vp = is_auto or self._has_vp(model_name)
-        fit_summary = _scatter_dce_fit_results(
-            voxel_data_list,
-            results,
-            parameter_maps,
-            model_name,
-            is_auto,
-            inference,
-            constraint_mode,
-            constraint_vp_uncertainty,
-        )
+        fit_summary = self._fit_local_slices(prepared, vp_constraint, parameter_maps, qc_metrics)
 
         # Compile QC metrics
         qc_metrics.update(
@@ -3288,19 +2432,6 @@ class ComputeDCEMaps(BaseInterface):
             ),
             "aif_parameter_scale_factors": dict(parameter_maps.sigma_factor),
         }
-
-        mcmc_diag = _summarize_mcmc_diagnostics(
-            fit_summary.n_mcmc_voxels,
-            fit_summary.mcmc_rhat,
-            fit_summary.mcmc_ess,
-        )
-        if mcmc_diag is not None:
-            qc_metrics["mcmc_diagnostics"] = mcmc_diag
-
-        if inference == "map":
-            qc_metrics["map_uncertainty"] = _summarize_map_uncertainty_sources(
-                fit_summary.map_uncertainty_sources
-            )
 
         inference_fallback = _summarize_inference_fallback(
             inference,
@@ -3452,676 +2583,6 @@ class ComputeDCEMaps(BaseInterface):
         )
 
         return runtime
-
-    def _dispatch_batched_chunks(
-        self,
-        model_name: str,
-        tissue_curves: npt.NDArray[np.floating],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        weights: Optional[npt.NDArray[np.floating]],
-        save_fitted_curves: bool,
-        compute_uncertainties: bool,
-        n_procs: int,
-        n_voxels: int,
-    ) -> Any:
-        """Split voxels into n_procs chunks and fit each chunk in parallel.
-
-        Each worker runs batched LM / lstsq on its slice (preserving the
-        NumPy vectorization win) while n_procs workers run in parallel
-        (giving multi-core utilization). The parent concatenates the
-        per-chunk FitResults in voxel order.
-
-        Falls back to a single in-process call when ``n_procs <= 1`` or
-        the voxel count is below ``max(1000, 4 * n_procs)`` — below that
-        threshold, process-spawn overhead (~100 ms) dominates the batched
-        LM runtime and multiproc is a net loss.
-
-        """
-        from pmriprep.models.dce.batched_fitting import concat_fit_results
-
-        compute_unc = bool(compute_uncertainties)
-        save_curves = bool(save_fitted_curves)
-
-        chunk_floor = max(1000, 4 * n_procs)
-        if n_procs <= 1 or n_voxels < chunk_floor:
-            return _fit_chunk_nlls(
-                BatchedChunkArgs(
-                    model_name=model_name,
-                    tissue_curves=tissue_curves,
-                    aif=aif,
-                    time_points=time_points,
-                    weights=weights,
-                    save_fitted_curves=save_curves,
-                    compute_uncertainties=compute_unc,
-                )
-            )
-
-        # Contiguous index chunks preserve voxel order across concat.
-        chunk_index_arrays = np.array_split(np.arange(n_voxels), n_procs)
-        chunk_args: list[BatchedChunkArgs] = []
-        for idx in chunk_index_arrays:
-            tc_chunk = tissue_curves[idx]
-            chunk_args.append(
-                BatchedChunkArgs(
-                    model_name=model_name,
-                    tissue_curves=tc_chunk,
-                    aif=aif,
-                    time_points=time_points,
-                    weights=weights,
-                    save_fitted_curves=save_curves,
-                    compute_uncertainties=compute_unc,
-                )
-            )
-
-        from concurrent.futures import ProcessPoolExecutor
-
-        executor = ProcessPoolExecutor(
-            max_workers=n_procs,
-            initializer=_init_batched_worker,
-        )
-        try:
-            chunk_results = list(executor.map(_fit_chunk_nlls, chunk_args))
-        except BaseException:
-            from pmriprep.utils.processes import terminate_process_pool
-
-            logger.warning(
-                "Parallel DCE batched fitting aborted; terminating workers"
-            )
-            terminate_process_pool(executor)
-            raise
-        else:
-            executor.shutdown(wait=True, cancel_futures=True)
-
-        return concat_fit_results(chunk_results, n_voxels)
-
-    def _fit_batched(
-        self,
-        conc_data: npt.NDArray[Any],
-        mask_coords: tuple[npt.NDArray[Any], ...],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        model_name: str,
-        inference: str,
-        is_auto: bool,
-        candidate_names: list[str],
-        temporal_weights: Optional[npt.NDArray[np.floating]],
-        save_fitted_curves: bool,
-        sloppy: bool,
-        mcmc_samples: int,
-        baseline_frames: int,
-        n_procs: int,
-        random_seed: Optional[int],
-        init_args: tuple[Any, ...],
-        voxel_data_list: list[VoxelInput],
-    ) -> list[dict[str, Any]]:
-        """Batched fitting path.
-
-        Fits all voxels simultaneously using batched LM/lstsq,
-        then optionally refines with CPU-based MAP/MCMC.
-
-        Parameters
-        ----------
-        conc_data : numpy.ndarray
-            Concentration data, shape (X, Y, Z, T).
-        mask_coords : tuple of numpy.ndarray
-            Tuple of coordinate arrays from np.where(fitting_mask).
-        aif : numpy.ndarray
-            AIF, shape (T,).
-        time_points : numpy.ndarray
-            Time points, shape (T,).
-        model_name : str
-            Primary model name.
-        inference : str
-            Inference engine ('nlls', 'map', 'vi', 'mcmc').
-        is_auto : bool
-            Whether auto-mode BIC selection is active.
-        candidate_names : list
-            List of candidate model names for auto mode.
-        temporal_weights : numpy.ndarray or None
-            Optional per-frame likelihood weights; None uses unit weights.
-        save_fitted_curves : bool
-            Whether to save fitted curves.
-        sloppy : bool
-            Whether to use sloppy mode.
-        mcmc_samples : int
-            Number of MCMC samples.
-        baseline_frames : int
-            Number of baseline frames.
-        n_procs : int
-            Number of CPU processes for MAP/MCMC refinement.
-        random_seed : int or None
-            Random seed or None.
-        init_args : tuple
-            Worker init args for CPU fallback.
-        voxel_data_list : list of VoxelInput
-            List of VoxelInput for CPU fallback paths.
-
-        Returns
-        -------
-        list
-            List of result dicts matching _fit_single_voxel output format.
-
-        Notes
-        -----
-        Automatic selection uses BIC from bounded least-squares fits before
-        applying any DSC-derived vp prior.
-        A qualified DSC-derived vp prior is applied only when the selected model
-        is subsequently refined with Bayesian inference.
-        """
-        from pmriprep.models.dce.batched_fitting import FitResult
-
-        n_voxels = len(mask_coords[0])
-
-        # Fixed-model VI/MCMC fit directly on CPU. Auto mode first performs
-        # one canonical batched least-squares BIC selection below, then refines only
-        # the selected model so inference choice cannot change model labels.
-        if inference in ("vi", "mcmc") and not is_auto:
-            logger.info("Batched mode with %s: falling through to CPU multiprocessing", inference)
-            _init_worker(*init_args)
-            if n_procs > 1:
-                from concurrent.futures import ProcessPoolExecutor
-                chunk_size = max(1, n_voxels // (n_procs * 10))
-                executor = ProcessPoolExecutor(
-                    max_workers=n_procs,
-                    initializer=_init_worker,  # type: ignore[arg-type]
-                    initargs=init_args,
-                )
-                try:
-                    cpu_results = list(executor.map(
-                        _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
-                    ))
-                except BaseException:
-                    from pmriprep.utils.processes import terminate_process_pool
-
-                    logger.warning(
-                        "Parallel DCE fitting aborted; terminating workers"
-                    )
-                    terminate_process_pool(executor)
-                    raise
-                else:
-                    executor.shutdown(wait=True, cancel_futures=True)
-                return cpu_results
-            return [_fit_single_voxel(vd) for vd in voxel_data_list]
-
-        # Build batched arrays
-        tissue_curves = conc_data[mask_coords[0], mask_coords[1], mask_coords[2], :]
-        tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
-        coords = np.stack(mask_coords, axis=1)  # (N, 3)
-
-        # The bounded batched least-squares stage does not use the DSC vp prior.
-        # That prior enters Bayesian refinement through ``voxel_data_list``.
-
-        results: list[dict[str, Any]] = []
-
-        if not is_auto:
-            # Single-model batched fit parallelized across voxel chunks.
-            fit_result = self._dispatch_batched_chunks(
-                model_name=model_name,
-                tissue_curves=tissue_curves,
-                aif=aif,
-                time_points=time_points,
-                weights=temporal_weights,
-                save_fitted_curves=(
-                    save_fitted_curves or inference == "map"
-                ) if model_name != "patlak" else save_fitted_curves,
-                compute_uncertainties=inference == "nlls",
-                n_procs=n_procs,
-                n_voxels=n_voxels,
-            )
-
-            results = self._fit_result_to_dicts(
-                fit_result, coords, model_name,
-            )
-
-            # MAP refinement: use batched fit as warm-start for CPU MAP
-            if inference == "map":
-                results = self._refine_map_from_batched(
-                    results, voxel_data_list, init_args, n_procs,
-                )
-
-            return results
-
-        # Auto mode: fit ALL candidate models using batched fitting, select via BIC
-        fit_results: dict[str, FitResult] = {}
-        for cname in candidate_names:
-            fit_results[cname] = self._dispatch_batched_chunks(
-                model_name=cname,
-                tissue_curves=tissue_curves,
-                aif=aif,
-                time_points=time_points,
-                weights=temporal_weights,
-                save_fitted_curves=True,
-                compute_uncertainties=inference == "nlls",
-                n_procs=n_procs,
-                n_voxels=n_voxels,
-            )
-
-        # BIC per model per voxel
-        _N_PARAMS: dict[str, int] = {
-            "tofts": 2, "extended_tofts": 3, "patlak": 2, "2cxm": 4,
-        }
-
-        bic_arrays: dict[str, npt.NDArray[np.floating]] = {}
-        for cname, result in fit_results.items():
-            if result.fitted_curves is None:
-                bic_arrays[cname] = np.full(n_voxels, np.inf)
-                continue
-            bic_arrays[cname] = _compute_auto_bic(
-                tissue_curves,
-                result.fitted_curves,
-                result.converged,
-                _N_PARAMS[cname],
-                temporal_weights,
-            )
-
-        # Select min-BIC model per voxel
-        cand_list = [c for c in candidate_names if c in fit_results]
-        winner_idx, delta_bic, valid_selection = _select_auto_bic_winners(
-            cand_list,
-            bic_arrays,
-            _N_PARAMS,
-        )
-
-        # Assemble per-voxel results from winners
-        results = []
-        for i in range(n_voxels):
-            winner_name = cand_list[winner_idx[i]]
-            winner_result = fit_results[winner_name]
-            selection_failed = not bool(valid_selection[i])
-
-            x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
-
-            # Normalize param names to match CPU output format
-            params_out: dict[str, float] = {}
-            for pname, parr in winner_result.params.items():
-                params_out[_normalize_param_name(pname)] = float(parr[i])
-
-            _compute_derived_params(params_out, winner_name)
-
-            # Uncertainties
-            uncertainties: dict[str, float] = {}
-            if winner_result.uncertainties:
-                for pname, uarr in winner_result.uncertainties.items():
-                    uncertainties[_normalize_param_name(pname)] = float(uarr[i])
-
-            fitted_curve = None
-            if save_fitted_curves and winner_result.fitted_curves is not None:
-                fitted_curve = winner_result.fitted_curves[i]
-
-            results.append({
-                "coords": (x, y, z),
-                "params": params_out,
-                "r_squared": float(winner_result.r_squared[i]),
-                "converged": bool(winner_result.converged[i]),
-                "uncertainties": uncertainties,
-                "uncertainty_source": (
-                    "local_jacobian_covariance"
-                    if winner_result.uncertainties else "not_computed"
-                ),
-                "fitted_curve": fitted_curve,
-                "rhat": {},
-                "ess": {},
-                "failed": selection_failed,
-                "failure_reason": (
-                    "all_candidate_models_failed" if selection_failed else None
-                ),
-                "failure_stage": "fit" if selection_failed else None,
-                "constrained": False,
-                "selected_model_name": winner_name,
-                "delta_bic": float(delta_bic[i]),
-            })
-
-        # Bayesian refinement of the canonical batched least-squares BIC winners.
-        if inference in ("vi", "map", "mcmc"):
-            results = self._refine_auto_bayesian_from_batched(
-                results, voxel_data_list, init_args, n_procs,
-            )
-
-        return results
-
-    def _fit_result_to_dicts(
-        self,
-        fit_result: Any,
-        coords: npt.NDArray[Any],
-        model_name: str,
-    ) -> list[dict[str, Any]]:
-        """Convert FitResult to list of per-voxel dicts.
-
-        Computes derived parameters (kep, E, Ktrans_derived) and builds
-        dicts matching _fit_single_voxel output format.
-
-        Parameters
-        ----------
-        fit_result : Any
-            FitResult from batched fitting.
-        coords : numpy.ndarray
-            Voxel coordinates, shape (N, 3).
-        model_name : str
-            Model name.
-
-        Returns
-        -------
-        list
-            List of result dicts.
-        """
-        n_voxels = len(coords)
-        results: list[dict[str, Any]] = []
-
-        for i in range(n_voxels):
-            x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
-
-            # Build params dict with normalized names
-            params_out: dict[str, float] = {}
-            for pname, parr in fit_result.params.items():
-                params_out[_normalize_param_name(pname)] = float(parr[i])
-
-            _compute_derived_params(params_out, model_name)
-
-            # Uncertainties
-            uncertainties: dict[str, float] = {}
-            if fit_result.uncertainties:
-                for pname, uarr in fit_result.uncertainties.items():
-                    uncertainties[_normalize_param_name(pname)] = float(uarr[i])
-
-            fitted_curve = None
-            if fit_result.fitted_curves is not None:
-                fitted_curve = fit_result.fitted_curves[i]
-
-            fit_unsuccessful = (
-                not bool(fit_result.converged[i])
-                and float(fit_result.r_squared[i]) < -0.5
-            )
-            results.append({
-                "coords": (x, y, z),
-                "params": params_out,
-                "r_squared": float(fit_result.r_squared[i]),
-                "converged": bool(fit_result.converged[i]),
-                "uncertainties": uncertainties,
-                "uncertainty_source": (
-                    "local_jacobian_covariance"
-                    if fit_result.uncertainties else "not_computed"
-                ),
-                "fitted_curve": fitted_curve,
-                "rhat": {},
-                "ess": {},
-                "failed": fit_unsuccessful,
-                "failure_reason": (
-                    "nonconverged_very_poor_r2" if fit_unsuccessful else None
-                ),
-                "failure_stage": "fit" if fit_unsuccessful else None,
-                "constrained": False,
-                "selected_model_name": model_name,
-                "delta_bic": np.nan,
-            })
-
-        return results
-
-    def _refine_map_from_batched(
-        self,
-        batched_results: list[dict[str, Any]],
-        voxel_data_list: list[VoxelInput],
-        init_args: tuple[Any, ...],
-        n_procs: int,
-    ) -> list[dict[str, Any]]:
-        """Run CPU MAP fitting on all voxels.
-
-        Uses CPU MAP where it converges, falling back to batched least squares otherwise.
-
-        Parameters
-        ----------
-        batched_results : list
-            Per-voxel result dicts from batched fitting.
-        voxel_data_list : list of VoxelInput
-            VoxelInput list for CPU fitting.
-        init_args : tuple
-            Worker initialization args.
-        n_procs : int
-            Number of CPU processes.
-
-        Returns
-        -------
-        list
-            Refined result dicts (CPU MAP where converged, batched least squares otherwise).
-        """
-        # CPU MAP refinement using multiprocessing
-        _init_worker(*init_args)
-        n_voxels = len(voxel_data_list)
-        refinement_voxels = [
-            voxel._replace(
-                initial_parameters=(
-                    result.get("params")
-                    if result.get("converged", False)
-                    else None
-                )
-            )
-            for voxel, result in zip(
-                voxel_data_list, batched_results, strict=True
-            )
-        ]
-
-        if n_procs > 1:
-            from concurrent.futures import ProcessPoolExecutor
-            chunk_size = max(1, n_voxels // (n_procs * 10))
-            executor = ProcessPoolExecutor(
-                max_workers=n_procs,
-                initializer=_init_worker,  # type: ignore[arg-type]
-                initargs=init_args,
-            )
-            try:
-                cpu_results = list(executor.map(
-                    _fit_single_voxel, refinement_voxels, chunksize=chunk_size,
-                ))
-            except BaseException:
-                from pmriprep.utils.processes import terminate_process_pool
-
-                logger.warning(
-                    "Hybrid DCE refinement aborted; terminating workers"
-                )
-                terminate_process_pool(executor)
-                raise
-            else:
-                executor.shutdown(wait=True, cancel_futures=True)
-        else:
-            cpu_results = [_fit_single_voxel(vd) for vd in refinement_voxels]
-
-        # Use converged CPU MAP results, with batched least squares as fallback.
-        final_results = []
-        for fit_res, cpu_res in zip(batched_results, cpu_results, strict=True):
-            if cpu_res.get("converged", False) and not cpu_res.get("failed", True):
-                cpu_res["inference_fallback"] = False
-                final_results.append(cpu_res)
-            else:
-                fallback_result = dict(fit_res)
-                fallback_result["inference_fallback"] = True
-                final_results.append(fallback_result)
-
-        return final_results
-
-    def _refine_auto_bayesian_from_batched(
-        self,
-        batched_results: list[dict[str, Any]],
-        voxel_data_list: list[VoxelInput],
-        init_args: tuple[Any, ...],
-        n_procs: int,
-    ) -> list[dict[str, Any]]:
-        """Refine canonical auto-mode BIC winners with one Bayesian model.
-
-        Parameters
-        ----------
-        batched_results : list of dict
-            Per-voxel batched least-squares results carrying the selected model and
-            delta-BIC margin.
-        voxel_data_list : list of VoxelInput
-            Voxel inputs in the same order as ``batched_results``.
-        init_args : tuple
-            Worker initialization arguments for the original auto run.
-        n_procs : int
-            Number of CPU processes.
-
-        Returns
-        -------
-        list of dict
-            Bayesian results where refinement succeeds, with the canonical
-            selected-model and delta-BIC state preserved; otherwise the
-            original batched least-squares fallback.
-
-        Notes
-        -----
-        Candidate models are disabled in each refinement worker. Grouping by
-        the already-selected model prevents scalar Bayesian workers from
-        repeating BIC with a different NLLS implementation.
-        """
-        from concurrent.futures import ProcessPoolExecutor
-
-        final_results = list(batched_results)
-        selected_groups: dict[str, list[int]] = {}
-        for index, result in enumerate(batched_results):
-            if result.get("failed", False):
-                continue
-            selected_model = str(result.get("selected_model_name", ""))
-            if selected_model:
-                selected_groups.setdefault(selected_model, []).append(index)
-
-        (
-            aif,
-            time_points,
-            _auto_model_name,
-            inference,
-            mcmc_samples,
-            baseline_frames,
-            constraint_mode_str,
-            constraint_vp_uncertainty,
-            save_fitted_curves,
-            temporal_weights,
-            sloppy,
-            random_seed,
-            _candidate_names,
-        ) = init_args
-        n_refinable = sum(len(indices) for indices in selected_groups.values())
-        inference_name = str(inference).upper()
-        refinement_start = time.perf_counter()
-        logger.info(
-            "Starting DCE %s refinement for %d voxels across %d selected "
-            "model groups; scalar voxel fits are distributed across CPU worker "
-            "processes (configured: %d) and may take several minutes",
-            inference_name,
-            n_refinable,
-            len(selected_groups),
-            max(1, n_procs),
-        )
-        n_retained = 0
-        n_fallback = 0
-
-        for group_index, (selected_model, indices) in enumerate(
-            selected_groups.items(), start=1
-        ):
-            logger.info(
-                "DCE %s refinement group %d/%d: %s (%d voxels)",
-                inference_name,
-                group_index,
-                len(selected_groups),
-                selected_model,
-                len(indices),
-            )
-            fixed_init_args = (
-                aif,
-                time_points,
-                selected_model,
-                inference,
-                mcmc_samples,
-                baseline_frames,
-                constraint_mode_str,
-                constraint_vp_uncertainty,
-                save_fitted_curves,
-                temporal_weights,
-                sloppy,
-                random_seed,
-                None,
-            )
-            group_voxels = [
-                voxel_data_list[index]._replace(
-                    initial_parameters=(
-                        batched_results[index].get("params")
-                        if batched_results[index].get("converged", False)
-                        else None
-                    )
-                )
-                for index in indices
-            ]
-            _init_worker(*fixed_init_args)
-
-            if n_procs > 1:
-                chunk_size = max(1, len(group_voxels) // (n_procs * 10))
-                executor = ProcessPoolExecutor(
-                    max_workers=n_procs,
-                    initializer=_init_worker,  # type: ignore[arg-type]
-                    initargs=fixed_init_args,
-                )
-                try:
-                    refined_results = list(
-                        executor.map(
-                            _fit_single_voxel,
-                            group_voxels,
-                            chunksize=chunk_size,
-                        )
-                    )
-                except BaseException:
-                    from pmriprep.utils.processes import terminate_process_pool
-
-                    logger.warning(
-                        "Auto DCE Bayesian refinement aborted; "
-                        "terminating workers"
-                    )
-                    terminate_process_pool(executor)
-                    raise
-                else:
-                    executor.shutdown(wait=True, cancel_futures=True)
-            else:
-                refined_results = [
-                    _fit_single_voxel(voxel) for voxel in group_voxels
-                ]
-
-            group_retained = 0
-            group_fallback = 0
-            for index, refined in zip(indices, refined_results, strict=True):
-                if refined.get("failed", True) or not refined.get(
-                    "converged", False
-                ):
-                    fallback_result = dict(batched_results[index])
-                    fallback_result["inference_fallback"] = True
-                    final_results[index] = fallback_result
-                    n_fallback += 1
-                    group_fallback += 1
-                    continue
-                refined["selected_model_name"] = selected_model
-                refined["delta_bic"] = batched_results[index]["delta_bic"]
-                refined["inference_fallback"] = False
-                final_results[index] = refined
-                n_retained += 1
-                group_retained += 1
-
-            logger.info(
-                "Completed DCE %s refinement group %d/%d: %d retained, "
-                "%d fell back to batched least squares",
-                inference_name,
-                group_index,
-                len(selected_groups),
-                group_retained,
-                group_fallback,
-            )
-
-        logger.info(
-            "DCE %s refinement finished in %.1f s: %d/%d retained, "
-            "%d fell back to batched least squares",
-            inference_name,
-            time.perf_counter() - refinement_start,
-            n_retained,
-            n_refinable,
-            n_fallback,
-        )
-
-        return final_results
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List interface outputs.

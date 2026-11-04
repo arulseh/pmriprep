@@ -1,3 +1,11 @@
+1.0.0rc6.dev13 (2026-11-04)
+===========================
+
+* ENH: Route DCE NLLS and VI through local delay fitting with bounded slice
+  execution and conditional uncertainty. Replace AIF pre-alignment with the
+  delay_correction option and retire MAP/MCMC pipeline routing. Identification
+  QC and timing-derivative integration remain pending.
+
 1.0.0rc6.dev12 (2026-11-04)
 ===========================
 

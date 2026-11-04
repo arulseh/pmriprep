@@ -82,8 +82,8 @@ def init_dce_pk_modeling_wf(
     ----------
     pk_kwargs : dict
         Keyword arguments forwarded verbatim to ``ComputeDCEMaps`` (model,
-        inference, mcmc_samples, thresholds, constraint mode, hematocrit,
-        ``random_seed`` when set, etc.). Built by the orchestrator from the run
+        inference, delay_correction, thresholds, constraint mode, hematocrit,
+        etc.). Built by the orchestrator from the run
         configuration.
     mem_gb : float
         Memory estimate (GB) for the PK-modeling node.
@@ -108,9 +108,6 @@ def init_dce_pk_modeling_wf(
         DSC dose scaling (defaults apply on DCE-only runs).
     dsc_ncbv_file
         NAWM-normalized DSC CBV resampled to DCE space for the vp prior.
-    tumor_mask_file
-        Enhancing-tumor mask (DCE grid) — tissue-arrival reference for AIF BAT
-        pre-alignment; empty when tumor segmentation is unavailable.
 
     Outputs
     -------
@@ -138,7 +135,6 @@ def init_dce_pk_modeling_wf(
                 "nawm_exclusion_reason",
                 "dsc_registration_qc",
                 "dce_registration_qc",
-                "tumor_mask_file",
             ]
         ),
         name="inputnode",
@@ -203,7 +199,6 @@ def init_dce_pk_modeling_wf(
             ("nawm_exclusion_reason", "nawm_exclusion_reason"),
             ("dsc_registration_qc", "dsc_registration_qc"),
             ("dce_registration_qc", "dce_registration_qc"),
-            ("tumor_mask_file", "tumor_mask_file"),
         ]),
         (pk_modeling, outputnode, [
             ("out_ktrans", "out_ktrans"),
@@ -1398,7 +1393,6 @@ def init_dce_preproc_wf(
     session_id: Optional[str] = None,
     config: Optional[DCEConfig] = None,
     has_tissue_seg: bool = True,
-    random_seed: Optional[int] = None,
     mem_gb: Optional[float] = None,
     mem_limit_gb: Optional[float] = None,
     t1_skip_reason: Optional[str] = None,
@@ -1429,8 +1423,6 @@ def init_dce_preproc_wf(
     has_tissue_seg : bool
         Whether tissue segmentation maps (CSF/WM probseg) are available.
         False in postcon-only mode where FAST is skipped. Default: True.
-    random_seed : int, optional
-        Random seed for reproducible PK model fitting (Bayesian inference).
     mem_gb : float, optional
         Memory estimate (GB) for heavy nodes. If None, uses a capped default.
     mem_limit_gb : float, optional
@@ -2323,17 +2315,14 @@ def init_dce_preproc_wf(
     pk_kwargs: dict[str, Any] = dict(
         model=config.model,
         inference=config.inference,
-        mcmc_samples=config.mcmc_samples,
         tsnr_threshold=config.tsnr_threshold,
         constraint_mode=config.cbv_constraint_mode,
         n_procs=max(1, config.num_processes),
         sloppy=config.sloppy,
-        aif_bat_alignment=config.aif_bat_alignment,
+        delay_correction=config.delay_correction,
         ser_early_time_s=config.ser_early_time_s,
         ser_late_time_s=config.ser_late_time_s,
     )
-    if random_seed is not None:
-        pk_kwargs["random_seed"] = random_seed
     pk_wf = init_dce_pk_modeling_wf(
         pk_kwargs=pk_kwargs,
         mem_gb=_heavy_mem,
@@ -2424,9 +2413,6 @@ def init_dce_preproc_wf(
         ]),
         (dce_registration_wf, dce_lesion_masks_wf, [
             ("outputnode.out_matrix", "inputnode.transform_matrix"),
-        ]),
-        (dce_lesion_masks_wf, pk_wf, [
-            ("outputnode.enhancing_mask", "inputnode.tumor_mask_file"),
         ]),
     ])
 

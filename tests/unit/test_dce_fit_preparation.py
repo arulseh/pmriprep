@@ -75,7 +75,7 @@ def test_consistent_time_inputs_share_fitting_and_selection_interval(
 def test_rounded_time_file_controls_selection_interval(
     timing_interface: ComputeDCEMaps, tmp_path: Path,
 ) -> None:
-    """Accepted timing roundoff still leaves one interval for fitting and BAT."""
+    """Accepted timing roundoff still leaves one interval for fitting and selection."""
     axis = np.round(np.arange(4) * 2.0 / 60.0, decimals=8)
     time_file = tmp_path / "time.txt"
     np.savetxt(time_file, axis)
@@ -131,7 +131,7 @@ def test_voxel_preparation_preserves_already_converted_concentration() -> None:
 def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
     tmp_path: Path,
 ) -> None:
-    """Raw-signal QC and enhancement gates define the pre-BAT fitting domain."""
+    """Raw-signal QC and enhancement gates define the pre-fit fitting domain."""
     shape = (2, 2, 1)
     concentration = np.zeros((*shape, 4), dtype=np.float32)
     concentration[0, 0, 0] = [0.0, 0.0, 0.2, 0.5]
@@ -163,7 +163,6 @@ def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
         baseline_frames=2,
         tsnr_threshold=10.0,
         inference="nlls",
-        mcmc_samples=123,
         save_fitted_curves=True,
     )
 
@@ -176,7 +175,6 @@ def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
     assert prepared.model_name == "2cxm"
     assert prepared.baseline_frames == 2
     assert prepared.inference == "nlls"
-    assert prepared.mcmc_samples == 123
     assert prepared.save_fitted_curves is True
     expected_domain = np.zeros(shape, dtype=bool)
     expected_domain[0, 0, 0] = True
@@ -277,33 +275,8 @@ def _empty_preparation() -> _DCEFitPreparation:
         peak_enhancement=None,
         fitting_mask=np.zeros((1, 1, 1), dtype=bool),
         inference="nlls",
-        mcmc_samples=500,
         save_fitted_curves=False,
     )
-
-
-def test_align_aif_to_tissue_preserves_non_alignment_reasons() -> None:
-    """Configuration, AIF provenance, and empty domains retain distinct QC."""
-    prepared = _empty_preparation()
-    interface = ComputeDCEMaps(aif_bat_alignment="off", aif_detection_method="atlas")
-    result = interface._align_aif_to_tissue(prepared)
-    assert result.correction == {"applied": False, "reason": "alignment_off"}
-    assert result.aif is prepared.aif
-
-    interface.inputs.aif_bat_alignment = "auto"
-    interface.inputs.aif_detection_method = "population"
-    result = interface._align_aif_to_tissue(prepared)
-    assert result.correction == {
-        "applied": False,
-        "reason": "population_aif_not_aligned",
-    }
-
-    interface.inputs.aif_detection_method = "atlas"
-    result = interface._align_aif_to_tissue(prepared)
-    assert result.correction == {
-        "applied": False,
-        "reason": "bat_detection_failed",
-    }
 
 
 def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
@@ -352,20 +325,20 @@ def test_interface_uses_unit_weights_without_dropping_observations(
         concentration_file=str(conc_file), brain_mask_file=str(mask_file),
         aif_file=str(aif_file), volume_tr=7.5, baseline_frames=3,
         bolus_arrival_frame=3, model="auto", inference=inference,
-        aif_bat_alignment="off", tsnr_threshold=0., save_fitted_curves=True,
+        delay_correction=False, tsnr_threshold=0., save_fitted_curves=True,
     )
-    original = interface._fit_batched
+    from pmriprep.models.dce.local_runner import LocalDelayRunner
+    original = LocalDelayRunner.fit_slice
     calls = []
 
-    def checked_fit(**kwargs: Any) -> Any:
-        assert kwargs["temporal_weights"] is None
-        assert kwargs["init_args"][9] is None
-        np.testing.assert_allclose(kwargs["conc_data"], concentration)
-        np.testing.assert_allclose(kwargs["time_points"], time)
+    def checked_fit(self: Any, aif: Any, times: Any, curves: Any, *args: Any, **kwargs: Any) -> Any:
+        np.testing.assert_allclose(curves, concentration.reshape(1, -1))
+        np.testing.assert_allclose(times, time)
+        assert kwargs["delay_correction"] is False
         calls.append(True)
-        return original(**kwargs)
+        return original(self, aif, times, curves, *args, **kwargs)
 
-    monkeypatch.setattr(interface, "_fit_batched", checked_fit)
+    monkeypatch.setattr(LocalDelayRunner, "fit_slice", checked_fit)
     output = interface.run(cwd=str(tmp_path)).outputs
     assert calls == [True]
     assert output.qc_metrics["temporal_weighting"] == "unit"

@@ -3,8 +3,8 @@
 from pmriprep.cli.run import _build_parser
 
 
-def test_internal_dce_inference_and_supported_dsc_modes_are_accepted() -> None:
-    """DCE retains hidden MAP while DSC exposes only its supported engines."""
+def test_supported_dce_and_dsc_modes_are_accepted() -> None:
+    """Both modalities accept their supported public inference modes."""
     parser = _build_parser()
     args = parser.parse_args(
         [
@@ -14,12 +14,12 @@ def test_internal_dce_inference_and_supported_dsc_modes_are_accepted() -> None:
             "--dsc-inference",
             "vi",
             "--dce-inference",
-            "map",
+            "vi",
         ]
     )
 
     assert args.dsc_inference == "vi"
-    assert args.dce_inference == "map"
+    assert args.dce_inference == "vi"
 
     args = parser.parse_args(
         [
@@ -33,7 +33,7 @@ def test_internal_dce_inference_and_supported_dsc_modes_are_accepted() -> None:
     assert args.dsc_inference == "svb"
 
 
-def test_map_inference_is_hidden_from_normal_help() -> None:
+def test_help_advertises_supported_inference_modes() -> None:
     """Normal help advertises recommended inference modes only."""
     parser = _build_parser()
     help_text = parser.format_help()
@@ -62,4 +62,4 @@ def test_help_describes_dce_solver_choices() -> None:
     help_text = _build_parser().format_help()
 
     normalized = " ".join(help_text.split())
-    assert "bounded weighted least squares; linear for Patlak, nonlinear for other models" in normalized
+    assert "bounded least squares; linear for Patlak, nonlinear for other models" in normalized

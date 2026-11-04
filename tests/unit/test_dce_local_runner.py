@@ -12,6 +12,8 @@ from pmriprep.models.dce.delay_profiles import (
 from pmriprep.models.dce.delayed import DelayedPchip
 from pmriprep.models.dce.local_selection import select_pool
 from pmriprep.models.dce.native_exchange import ExchangeFit
+from pmriprep.models.dce.fixed_inference import selected_fit_result
+from pmriprep.models.dce.local_refinement import ConditionalInput
 
 
 def _data() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -59,6 +61,7 @@ def test_chunk_boundaries_and_reused_pool_do_not_change_slice_results() -> None:
             setattr(profile, name, np.concatenate([getattr(p, name) for p in parts], axis=1))
         assert not any(p.retries for p in parts)
         profiles[family] = profile
+    serial_refinements = {}
     for processes in (1, 2):
         with runner.LocalDelayRunner(processes, 2) as engine:
             pool = engine._executor
@@ -84,6 +87,29 @@ def test_chunk_boundaries_and_reused_pool_do_not_change_slice_results() -> None:
                         for field in ("index", "reference", "free", "support", "fallback", "status"):
                             assert getattr(a, field) == getattr(b, field)
                         np.testing.assert_allclose(a.bic, b.bic, rtol=0, atol=1e-8)
+                selected = []
+                for i, choice in enumerate(result.selections):
+                    family = choice.family
+                    timing = choice.timing[family]
+                    profile = result.profiles[family]
+                    seed = selected_fit_result(profile, timing, i, aif, times, curves[i])
+                    selected.append(ConditionalInput(
+                        family, aif, times, observed, curves[i],
+                        float(profile.delays_seconds[timing.index]), seed,
+                        "vi" if i % 2 else "nlls",
+                    ))
+                final = engine.refine_selected(selected)
+                assert engine._executor is pool
+                if processes == 1:
+                    serial_refinements[z] = final
+                else:
+                    for first, second in zip(serial_refinements[z], final, strict=True):
+                        assert first.fit.parameters == second.fit.parameters
+                        assert first.actual_engine == second.actual_engine
+                        assert first.fallback == second.fallback
+                        np.testing.assert_array_equal(first.fit.fitted_curve, second.fit.fitted_curve)
+                        for name in first.fit.uncertainties:
+                            np.testing.assert_array_equal(first.fit.uncertainties[name], second.fit.uncertainties[name])
                 del result
 
 

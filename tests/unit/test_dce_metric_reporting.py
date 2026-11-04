@@ -5,7 +5,6 @@ import pytest
 
 from pmriprep.interfaces.dce_compute import (
     _build_dce_qc_mask,
-    _compute_derived_params,
     _is_degenerate_dce_fit,
 )
 from pmriprep.models.dce.tofts import ToftsModel
@@ -26,9 +25,6 @@ def test_finite_ratios_are_reported_without_qc_classification(
     """Derived maps report finite ratios throughout the positive-volume domain."""
     for model in (ToftsModel(), ExtendedToftsModel()):
         assert model.compute_derived_parameters([ktrans, ve, 0.02])["kep"] == pytest.approx(expected)
-        params = {"Ktrans": ktrans, "ve": ve, "vp": 0.02}
-        _compute_derived_params(params, model.name)
-        assert params["kep"] == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("ktrans,ve", [
@@ -52,13 +48,10 @@ def test_nonfinite_primary_rates_are_rejected(value: float) -> None:
 
 
 @pytest.mark.parametrize("ve", [0.0005, 0.005, 0.02])
-def test_2cxm_derived_ratio_parity(ve: float) -> None:
-    """2CXM scalar and batched-result reporting preserve the same finite ratio."""
+def test_2cxm_derived_ratio(ve: float) -> None:
+    """2CXM reported efflux preserves the finite transfer-to-volume ratio."""
     scalar = TwoCompartmentExchangeModel().compute_derived_parameters([40, 10, ve, 0.02])
-    batch = {"Fp": 40, "PS": 10, "ve": ve, "vp": 0.02}
-    _compute_derived_params(batch, "2cxm")
     assert scalar["kep"] == pytest.approx(0.08 / ve)
-    assert batch["kep"] == pytest.approx(scalar["kep"])
 
 
 @pytest.mark.parametrize("name", ["tofts", "extended_tofts", "2cxm"])
@@ -73,7 +66,9 @@ def test_kep_range_directly_gates_qc_mask(
     """Extreme finite ratios cannot pass the explicit kep criterion."""
     params = {"Ktrans": ktrans, "ve": ve, "vp": 0.02,
               "Fp": ktrans * 200, "PS": ktrans * 200}
-    _compute_derived_params(params, name)
+    model = {"tofts": ToftsModel, "extended_tofts": ExtendedToftsModel,
+             "2cxm": TwoCompartmentExchangeModel}[name]()
+    params.update(model.compute_derived_parameters(model.dict_to_params(params)))
     result = _build_dce_qc_mask(
         fitting_mask=np.array([True]),
         optimizer_converged=np.array([True]),

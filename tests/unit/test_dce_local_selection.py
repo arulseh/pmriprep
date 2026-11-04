@@ -135,9 +135,7 @@ def test_boundary_diagnostics_are_unavailable_without_a_full_search() -> None:
         assert timing.boundary_unavailable_reason == reason
 
 
-def test_family_guard_matches_production_without_double_delay_penalty() -> None:
-    from pmriprep.interfaces.dce_compute import _select_auto_bic_winners
-
+def test_family_guard_boundary_without_double_delay_penalty() -> None:
     n = 20
     times = np.arange(n) / 12
     aif = np.ones(n)
@@ -151,13 +149,11 @@ def test_family_guard_matches_production_without_double_delay_penalty() -> None:
             "extended_tofts": _profile("extended_tofts", [[ratio]]),
         }
         actual = selection.select_pool(profiles, aif, times, np.array([0]), 0)
-        names = ["patlak", "extended_tofts"]
-        scores = {name: np.array([actual.timing[name].bic]) for name in names}
-        index, delta, valid = _select_auto_bic_winners(
-            names, scores, {"patlak": 2, "extended_tofts": 3}
-        )
-        assert valid[0] and actual.family == names[index[0]]
-        np.testing.assert_equal(actual.delta_bic, delta[0])
+        improvement = actual.timing["patlak"].bic - actual.timing["extended_tofts"].bic
+        expected = "extended_tofts" if improvement >= 6.0 else "patlak"
+        assert actual.family == expected
+        expected_delta = improvement if improvement >= 6 else (-improvement if improvement <= 0 else np.nan)
+        np.testing.assert_equal(actual.delta_bic, expected_delta)
         assert actual.timing[actual.family].fallback == "fixed_zero"
 
 

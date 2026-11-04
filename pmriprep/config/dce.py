@@ -83,9 +83,9 @@ class DCEConfig:
         tofts, extended_tofts, patlak, or 2cxm.
     inference : str
         Public inference engines: nlls (default, bounded least squares) and
-        vi (variational Bayes). MAP and MCMC are internal validation paths.
-    mcmc_samples : int
-        Number of samples for the internal MCMC validation path.
+        vi (variational Bayes).
+    delay_correction : bool
+        Estimate local effective AIF delay; false fixes the delay to zero.
     num_processes : int
         Number of parallel processes (0 = use system default).
     hdbet_device : str
@@ -105,10 +105,7 @@ class DCEConfig:
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10
-    # AIF->tissue bolus-arrival pre-alignment: "auto" shifts a measured AIF to
-    # correct the arterial-to-tissue delay (guarded; benefits fine temporal
-    # resolution), "off" applies no shift.
-    aif_bat_alignment: Literal["auto", "off"] = "auto"
+    delay_correction: bool = True
 
     # Structural settings
     underlays: List[str] = field(default_factory=list)
@@ -137,7 +134,6 @@ class DCEConfig:
     # Model settings
     model: str = "auto"
     inference: str = "nlls"
-    mcmc_samples: int = 500
 
     # Relaxivity override
     r1_relaxivity: Optional[float] = None  # User-supplied r1 (s^-1/mM)
@@ -167,9 +163,8 @@ class DCEConfig:
         """
         categorical_options = {
             "model": ({"auto", "tofts", "extended_tofts", "patlak", "2cxm"}, self.model),
-            "inference": ({"nlls", "map", "vi", "mcmc"}, self.inference),
+            "inference": ({"nlls", "vi"}, self.inference),
             "aif_method": ({"auto", "population"}, self.aif_method),
-            "aif_bat_alignment": ({"auto", "off"}, self.aif_bat_alignment),
             "t1_method": ({"nlls", "wlls"}, self.t1_method),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
         }
@@ -180,6 +175,7 @@ class DCEConfig:
                 )
 
         for option in (
+            "delay_correction",
             "aif_peak_floor",
             "no_t1",
             "no_dsc_validation",
@@ -232,7 +228,6 @@ class DCEConfig:
         # Coerce integer fields (these have non-None defaults)
         try:
             self.baseline_frames = int(self.baseline_frames)
-            self.mcmc_samples = int(self.mcmc_samples)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
@@ -306,8 +301,6 @@ class DCEConfig:
 
         if self.baseline_frames != 0 and self.baseline_frames < 5:
             raise ValueError("baseline_frames must be 0 (auto) or at least 5")
-        if self.mcmc_samples <= 0:
-            raise ValueError("mcmc_samples must be greater than zero")
         if self.n_aif_candidates < 3:
             raise ValueError("n_aif_candidates must be at least 3")
         if self.num_processes < 0:

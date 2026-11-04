@@ -124,14 +124,14 @@ def test_vi_expanded_rate_ceiling_is_enforced_and_rejected(
     monkeypatch: pytest.MonkeyPatch, rate: str, truth: list[float], fp_ceiling: float,
 ) -> None:
     """A high-precision out-of-domain likelihood rails at the configured ceiling."""
-    from pmriprep.interfaces import dce_compute
+    from pmriprep.models.dce import retention
     from pmriprep.models.dce import two_compartment_exchange as exchange
 
     bounds = ParameterBounds(0, 500)
     monkeypatch.setattr(exchange, "FP_BOUNDS", ParameterBounds(0, fp_ceiling))
-    monkeypatch.setattr(dce_compute, "FP_BOUNDS", ParameterBounds(0, fp_ceiling))
+    monkeypatch.setattr(retention, "FP_BOUNDS", ParameterBounds(0, fp_ceiling))
     monkeypatch.setattr(exchange, "PS_BOUNDS", bounds)
-    monkeypatch.setattr(dce_compute, "PS_BOUNDS", bounds)
+    monkeypatch.setattr(retention, "PS_BOUNDS", bounds)
     model = TwoCompartmentExchangeModel()
     t = np.linspace(0, 6, 121)
     aif = 5 * np.exp(-0.5 * ((t - 0.7) / 0.15) ** 2)
@@ -141,7 +141,7 @@ def test_vi_expanded_rate_ceiling_is_enforced_and_rejected(
     assert result.parameters[rate] == pytest.approx(500, rel=0, abs=1e-9)
     lower, upper = result.credible_intervals[rate]
     assert 0 <= lower <= result.parameters[rate] <= upper == 500
-    assert dce_compute._is_degenerate_dce_fit("2cxm", result.parameters)
+    assert retention.is_degenerate_fit("2cxm", result.parameters)
 
 
 def test_uncertainty_source_appends_to_fit_result_layout() -> None:

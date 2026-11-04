@@ -3,17 +3,12 @@
 Covers ``pmriprep.utils.dce_bat`` -- the ``shift_aif`` time-shift helper, every
 guard branch of ``compute_aif_tissue_delay`` (incl. the integer-frame snap), and
 the minute-vs-second units contract of the BAT detector (the 60x conversion
-trap) -- plus the enhancing-tumor tissue-reference selector
-``pmriprep.interfaces.dce_compute._resolve_bat_tissue_reference``.
+trap).
 """
 from __future__ import annotations
 
 import numpy as np
 
-from pmriprep.interfaces.dce_compute import (
-    BAT_TUMOR_REFERENCE_MIN_VOXELS,
-    _resolve_bat_tissue_reference,
-)
 from pmriprep.utils.dce_bat import (
     MAX_AIF_TISSUE_DELAY_S,
     compute_aif_tissue_delay,
@@ -229,57 +224,3 @@ class TestSubFrameDetection:
             _step(n, 6), np.zeros(n), t, tr, baseline_frames=3,
         )
         assert prov_mixed["methods_match"] is False
-
-
-class TestResolveBatTissueReference:
-    """The enhancing-tumor tissue-reference selector used by ``ComputeDCEMaps``
-    for AIF BAT pre-alignment. The reference is the enhancing-tumor mask
-    intersected with the PK fitting mask; selection no-ops (returns ``None`` and
-    a reason) when no tumor mask, a grid mismatch, or too few voxels."""
-
-    @staticmethod
-    def _write_mask(path, arr: np.ndarray) -> str:
-        import nibabel as nib
-        nib.save(nib.Nifti1Image(arr.astype(np.uint8), np.eye(4)), str(path))
-        return str(path)
-
-    def test_no_tumor_reference_when_empty_path(self):
-        fm = np.ones((4, 4, 4), dtype=bool)
-        conc = np.ones((4, 4, 4, 10))
-        roi, info = _resolve_bat_tissue_reference("", fm, conc)
-        assert roi is None
-        assert info == {"applied": False, "reason": "no_tumor_reference"}
-
-    def test_grid_mismatch_noop(self, tmp_path):
-        fm = np.ones((4, 4, 4), dtype=bool)
-        conc = np.ones((4, 4, 4, 10))
-        mask = np.ones((5, 5, 5))            # wrong spatial shape vs conc[:3]
-        f = self._write_mask(tmp_path / "m.nii.gz", mask)
-        roi, info = _resolve_bat_tissue_reference(f, fm, conc)
-        assert roi is None
-        assert info["reason"] == "tumor_reference_grid_mismatch"
-
-    def test_too_small_noop_reports_voxel_count(self, tmp_path):
-        fm = np.ones((4, 4, 4), dtype=bool)
-        conc = np.ones((4, 4, 4, 10))
-        mask = np.zeros((4, 4, 4))
-        mask[0, 0, :3] = 1                   # 3 enhancing voxels < floor (10)
-        f = self._write_mask(tmp_path / "m.nii.gz", mask)
-        roi, info = _resolve_bat_tissue_reference(f, fm, conc)
-        assert roi is None
-        assert info["reason"] == "tumor_reference_too_small"
-        assert info["n_reference_voxels"] == 3
-        assert BAT_TUMOR_REFERENCE_MIN_VOXELS == 10
-
-    def test_returns_roi_intersected_with_fitting_mask(self, tmp_path):
-        conc = np.ones((4, 4, 4, 10))
-        mask = np.zeros((4, 4, 4))
-        mask[:, :, 0] = 1                    # 16-voxel enhancing slab on z=0
-        fm = np.ones((4, 4, 4), dtype=bool)
-        fm[0, :, 0] = False                  # fitting mask drops 4 of the 16
-        f = self._write_mask(tmp_path / "m.nii.gz", mask)
-        roi, info = _resolve_bat_tissue_reference(f, fm, conc)
-        assert roi is not None
-        expected = mask.astype(bool) & fm    # the intersection, not the bare mask
-        assert np.array_equal(roi, expected)
-        assert info["n_reference_voxels"] == int(expected.sum()) == 12

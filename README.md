@@ -210,7 +210,7 @@ DCE fields:
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |
 | `target_peak` | `null` | Explicit blood-scale AIF peak calibration in mM |
-| `aif_bat_alignment` | `auto` | Guarded AIF-to-tissue BAT alignment or `off` |
+| `delay_correction` | `true` | Estimate local AIF delay; `false` fixes delay to zero |
 | `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
 | `nawm_mask` | `null` | NAWM mask (native-DCE space) |
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space) |

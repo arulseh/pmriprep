@@ -1855,12 +1855,6 @@
       "enhancing_mask_file"
     ],
     [
-      "transform_enhancing_mask",
-      "out_file",
-      "pk_modeling",
-      "tumor_mask_file"
-    ],
-    [
       "transform_flair_postcon_underlay",
       "out_file",
       "outputnode",
@@ -2990,15 +2984,14 @@
       "subject_id": "0001"
     },
     "pk_modeling": {
-      "aif_bat_alignment": "auto",
       "aif_detection_method": "population",
       "aif_uncertainty_inflation_factor": 1.0,
       "baseline_frames": 0,
       "constraint_mode": "auto",
+      "delay_correction": true,
       "dsc_agent_standard_dose": 0.1,
       "dsc_dose": 1.0,
       "inference": "nlls",
-      "mcmc_samples": 500,
       "model": "auto",
       "n_procs": 1,
       "save_fitted_curves": false,

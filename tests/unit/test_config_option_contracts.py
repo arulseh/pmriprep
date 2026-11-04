@@ -104,7 +104,6 @@ def test_direct_builders_reject_unknown_options(builder, section: str, option: s
         (lambda: DCEConfig(model="etm"), "Invalid model"),
         (lambda: DCEConfig(inference="svb"), "Invalid inference"),
         (lambda: DCEConfig(aif_method="synthetic"), "Invalid aif_method"),
-        (lambda: DCEConfig(aif_bat_alignment="on"), "Invalid aif_bat_alignment"),
         (lambda: DCEConfig(t1_method="unsupported"), "Invalid t1_method"),
         (lambda: DSCConfig(method="osvd"), "Invalid method"),
         (lambda: DSCConfig(inference="mcmc"), "Invalid inference"),
@@ -411,7 +410,7 @@ def test_dsc_interface_rejects_unsupported_inference(inference: str) -> None:
         ComputeDSCMaps(inference=inference)
 
 
-@pytest.mark.parametrize("inference", ["nlls", "vi", "map"])
+@pytest.mark.parametrize("inference", ["nlls", "vi"])
 def test_dce_inference_selection_is_independent(inference: str) -> None:
     """DSC's inference choices do not alter DCE's existing dispatch controls."""
     from pmriprep.interfaces.dce_compute import ComputeDCEMaps
@@ -423,11 +422,25 @@ def test_dce_inference_selection_is_independent(inference: str) -> None:
     assert ComputeDCEMaps(inference=config.inference).inputs.inference == inference
 
 
-def test_dce_mcmc_settings_reach_interface() -> None:
-    """DCE sampling settings are parsed and passed to the interface."""
+@pytest.mark.parametrize("inference", ["map", "mcmc"])
+def test_retired_dce_pipeline_modes_are_rejected(inference: str) -> None:
+    from traits.trait_errors import TraitError
     from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 
-    config = build_dce_config({"dce": {"inference": "mcmc", "mcmc_samples": "321"}})
-    assert config.inference == "mcmc"
-    assert config.mcmc_samples == 321
-    assert ComputeDCEMaps(inference=config.inference, mcmc_samples=config.mcmc_samples).inputs.mcmc_samples == 321
+    with pytest.raises(ValueError, match="Invalid inference"):
+        build_dce_config({"dce": {"inference": inference}})
+    with pytest.raises(TraitError):
+        ComputeDCEMaps(inference=inference)
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["/tmp/bids", "/tmp/out", "participant", "--dce-inference", inference])
+
+
+def test_delay_correction_boolean_and_retired_settings() -> None:
+    assert DCEConfig().delay_correction is True
+    assert build_dce_config({"dce": {"delay_correction": False}}).delay_correction is False
+    for value in ("off", "auto", 1):
+        with pytest.raises(TypeError, match="delay_correction must be a boolean"):
+            build_dce_config({"dce": {"delay_correction": value}})
+    for option in ("mcmc_samples", "aif_bat_alignment"):
+        with pytest.raises(ValueError, match="Unknown"):
+            build_dce_config({"dce": {option: 1}})
