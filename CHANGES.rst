@@ -1,3 +1,9 @@
+1.0.0rc6.dev6 (2026-11-04)
+==========================
+
+* ENH: Package the shared signed-delay PCHIP input operator and direct
+  Standard Tofts rate-profile fitter. Workflow integration remains pending.
+
 1.0.0rc6.dev5 (2026-11-04)
 ==========================
 
