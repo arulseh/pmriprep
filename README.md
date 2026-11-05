@@ -122,24 +122,20 @@ Key DCE options:
 | `--dce-no-t1` | Use the uniform fallback T1 |
 | `--dce-t1-map FILE` | Supply a millisecond T1 map world-aligned to DCE |
 
-Automatic DCE selection compares Patlak and extended Tofts; 2CXM is eligible
-at volume intervals ≤2 s with additional evidence checks. Explicit 2CXM is
-available at any interval, but coarse sampling limits parameter identification.
-VI refines least-squares parameter estimates with the model and delay held fixed.
-
 Use `pmriprep --help` for the complete execution interface. `--use-plugin`
 accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 `--resource-monitor`, `--write-graph`, `--stop-on-first-crash`, and `--sloppy`
 follow the corresponding NiPreps conventions.
 
 CPI fitting uses single-threaded workers up to the process and node-memory
-limits; `--sloppy` reduces its fitting iterations for testing. SVB reports voxel
-progress during its warm start and each spatial sweep, with elapsed time and
-estimated remaining time. HD-BET uses
+limits; `--sloppy` reduces its fitting iterations for testing. HD-BET uses
 test-time augmentation on CUDA and MPS; CPU and sloppy execution
 disable it for speed.
-`--sloppy` is a run-wide, CLI-only testing preset; results and QC are approximate.
-It also uses a coarser DCE delay search when delay correction is enabled.
+
+Automatic DCE selection compares Patlak and extended Tofts; 2CXM is eligible
+at volume intervals ≤2 s with additional evidence checks. Explicit 2CXM is
+available at any interval, but coarse sampling limits parameter identification.
+VI refines least-squares parameter estimates with the model and delay held fixed.
 
 ## Configuration
 
@@ -149,56 +145,49 @@ file equivalents. Example configuration:
 
 ```yaml
 dsc:
-  method: cpi
-  inference: svb
   dose: 0.75
+  method: cpi
   lesion_mask: /path/to/lesion_mask.nii.gz
-  smooth_fwhm: 3.0
+  smooth_fwhm: 3.5
   underlays: [t1w_postcon, flair_precon]
 
 dce:
-  model: auto
-  inference: nlls
-  b1_method: auto
-  t1_method: nlls
-  t1_default_ms: null  # e.g., 1400 to configure the uniform fallback (ms)
-  delay_correction: true
-  smooth_fwhm: 3.0
+  model: 2cxm
+  inference: vi
+  t1_default_ms: 1400
+  smooth_fwhm: 3
 
 anat:
-  tool: hdbet
-  denoise: false
-  create_subtraction: false
+  create_subtraction: true
 
 tumor_seg:
-  nawm_erosion: 2
-  nawm_min_voxels: 500
+  nawm_erosion: 3
 ```
 
 DSC fields:
 
 | Field | Default | Description |
 |---|---:|---|
-| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
-| `nawm_mask` | `null` | NAWM mask (native-DSC space) |
-| `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
-| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
-| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
-| `pre_bolus` | `5` | Initial baseline frames; final baseline may be refined |
-| `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
-| `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
-| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
-| `leakage_method` | `bsw` | BSW correction (guidance for joint signal-domain CPI); `none` disables leakage correction/estimation |
-| `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
-| `aif_mask_file` | `null` | AIF search mask (native-DSC space); no search outside it. If exhausted, produce AIF-independent maps only |
-| `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
-| `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `cpi` |
 | `inference` | `vi` | `vi` or `svb` for CPI |
+| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
+| `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
+| `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
+| `pre_bolus` | `5` | Initial baseline frames; final baseline may be refined |
+| `motion_correct` | `true` | Apply motion correction; false estimates motion for QC without resampling |
+| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
+| `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
+| `aif_mask_file` | `null` | AIF search mask (native-DSC space). If exhausted, AIF-independent maps only |
+| `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
+| `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
+| `leakage_method` | `bsw` | BSW correction (or estimation for CPI); `none` disables leakage correction/estimation |
 | `cpi_control_points` | `0` | Number of CPI residue control points (0 = automatic; otherwise 5–12) |
-| `cpi_infer_delay` | `true` | Fit voxelwise arrival delay; false fixes it at zero and reports timing as not estimated |
-| `cpi_dispersion` | `none` | `none` omits arterial-dispersion fitting; `auto` or `gamma` enables the dispersed model (substantially slower) |
+| `cpi_infer_delay` | `true` | Fit voxelwise arrival delay; `false` fixes delay at zero |
+| `cpi_dispersion` | `none` | `none` omits arterial-dispersion fitting; `auto` or `gamma` enables (substantially slower) |
 | `cpi_fallback` | `osvd` | Replace rejected CPI fits with oSVD; `none` leaves those measurements missing |
+| `nawm_mask` | `null` | NAWM mask (native-DSC space) |
+| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
+| `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space); binary or integer labels |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
@@ -207,36 +196,36 @@ DCE fields:
 
 | Field | Default | Description |
 |---|---:|---|
-| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
-| `nawm_mask` | `null` | NAWM mask (native-DCE space) |
-| `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space) |
-| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
-| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
-| `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
-| `no_t1` | `false` | Skip VFA fitting and use the uniform fallback T1 |
-| `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
-| `t1_default_ms` | `null` | Uniform fallback T1 in ms, within measured-T1 safety limits; null uses field defaults. Usable measured/external maps take precedence |
-| `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
-| `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
-| `b1_map_encoding` | `auto` | Infer (`auto`) or specify precomputed B1+ pixel encoding (`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio`) |
+| `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
+| `inference` | `nlls` | `nlls` or `vi` |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
-| `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
-| `aif_method` | `auto` | `auto` or `population` |
+| `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
+| `motion_correct` | `true` | Apply motion correction; false estimates motion for QC without resampling |
+| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
+| `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
+| `b1_map_encoding` | `auto` | Infer (`auto`) or specify precomputed B1+ pixel encoding (`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio`) |
+| `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
+| `no_t1` | `false` | Skip VFA fitting and use the uniform fallback T1 |
+| `t1_default_ms` | `null` | Uniform fallback T1 in ms; null uses field defaults. Usable measured/external maps take precedence |
+| `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
 | `aif_file` | `null` | External plasma AIF; bypasses detection and scaling |
-| `aif_mask_file` | `null` | AIF search mask (native-DCE space); no search outside it. If exhausted, use the population AIF |
+| `aif_method` | `auto` | `auto` or `population` |
+| `aif_mask_file` | `null` | AIF search mask (native-DCE space). If exhausted, the population AIF is used |
 | `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |
 | `target_peak` | `null` | Explicit blood-scale AIF peak calibration in mM |
-| `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
-| `inference` | `nlls` | `nlls` or `vi` |
-| `delay_correction` | `true` | Local correction of the effective AIF–tissue model offset; `false` fixes it to zero |
-| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad vp prior for VI (60% relative SD); `skip` disables it. NLLS is always unconstrained |
+| `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
+| `delay_correction` | `true` | Local correction of the effective AIF–tissue model offset; `false` fixes delay at zero |
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
+| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad vp prior for VI; `skip` disables it. NLLS is always unconstrained |
+| `no_dsc_validation` | `false` | Skip descriptive DSC–DCE vascular concordance measurement |
 | `ser_early_time_s` | `60.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `300.0` | Late SER sample time after the selected global contrast reference (s) |
-| `no_dsc_validation` | `false` | Skip descriptive DSC–DCE vascular concordance measurement |
+| `nawm_mask` | `null` | NAWM mask (native-DCE space) |
+| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
+| `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space); binary or integer labels |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DCE space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
@@ -247,7 +236,7 @@ Anatomical fields:
 |---|---:|---|
 | `tool` | `hdbet` | `hdbet` or `ants` brain extraction |
 | `denoise` | `false` | Apply ANTs denoising |
-| `create_subtraction` | `false` | Create post-minus-precontrast T1w difference image from a sequence-compatible pair (not quantitative); implied when a DSC or DCE `t1w_subtraction` underlay is requested |
+| `create_subtraction` | `false` | Create post-minus-precontrast T1w difference image from a sequence-compatible pair; implied when a DSC or DCE `t1w_subtraction` underlay is requested |
 
 Tumor-segmentation fields:
 
@@ -271,13 +260,13 @@ candidate per subject/session in the input dataset. Multiple candidates must be
 resolved in the input dataset before processing; `--skip-dsc` and `--skip-dce`
 bypass validation of the skipped modality. A supplied `EchoTime` must be a finite
 scalar in seconds; it is required for DSC. Multi-echo and combined gradient- and
-spin-echo acquisitions are unsupported for both DSC and DCE.
+spin-echo acquisitions are currently unsupported for both DSC and DCE.
 
 | Input | Required metadata |
 |---|---|
 | DSC | `RepetitionTime`, `EchoTime`, `MagneticFieldStrength` |
 | DCE | `FlipAngle`, `MagneticFieldStrength`, volume TR, and excitation TR |
-| VFA | `RepetitionTime`, `FlipAngle`; at least two distinct angles |
+| VFA | `RepetitionTime`, `FlipAngle` (at least two distinct angles) |
 | AFI | `RepetitionTime`, `FlipAngle` |
 
 For 3D-excitation DCE (MRAcquisitionType = 3D), RepetitionTime is
