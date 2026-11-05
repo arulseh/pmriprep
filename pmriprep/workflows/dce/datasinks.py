@@ -101,13 +101,13 @@ _UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
 # (input_attr, suffix, description, units, extra_dict_or_None)
 _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("iauc60_map", "dce", "IAUC60", "Initial area under the concentration curve through 60 seconds", "mM*min", "iauc60",
-     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN",
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowPolicy": "derivative omitted",
       "ValueDomain": "signed finite concentration integral, or NaN", "NegativeValueHandling": "retained"}),
     DCEMapSpec("iauc90_map", "dce", "IAUC90", "Initial area under the concentration curve through 90 seconds", "mM*min", "iauc90",
-     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN",
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowPolicy": "derivative omitted",
       "ValueDomain": "signed finite concentration integral, or NaN", "NegativeValueHandling": "retained"}),
     DCEMapSpec("iauc120_map", "dce", "IAUC120", "Initial area under the concentration curve through 120 seconds", "mM*min", "iauc120",
-     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN",
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowPolicy": "derivative omitted",
       "ValueDomain": "signed finite concentration integral, or NaN", "NegativeValueHandling": "retained"}),
     DCEMapSpec("peak_enhancement_map", "dce", "peakEnhancement", "Peak post-baseline relative signal enhancement", "%", "peak_enhancement",
      {"InputCurve": "motion_corrected_signal", "Formula": "100*(max(Spost)-mean(Sbaseline))/mean(Sbaseline)",
@@ -126,7 +126,8 @@ _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
      {"InputCurve": "motion_corrected_signal", "Formula": "(Searly-S0)/(Slate-S0)",
       "SampleInterpolation": "linear",
       "MinimumEnhancementNoiseSD": 3.0,
-      "UndefinedValue": "NaN for incomplete timing, non-finite signal, or enhancement not exceeding baseline noise"}),
+      "IncompleteWindowPolicy": "derivative omitted",
+      "UndefinedValue": "NaN for non-finite signal or enhancement not exceeding baseline noise"}),
 )
 
 
@@ -880,7 +881,6 @@ def _build_delta_bic_meta(
 
 
 def _copy_perf_map(
-    in_file: str,
     output_dir: str,
     subject: str,
     session: str,
@@ -890,6 +890,7 @@ def _copy_perf_map(
     datatype: str = "perf",
     bids_suffix: str = "stat",
     space: str = "",
+    in_file: str | None = None,
 ) -> str:
     """Copy a DCE NIfTI + sidecar with BIDS-compliant naming.
 
@@ -897,7 +898,7 @@ def _copy_perf_map(
     which gets folded into the ``desc-`` entity.  ``bids_suffix`` is
     the BIDS-canonical suffix (``stat``, ``mask``, ``dseg``, …).  Pass
     ``suffix=""`` when ``desc`` already encodes everything and only the
-    BIDS suffix is needed.
+    BIDS suffix is needed. Undefined inputs omit both the map and sidecar.
     """
     import logging
     import shutil

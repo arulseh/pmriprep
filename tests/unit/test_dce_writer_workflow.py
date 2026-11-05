@@ -365,32 +365,43 @@ def test_uncertainty_sidecar_records_collected_qc(
     assert inflation["ParameterScaleFactors"]["Ktrans"] == 1.5
 
 
-@pytest.mark.parametrize("ser_complete", [False, True])
+@pytest.mark.parametrize("available_duration", [45.0, 75.0, 105.0, 330.0])
 def test_dce_factory_model_free_no_model_entity(
-    tmp_path: Path, minimal_bids: tuple[Path, str], ser_complete: bool,
+    tmp_path: Path, minimal_bids: tuple[Path, str], available_duration: float,
 ) -> None:
-    """Model-free sidecars retain collected timing QC and omit the model entity."""
-    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
+    """Incomplete windows emit no maps, smoothed copies or ROI statistics."""
+    from functools import partial
+
+    from nipype.interfaces.base import isdefined
+
+    from pmriprep.interfaces.dce_compute import (
+        ComputeDCEMaps, _DCEModelFreeMaps, _write_dce_map, _write_dce_model_free_maps,
+    )
+    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+    from pmriprep.workflows.dce._helpers import (
+        _build_model_free_map_dict, _collect_qc_metrics,
+    )
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
     out = tmp_path / "out"
 
-    present = {"iauc60_map", "peak_enhancement_map", "time_to_peak_map", "ser_map"}
+    present = {
+        "iauc60_map", "iauc90_map", "iauc120_map", "peak_enhancement_map",
+        "time_to_peak_map", "ser_map",
+    }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="auto", inference="vi",
-        present_inputs=present,
+        present_inputs=present | {"dce_moco"}, has_smoothing=True,
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
-    for attr in present:
-        value = np.nan if attr == "ser_map" and not ser_complete else 1.0
-        setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz", value))
-    available_duration = 330.0 if ser_complete else 180.0
+    inp.dce_moco = src
+    ser_complete = available_duration >= 300.0
     inp.config_dict = {"ser_early_time_s": 90.0, "ser_late_time_s": 300.0}
     fit_qc = {
         "iauc": {
@@ -402,11 +413,12 @@ def test_dce_factory_model_free_no_model_entity(
             "detected_bolus_arrival_frame": 6,
             "available_post_reference_duration_s": available_duration,
             "windows": {
-                "60": {
-                    "requested_duration_s": 60.0,
-                    "complete": True,
+                str(t): {
+                    "requested_duration_s": float(t),
+                    "complete": available_duration >= t,
                     "cutoff_interpolated": False,
                 }
+                for t in (60, 90, 120)
             },
         },
         "ser": {
@@ -422,23 +434,83 @@ def test_dce_factory_model_free_no_model_entity(
         preprocess_qc=None, brain_extraction_qc=None, registration_qc=None,
         aif_qc=None, pk_qc=fit_qc, validation_result=None,
     )
-    wf.run()
+
+    # Use the production output writer and File traits: an empty File path
+    # normalizes to '.', whereas a genuinely missing output stays Undefined.
+    array = np.ones((4, 4, 4), dtype=np.float32)
+    maps = _DCEModelFreeMaps(
+        array, array, array, array, array, array, fit_qc["iauc"], fit_qc["ser"],
+    )
+    producer = ComputeDCEMaps()
+    producer._results = _write_dce_model_free_maps(
+        maps, lambda suffix: str(tmp_path / f"map{suffix}.nii.gz"),
+        partial(_write_dce_map, affine=np.eye(4), header=nib.Nifti1Header()),
+    )
+    produced = producer.aggregate_outputs()
+    lesion_dir = tmp_path / "lesion_stats"
+    lesion_dir.mkdir()
+    lesion = DCELesionStats(
+        subject_id="01", session_id="0001",
+        lesion_mask=_write_nii(tmp_path / "lesion.nii.gz", 1.0),
+    )
+    for attr in present:
+        key = "out_" + attr.removesuffix("_map")
+        value = getattr(produced, key)
+        if isdefined(value):
+            setattr(inp, attr, value)
+            setattr(lesion.inputs, "ttp_map" if attr == "time_to_peak_map" else attr, value)
+    lesion_result = lesion.run(cwd=str(lesion_dir))
+    inp.lesion_stats_json = lesion_result.outputs.stats_json
+    stats = json.loads(Path(lesion_result.outputs.stats_json).read_text())
+    smooth_inputs = _build_model_free_map_dict(
+        iauc60=produced.out_iauc60, iauc90=produced.out_iauc90,
+        iauc120=produced.out_iauc120, peak=produced.out_peak_enhancement,
+        ser=produced.out_ser,
+    )
+    # Exercise smoothing's input selection and derivative routing without
+    # depending on FSL; convolution numerics have separate coverage.
+    inp.smooth_model_free_maps = {
+        key: _write_nii(tmp_path / f"{key}_fwhm3.nii.gz", 1.0)
+        for key in smooth_inputs
+    }
+    executed = {node.name: node for node in wf.run().nodes}
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
+    run_qc = json.loads(
+        (perf_out / "sub-01_ses-0001_desc-dcePreproc_dce.json").read_text()
+    )["PipelineQC"]["pk_modeling"]
+    assert run_qc["iauc"] == fit_qc["iauc"]
+    assert run_qc["ser"] == fit_qc["ser"]
     # No model entity in filename
-    assert (perf_out / "sub-01_ses-0001_desc-dceIAUC60_stat.nii.gz").exists()
-    iauc_sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_desc-dceIAUC60_stat.json").read_text()
-    )
+    for name, complete in (
+        *((f"IAUC{t}", available_duration >= t) for t in (60, 90, 120)),
+        ("SER", ser_complete),
+    ):
+        for prefix in ("dce", "dceSm3"):
+            for extension in ("nii.gz", "json"):
+                path = perf_out / f"sub-01_ses-0001_desc-{prefix}{name}_stat.{extension}"
+                assert path.exists() is complete
+        assert (name.lower() in smooth_inputs) is complete
+        for region in stats["Regions"].values():
+            assert (name.lower() in region["perfusion_maps"]) is complete
+        if not complete:
+            assert not list(tmp_path.glob(f"map_{name}.nii.gz"))
+    if available_duration >= 60:
+        iauc_sidecar = json.loads(
+            (perf_out / "sub-01_ses-0001_desc-dceIAUC60_stat.json").read_text()
+        )
+    else:
+        # Metadata is still constructible independently of writing a map.
+        iauc_sidecar = executed["iauc60_map_meta"].result.outputs.meta_dict
     assert iauc_sidecar["ReferencePoint"] == "selected global IAUC reference frame"
     assert iauc_sidecar["CutoffInterpolation"] == "linear"
-    assert iauc_sidecar["IncompleteWindowValue"] == "NaN"
+    assert iauc_sidecar["IncompleteWindowPolicy"] == "derivative omitted"
     assert iauc_sidecar["ValueDomain"] == "signed finite concentration integral, or NaN"
     assert iauc_sidecar["NegativeValueHandling"] == "retained"
     assert iauc_sidecar["ReferenceFrame"] == 5
     assert iauc_sidecar["ConfiguredBaselineFrames"] == 8
     assert iauc_sidecar["DetectedBolusArrivalFrame"] == 6
-    assert iauc_sidecar["ResolvedWindow"]["complete"] is True
+    assert iauc_sidecar["ResolvedWindow"]["complete"] is (available_duration >= 60)
     assert (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.nii.gz").exists()
     peak_sidecar = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.json").read_text()
@@ -458,9 +530,12 @@ def test_dce_factory_model_free_no_model_entity(
     assert ttp_sidecar["MinimumPeakEnhancementNoiseSD"] == 5.0
     assert "brain-median" in ttp_sidecar["NoiseEstimate"]
     assert "biased" in ttp_sidecar["Limitation"]
-    ser_sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_desc-dceSER_stat.json").read_text()
-    )
+    if ser_complete:
+        ser_sidecar = json.loads(
+            (perf_out / "sub-01_ses-0001_desc-dceSER_stat.json").read_text()
+        )
+    else:
+        ser_sidecar = executed["ser_map_meta"].result.outputs.meta_dict
     assert ser_sidecar["ReferenceFrame"] == 5
     assert ser_sidecar["ReferenceTimeSeconds"] == 25.0
     assert ser_sidecar["EarlySampleTimeSecondsAfterReference"] == 90.0

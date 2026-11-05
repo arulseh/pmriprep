@@ -446,7 +446,8 @@ def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> 
     array = np.ones((1, 1, 1))
     maps = _DCEModelFreeMaps(
         array, array, array, array if has_peak else None, array,
-        array, {}, {},
+        array, {"windows": {str(t): {"complete": True} for t in (60, 90, 120)}},
+        {"complete": True},
     )
     writes: list[tuple[str, object]] = []
 

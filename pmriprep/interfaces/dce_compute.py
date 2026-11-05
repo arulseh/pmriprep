@@ -717,22 +717,27 @@ def _write_dce_model_free_maps(
     generate_path: Callable[[str], str],
     write_map: Callable[..., None],
 ) -> dict[str, str]:
-    """Write model-free DCE maps and return their interface result paths."""
+    """Write model-free maps whose acquisition windows are complete.
+
+    Incomplete SER and IAUC outputs remain undefined so downstream smoothing,
+    statistics and derivative writers skip them. Timing QC is retained by the
+    caller independently of map availability.
+    """
     outputs = {
-        "out_iauc60": generate_path("_IAUC60"),
-        "out_iauc90": generate_path("_IAUC90"),
-        "out_iauc120": generate_path("_IAUC120"),
         "out_peak_enhancement": generate_path("_peak_enhancement"),
         "out_time_to_peak": generate_path("_time_to_peak"),
-        "out_ser": generate_path("_SER"),
     }
-    write_map(maps.iauc60, outputs["out_iauc60"])
-    write_map(maps.iauc90, outputs["out_iauc90"])
-    write_map(maps.iauc120, outputs["out_iauc120"])
+    for cutoff, data in ((60, maps.iauc60), (90, maps.iauc90), (120, maps.iauc120)):
+        if maps.iauc_qc["windows"][str(cutoff)]["complete"]:
+            key = f"out_iauc{cutoff}"
+            outputs[key] = generate_path(f"_IAUC{cutoff}")
+            write_map(data, outputs[key])
     if maps.peak_enhancement is not None:
         write_map(maps.peak_enhancement, outputs["out_peak_enhancement"])
     write_map(maps.time_to_peak, outputs["out_time_to_peak"])
-    write_map(maps.signal_enhancement_ratio, outputs["out_ser"])
+    if maps.ser_qc["complete"]:
+        outputs["out_ser"] = generate_path("_SER")
+        write_map(maps.signal_enhancement_ratio, outputs["out_ser"])
     return outputs
 
 
@@ -1319,12 +1324,12 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ps_std = File(desc="PS parameter uncertainty map (2CXM only)")
 
     # Model-free maps
-    out_iauc60 = File(desc="IAUC at 60s (mM·min)")
-    out_iauc90 = File(desc="IAUC at 90s (mM·min)")
-    out_iauc120 = File(desc="IAUC at 120s (mM·min)")
+    out_iauc60 = File(desc="IAUC at 60s (mM·min), if the window is complete")
+    out_iauc90 = File(desc="IAUC at 90s (mM·min), if the window is complete")
+    out_iauc120 = File(desc="IAUC at 120s (mM·min), if the window is complete")
     out_peak_enhancement = File(desc="Peak enhancement percentage")
     out_time_to_peak = File(desc="Time to peak (seconds)")
-    out_ser = File(desc="Signal Enhancement Ratio (washout characterization)")
+    out_ser = File(desc="Signal enhancement ratio, if the late sample is acquired")
 
     # Model selection map (auto mode)
     out_model_selection = File(desc="Model selection map (int8: 0=unfitted, 1=patlak, 2=tofts, 3=extended_tofts, 4=2cxm)")

@@ -324,6 +324,9 @@ Output availability depends on the supplied modalities and configuration:
   for all finite voxels and, when a QC mask is available, separately for voxels
   that pass QC.
 
+SER and IAUC maps are omitted when the acquisition does not cover their
+requested post-contrast windows; timing coverage remains recorded in QC.
+
 Accepted VFA T1 mapping emits a millisecond `T1map` registered to the native
 DCE reference grid. Population-T1 fallbacks and external T1 maps are consumed
 without being republished. B1+ maps are likewise used for correction but are

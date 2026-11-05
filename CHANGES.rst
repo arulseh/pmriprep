@@ -1,3 +1,11 @@
+1.0.0rc6.dev22 (2026-11-06)
+===========================
+
+* FIX: Omit SER and IAUC derivatives when their acquisition windows are
+  incomplete, including smoothed copies and regional statistics. Retain timing
+  coverage in QC rather than exporting undefined maps with zero-background
+  statistics.
+
 1.0.0rc6.dev21 (2026-11-05)
 ===========================
 
