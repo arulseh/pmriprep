@@ -1,3 +1,9 @@
+1.0.0rc6.dev24 (2026-11-06)
+===========================
+
+* FIX: Normalize recorded ANTs motion versions in generated methods using the
+  same formatter as other tool versions.
+
 1.0.0rc6.dev23 (2026-11-06)
 ===========================
 

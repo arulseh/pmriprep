@@ -362,7 +362,9 @@ def _build_motion_boilerplate(qc: dict[str, Any], modality: str) -> str:
     preprocessing = qc.get("preprocessing", {})
     tool = ""
     if preprocessing.get("motion_tool") == "ANTs":
-        version = preprocessing.get("motion_version")
+        from pmriprep.utils.sidecar_builders import _normalize_tool_version
+
+        version = _normalize_tool_version(preprocessing.get("motion_version") or "")
         version_text = f" (v{version})" if version else ""
         tool = (
             f" using ANTs{version_text} [@tustison_2021; @avants_2014] "

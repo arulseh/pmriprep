@@ -132,9 +132,12 @@ class TestBoilerplateVersionRendering:
         from pmriprep.utils.report_utils import _generate_boilerplate_text
 
         ran, d = self._data()
+        for modality in ("dsc", "dce"):
+            d[modality]["qc_metrics"]["preprocessing"]["motion_version"] = "unknown"
         none = _generate_boilerplate_text("0.78.0", ran, d, versions=None)
         empty = _generate_boilerplate_text("0.78.0", ran, d, versions={})
         assert none == empty
+        assert none.count("using ANTs [") == 2
         # No version tokens leaked in.
         for tok in ("(FSL ", "(ANTs ", "(2.0.1)", "Nipype 1."):
             assert tok not in none
@@ -146,6 +149,21 @@ class TestBoilerplateVersionRendering:
         out = _inject_tool_versions(md, {"FSL": "6.0", "ANTs": "2.6.5"})
         assert "ANTs (v2.6.5) [@tustison_2021; @avants_2014]" in out
         assert "using FLIRT (FSL v6.0) [@jenkinson_2002]" in out
+
+    def test_recorded_motion_version_uses_shared_normalization(self) -> None:
+        """Raw run-specific ANTs probes render once and override the suite fallback."""
+        from pmriprep.utils.report_utils import _generate_boilerplate_text
+
+        ran, data = self._data()
+        for modality in ("dsc", "dce"):
+            data[modality]["qc_metrics"]["preprocessing"]["motion_version"] = (
+                "ANTs Version: 2.6.5.dev1-g89fa5be"
+            )
+        text = _generate_boilerplate_text(
+            "test", ran, data, versions={"ANTs": "2.6.4"},
+        )
+        assert text.count("using ANTs (v2.6.5.dev1-g89fa5be) [") == 2
+        assert "N4BiasFieldCorrection (v2.6.4) [" in text
 
     def test_load_tool_versions_reads_dataset_description(
         self, tmp_path: Path,
