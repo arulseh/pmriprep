@@ -28,7 +28,7 @@ def minimal_bids(tmp_path: Path) -> tuple[Path, str]:
 
 
 def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> None:
-    """Mandatory PK output (Ktrans) writes correctly with required sidecar fields."""
+    """The selected delay reaches a native derivative with its NLLS basis."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -38,13 +38,18 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="auto", inference="vi",
-        present_inputs=set(),  # only mandatory ktrans_map
+        present_inputs={"delay_map", "fp_map", "ps_map"},
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
-    inp.qc_metrics = {}
+    inp.fp_map = inp.ps_map = inp.ktrans_map
+    inp.delay_map = _write_nii(tmp_path / "delay.nii.gz", 2.5)
+    inp.qc_metrics = {"pk_modeling": {
+        "timing_diagnostics": {"frame_interval_seconds": 7.4, "sensitivity_refits_performed": False},
+        "delay_correction": {"counts": {"selected": 64}},
+    }}
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
@@ -59,6 +64,31 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert "Resolution" not in sidecar
     assert isinstance(sidecar["VoxelSize"], list)
     assert sidecar["InputFunctionCompartment"] == "plasma"
+    path = perf_out / "sub-01_ses-0001_desc-dceDelay_stat.nii.gz"
+    np.testing.assert_array_equal(nib.load(path).get_fdata(), 2.5)
+    meta = json.loads(path.with_suffix("").with_suffix(".json").read_text())
+    assert meta["Units"] == "s" and not meta["SpatialSmoothingApplied"]
+    assert meta["EstimationBasis"] == "selected_nlls"
+    assert meta["AIFDependent"] is True
+    assert meta["TimingDiagnostics"]["sensitivity_refits_performed"] is False
+    assert meta["DelayCorrection"]["counts"]["selected"] == 64
+    assert "NaN" in meta["MissingValue"]
+    assert "boundary-selected model offset" in meta["BoundaryInterpretation"]
+    assert "does not establish" in meta["BoundaryInterpretation"]
+    assert not list(perf_out.glob("*Timing*.nii.gz"))
+    for name in ("Fp", "PS"):
+        meta = json.loads((perf_out / f"sub-01_ses-0001_desc-dce{name}_stat.json").read_text())
+        assert meta["TimingLimited"] is True and meta["FrameIntervalSeconds"] == 7.4
+    from pmriprep.workflows.dce.datasinks import _build_dce_pk_map_meta
+    for interval in (2.0, 2.000001):
+        meta = _build_dce_pk_map_meta({}, "Flow", map_key="fp", qc_metrics={
+            "pk_modeling": {"timing_diagnostics": {
+                "acquisition_frame_interval_seconds": interval,
+                "frame_interval_seconds": 7.4,
+            }},
+        })
+        assert meta["FrameIntervalSeconds"] == interval
+        assert meta["TimingLimited"] is (interval > 2.0)
 
 
 def test_registered_vfa_t1map_writes_registration_provenance(

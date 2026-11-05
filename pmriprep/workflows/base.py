@@ -2909,6 +2909,7 @@ def _connect_master_dce_outputs_and_datasinks(
         dce_present |= {"model_selection_map", "delta_bic_map"}
     # R² is emitted by every PK fit.
     dce_present.add("r2_map")
+    dce_present.add("delay_map")
     if dce_model != "2cxm":
         dce_present.add("ktrans_uncertainty")
     if dce_model in _has_ve_models:
@@ -3043,6 +3044,7 @@ def _connect_master_dce_outputs_and_datasinks(
             # QC maps
             ("outputnode.tsnr_map", "inputnode.tsnr_map"),
             ("outputnode.qc_mask", "inputnode.qc_mask"),
+            ("outputnode.delay_map", "inputnode.delay_map"),
             ("outputnode.r2_map", "inputnode.r2_map"),
             ("outputnode.model_selection_map", "inputnode.model_selection_map"),
             ("outputnode.delta_bic_map", "inputnode.delta_bic_map"),

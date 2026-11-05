@@ -77,6 +77,10 @@ class TestEnrichDCE:
                 "identification_qc": {
                     "basis": "selected_nlls", "by_model": {"extended_tofts": {"evaluated": 98}},
                 },
+                "timing_diagnostics": {
+                    "basis": "selected_nlls", "report_only": True,
+                    "acquisition_frame_interval_seconds": 7.4,
+                },
                 "r2_median": 0.87,
                 "qc_voxel_rsquared": 0.95,
             },
@@ -122,6 +126,7 @@ class TestEnrichDCE:
         assert perf["PKModeling"]["model"] == "extended_tofts"
         assert perf["PKModeling"]["inference"] == "vi"
         assert perf["PKModeling"]["IdentificationQC"] == qc["pk_modeling"]["identification_qc"]
+        assert perf["PKModeling"]["TimingDiagnostics"] == qc["pk_modeling"]["timing_diagnostics"]
         assert (
             perf["PKModeling"]["VoxelAccounting"]["optimizer_converged"][
                 "fraction_of_attempted"

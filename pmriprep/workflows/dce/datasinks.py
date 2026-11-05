@@ -78,6 +78,7 @@ class DCEAnatImageSpec:
 # PK parameter maps. Model name lives in JSON sidecar (PKModeling.model),
 # not in the filename (no `model-` entity in BIDS schema).
 _PK_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("delay_map", "dce", "Delay", "Selected AIF-relative model delay; not vascular transit time", "s", "delay"),
     DCEMapSpec("ktrans_map", "dce", "Ktrans", "Volume transfer constant (1/min)", "1/min", "ktrans"),
     DCEMapSpec("ve_map", "dce", "ve", "Extravascular extracellular space volume fraction", "1", "ve"),
     DCEMapSpec("kep_map", "dce", "kep", "Efflux rate constant (1/min)", "1/min", "kep"),
@@ -580,6 +581,34 @@ def _build_dce_pk_map_meta(
         map_key=map_key,
         lesion_fragment=fragment,
     )
+    if map_key == "delay":
+        out.update(
+            EstimationBasis="selected_nlls", SpatialSmoothingApplied=False,
+            DelayConvention="Positive delay evaluates the plasma AIF at t-delay",
+            MissingValue="NaN for background or unavailable selection; zero is a selected or fixed zero delay",
+            BoundaryInterpretation=(
+                "With delay correction enabled, a value at maximum_seconds in DelayCorrection "
+                "is a boundary-selected model offset, often inherited from the neighbourhood "
+                "reference. It may reflect limited timing information or model mismatch and "
+                "does not establish a physiological delay or a lower bound on the true delay. "
+                "Individual free-optimum edge counts do not classify pooled references."
+            ),
+        )
+        if isinstance(qc_metrics, dict):
+            pk = qc_metrics.get("pk_modeling", {})
+            out["DelayCorrection"] = pk.get("delay_correction", {})
+            out["TimingDiagnostics"] = pk.get("timing_diagnostics", {})
+    if map_key in {"fp", "ps"} and isinstance(qc_metrics, dict):
+        timing = qc_metrics.get("pk_modeling", {}).get("timing_diagnostics", {})
+        interval = timing.get("acquisition_frame_interval_seconds", timing.get("frame_interval_seconds"))
+        if interval is not None:
+            out["FrameIntervalSeconds"] = float(interval)
+            out["TimingLimited"] = float(interval) > 2.0
+            out["TimingInterpretation"] = (
+                "At frame intervals above 2 s, plasma flow and permeability "
+                "are confounded with fitted delay. This report-only flag does "
+                "not change retention or the primary-parameter binary QC mask."
+            )
 
     user_fragment = load_lesion_stats_fragment(
         user_lesion_stats_json, map_key,
@@ -1512,6 +1541,7 @@ def init_dce_datasinks_wf(
                 "peak_enhancement_map", "time_to_peak_map", "ser_map",
                 # QC + model-selection
                 "tsnr_map", "qc_mask", "r2_map",
+                "delay_map",
                 "model_selection_map", "delta_bic_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",

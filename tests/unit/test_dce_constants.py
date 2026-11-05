@@ -37,6 +37,10 @@ def test_exchange_rate_support_reaches_all_consumers() -> None:
                                 (np.nextafter(500., 0.), True), (500., True), (501., True)):
             parameters = {"Fp": 40., "PS": 10., "ve": .2, "vp": .05, rate: value}
             assert dce_compute._is_degenerate_dce_fit("2cxm", parameters) is rejected
+            assert retention.rate_ceiling_hits("2cxm", parameters) == ((rate,) if rejected else ())
+        parameters[rate] = np.nan
+        assert dce_compute._is_degenerate_dce_fit("2cxm", parameters)
+        assert retention.rate_ceiling_hits("2cxm", parameters) == ()
 
 
 class TestBloodT1:

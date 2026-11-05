@@ -50,7 +50,7 @@ DCE_AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
 #: DCE map keys registered for AIF-dependency provenance.
 DCE_AIF_MAP_KEYS: Final[frozenset[str]] = frozenset({
     # PK maps
-    "ktrans", "ve", "kep", "vp", "fp", "ps", "e",
+    "ktrans", "ve", "kep", "vp", "fp", "ps", "e", "delay",
     # Uncertainty
     "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
     "fp_uncertainty", "ps_uncertainty",

@@ -352,6 +352,8 @@ Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at
 native resolution. Unsmoothed maps are used for quantitative regional analysis.
 
 DSC/CPI and DCE fitting use equal temporal weights; motion estimates are used for QC.
+DCE also outputs the selected model delay in seconds at native resolution.
+This AIF-relative fitted offset is not a measure of vascular transit time.
 
 The HTML report summarizes anatomy, masks, registration, motion, AIF selection,
 T1/B1 processing, leakage correction, model fits, parameter maps, voxel

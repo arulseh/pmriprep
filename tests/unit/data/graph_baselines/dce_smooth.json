@@ -1076,6 +1076,12 @@
     ],
     [
       "pk_modeling",
+      "out_delay",
+      "outputnode",
+      "delay_map"
+    ],
+    [
+      "pk_modeling",
       "out_delta_bic",
       "dce_pk_maps_qc",
       "delta_bic_file"
@@ -3273,6 +3279,7 @@
     "dce_mean",
     "dce_moco",
     "dce_to_t1w_xfm",
+    "delay_map",
     "delta_bic_map",
     "dsc_dce_region_xval_plot",
     "dsc_dce_xval_plot",

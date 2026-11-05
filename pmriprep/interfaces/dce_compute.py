@@ -1077,6 +1077,7 @@ class _DCEParameterMaps(NamedTuple):
     optimizer_converged: npt.NDArray[Any]
     retained_nondegenerate: npt.NDArray[Any]
     primary_identification: npt.NDArray[np.bool_]
+    delay: npt.NDArray[Any]
     model_selection: npt.NDArray[Any]
     model_selection_codes: dict[str, int]
     delta_bic: npt.NDArray[Any]
@@ -1335,6 +1336,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
     out_qc_mask = File(desc="Binary QC: reported-fit quality AND selected-NLLS primary identification")
+    out_delay = File(exists=True, desc="Native selected AIF-relative model delay in seconds")
     out_fitting_mask = File(desc="Internal fitting-eligibility mask")
     out_optimizer_converged_mask = File(
         desc="Internal optimizer-convergence mask"
@@ -2155,6 +2157,7 @@ class ComputeDCEMaps(BaseInterface):
             optimizer_converged=np.zeros(spatial_shape, dtype=bool),
             retained_nondegenerate=np.zeros(spatial_shape, dtype=bool),
             primary_identification=np.zeros(spatial_shape, dtype=bool),
+            delay=np.full(spatial_shape, np.nan, dtype=np.float32),
             model_selection=np.zeros(spatial_shape, dtype=np.int8),
             model_selection_codes=model_selection_codes,
             delta_bic=np.full(spatial_shape, np.nan, dtype=np.float32),
@@ -2198,14 +2201,23 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.models.dce.local_refinement import ConditionalInput
         from pmriprep.models.dce.local_runner import LocalDelayRunner
         from pmriprep.models.dce.local_selection import SelectionMode
+        from pmriprep.models.dce.retention import rate_ceiling_hits
         from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         summaries: list[_DCEFitSummary] = []
         fallbacks: Counter[str] = Counter()
-        timing_counts: Counter[str] = Counter()
+        timing_counts: Counter[str] = Counter({
+            "selected_at_lower_bound": 0, "selected_at_upper_bound": 0,
+            "reference_at_lower_bound": 0, "reference_at_upper_bound": 0,
+        })
         failure_counts: Counter[str] = Counter()
         identification_counts: dict[str, dict[str, Any]] = {}
         identification_worker_seconds = refinement_worker_seconds = 0.0
+        retention_counts: Counter[str] = Counter({
+            "selected_2cxm": 0, "central_2cxm_ceiling_rejections": 0,
+        })
+        support_counts: Counter[int] = Counter()
+        radii: set[float] = set()
         max_profile_bytes = 0
         start = time.monotonic()
         n_procs = max(1, int(self.inputs.n_procs))
@@ -2262,6 +2274,17 @@ class ComputeDCEMaps(BaseInterface):
                         results.append(dict(coords=coords, failed=True, failure_stage="fit", failure_reason=reason))
                         continue
                     timing_counts["selected"] += 1
+                    maps.delay[coords] = fits.profiles[family].delays_seconds[timing.index]
+                    if delay_enabled:
+                        grid = fits.profiles[family].delays_seconds
+                        for name, index in (("selected", timing.index), ("reference", timing.reference)):
+                            timing_counts[name + "_at_lower_bound"] += int(grid[index] == 0.0)
+                            timing_counts[name + "_at_upper_bound"] += int(grid[index] == MAX_LOCAL_DELAY_SECONDS)
+                    support_counts[timing.support] += 1
+                    if fits.radius_mm is not None:
+                        radii.add(float(fits.radius_mm))
+                    if timing.boundary_unavailable_reason is not None:
+                        timing_counts["boundary_unavailable_" + timing.boundary_unavailable_reason] += 1
                     timing_counts["free_delay"] += int(timing.free)
                     if timing.fallback is not None:
                         timing_counts[timing.fallback] += 1
@@ -2273,12 +2296,20 @@ class ComputeDCEMaps(BaseInterface):
                     seed = selected_fit_result(
                         profile, timing, member, prepared.aif, fit_times, curves[member],
                     )
+                    if family == "2cxm":
+                        retention_counts["selected_2cxm"] += 1
+                        hits = rate_ceiling_hits(family, seed.parameters)
+                        retention_counts["central_2cxm_ceiling_rejections"] += bool(hits)
+                        for name in hits:
+                            retention_counts["central_2cxm_" + name + "_ceiling"] += 1
                     results.append(dict(
                         coords=coords, failed=False, converged=True, params=seed.parameters,
                         selected_model_name=family, delta_bic=choice.delta_bic,
                         r_squared=seed.r_squared, uncertainties={},
                     ))
                     if _is_degenerate_dce_fit(family, seed.parameters):
+                        retention_counts["central_degenerate"] += 1
+                        retention_counts["central_degenerate_2cxm"] += int(family == "2cxm")
                         continue
                     inputs.append(ConditionalInput(
                         family, prepared.aif, fit_times, profile.observed,
@@ -2328,6 +2359,19 @@ class ComputeDCEMaps(BaseInterface):
             maximum_seconds=MAX_LOCAL_DELAY_SECONDS if delay_enabled else 0.0,
             approximate_test_mode=sloppy, counts=dict(timing_counts),
             family_numerical_failures=dict(failure_counts),
+            support_histogram={str(k): v for k, v in sorted(support_counts.items())},
+            effective_radii_mm=sorted(radii),
+            selected_summary_denominator="selected count before numerical retention and identification QC; applies to support and selected-family boundary/fallback counts",
+            boundary_count_definitions={
+                "selected_at_lower_bound": "Selected delay equals zero with delay correction enabled",
+                "selected_at_upper_bound": "Selected delay equals maximum_seconds with delay correction enabled",
+                "reference_at_lower_bound": "Selected family's reference equals zero with delay correction enabled, including zero-reference fallbacks",
+                "reference_at_upper_bound": "Selected family's reference equals maximum_seconds with delay correction enabled",
+                "free_optimum_near_lower_or_upper": "Centre voxel's own selected-family profile optimum, irrespective of whether its free delay was selected",
+                "flat_edge_or_truncated": "Centre voxel's own free-optimum upper-edge classification; does not classify the pooled reference or count selected upper-bound delays",
+            },
+            retention_counts=dict(retention_counts),
+            retention_count_denominator="2CXM ceiling counts use selected_2cxm; Fp/PS contacts may overlap",
         )
         qc["inference_fallback_reasons"] = dict(fallbacks)
         qc["identification_qc"] = {
@@ -2336,6 +2380,19 @@ class ComputeDCEMaps(BaseInterface):
             "denominator": "evaluated count within each model; parameter failure counts overlap",
             "unevaluated_primary_pass": False,
             "by_model": identification_counts,
+        }
+        qc["timing_diagnostics"] = {
+            "basis": "selected_nlls", "report_only": True,
+            "frame_interval_seconds": interval * 60,
+            "acquisition_frame_interval_seconds": prepared.selection_tr_seconds,
+            "observation_indices": list(range(prepared.n_timepoints)),
+            "observation_times_seconds": (fit_times * 60).tolist(),
+            "original_observation_times_seconds": (prepared.time_points * 60).tolist(),
+            "n_observations": prepared.n_timepoints,
+            "scope": "selected_nlls_fits_before_numerical_retention_and_vi",
+            "sensitivity_refits_performed": False,
+            "endpoint_convention": "PCHIP with first/last AIF values held outside acquired support",
+            "approximate_test_mode": sloppy,
         }
         qc["local_fitting_execution"] = dict(
             n_procs=n_procs, chunk_size=128, peak_slice_profile_bytes=max_profile_bytes,
@@ -2573,6 +2630,27 @@ class ComputeDCEMaps(BaseInterface):
         }
         self._results.update(parameter_outputs)
         self._results.update(model_free_outputs)
+        delay_path = self._gen_outfilename("_delay")
+        _save_dce_map(parameter_maps.delay, delay_path)
+        self._results["out_delay"] = delay_path
+
+        # Summarize the reported retained reversible-model timescale without refitting.
+        applicable = parameter_maps.retained_nondegenerate & np.isin(parameter_maps.model_selection, (2, 3))
+        valid_tau = applicable & np.isfinite(parameter_maps.ve) & np.isfinite(parameter_maps.ktrans) & (parameter_maps.ktrans > 0)
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            tau = 60 * parameter_maps.ve[valid_tau] / parameter_maps.ktrans[valid_tau]
+        finite_tau = np.isfinite(tau)
+        flagged = finite_tau & (tau < prepared.selection_tr_seconds)
+        flagged_et = flagged & (parameter_maps.model_selection[valid_tau] == 3)
+        low_vp = flagged_et & (parameter_maps.vp[valid_tau] <= 1e-6)
+        qc_metrics["timing_diagnostics"]["tau_e"] = {
+            "basis": "reported_retained_et_or_tofts", "units": "s",
+            "applicable_retained": int(applicable.sum()), "defined": int(finite_tau.sum()),
+            "undefined": int(applicable.sum() - finite_tau.sum()),
+            "below_frame": int(flagged.sum()), "flagged_et": int(flagged_et.sum()),
+            "low_vp_threshold": 1e-6, "flagged_et_low_vp": int(low_vp.sum()),
+            "low_vp_fraction_of_flagged_et": float(low_vp.sum() / flagged_et.sum()) if flagged_et.any() else None,
+        }
 
         # Save method-specific parameter uncertainty maps.
         self._results.update(

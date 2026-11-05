@@ -154,6 +154,7 @@ def init_dce_pk_modeling_wf(
                 "out_delta_bic",
                 "out_r2",
                 "out_qc_mask",
+                "out_delay",
                 "out_fitting_mask",
                 "out_optimizer_converged_mask",
                 "out_fitted_curves",
@@ -213,6 +214,7 @@ def init_dce_pk_modeling_wf(
             ("out_delta_bic", "out_delta_bic"),
             ("out_r2", "out_r2"),
             ("out_qc_mask", "out_qc_mask"),
+            ("out_delay", "out_delay"),
             ("out_fitting_mask", "out_fitting_mask"),
             (
                 "out_optimizer_converged_mask",
@@ -1656,6 +1658,7 @@ def init_dce_preproc_wf(
                 # QC maps
                 "tsnr_map",
                 "qc_mask",
+                "delay_map",
                 "r2_map",
                 "model_selection_map",
                 "delta_bic_map",
@@ -2849,6 +2852,7 @@ def init_dce_preproc_wf(
         (pk_wf, outputnode, [
             ("outputnode.out_tsnr", "tsnr_map"),
             ("outputnode.out_qc_mask", "qc_mask"),
+            ("outputnode.out_delay", "delay_map"),
             ("outputnode.out_r2", "r2_map"),
             ("outputnode.out_model_selection", "model_selection_map"),
             ("outputnode.out_delta_bic", "delta_bic_map"),

@@ -13,8 +13,9 @@ from pmriprep.models.dce.profile_fitting import tofts_predict
 from pmriprep.utils.mem import estimate_dce_mem_gb
 
 
+@pytest.mark.parametrize("true_delay", [0.0, 2.0, 12.0])
 def test_routed_slices_preserve_background_missing_values_and_family(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, true_delay: float,
 ) -> None:
     import weakref
     from typing import Any
@@ -32,7 +33,7 @@ def test_routed_slices_preserve_background_missing_values_and_family(
     monkeypatch.setattr(LocalDelayRunner, "fit_slice", check_release)
     times = np.arange(40) * 7.4 / 60
     aif = 4 * np.exp(-((times - 0.6) / 0.13) ** 2)
-    context = DelayedPchip(aif, times, 2)
+    context = DelayedPchip(aif, times, true_delay)
     curve = tofts_predict(context, np.array([0.2, 0.3])) + 0.04 * context.cp
     concentration = np.tile(curve, (3, 3, 2, 1))
     concentration[0, 0, 0] = 0
@@ -61,6 +62,18 @@ def test_routed_slices_preserve_background_missing_values_and_family(
     assert qc["local_fitting_execution"]["n_procs"] == 2
     assert qc["two_cxm_auto_sampling_eligible"] is False
     assert qc["qc_acceptance_policy"]["fit"]["uncertainty_used_for_acceptance"] is True
+    delay = nib.load(output.out_delay).get_fdata()
+    np.testing.assert_array_equal(delay[accepted], true_delay)
+    counts = qc["delay_correction"]["counts"]
+    for name in ("selected", "reference"):
+        assert counts[name + "_at_lower_bound"] == (accepted.sum() if true_delay == 0 else 0)
+        assert counts[name + "_at_upper_bound"] == (accepted.sum() if true_delay == 12 else 0)
+    assert np.isnan(delay[~accepted]).all()
+    assert qc["timing_diagnostics"]["sensitivity_refits_performed"] is False
+
+    assert qc["timing_diagnostics"]["tau_e"]["defined"] == accepted.sum()
+    assert qc["timing_diagnostics"]["tau_e"]["below_frame"] == 0
+    assert sum(qc["delay_correction"]["support_histogram"].values()) == accepted.sum()
 
 
 def test_rounded_uniform_time_file_can_reach_fitting(tmp_path: Path) -> None:
@@ -141,6 +154,7 @@ def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
     ).run(cwd=str(tmp_path)).outputs
     np.testing.assert_array_equal(nib.load(output.out_qc_mask).get_fdata().ravel(), [0, 0, 1, 1])
     np.testing.assert_array_equal(nib.load(output.out_retained_nondegenerate_mask).get_fdata(), 1)
+    np.testing.assert_array_equal(nib.load(output.out_delay).get_fdata(), 0)
     np.testing.assert_allclose(nib.load(output.out_ktrans).get_fdata(), .1, rtol=1e-6)
     qc = output.qc_metrics
     evidence = qc["identification_qc"]["by_model"]["patlak"]
@@ -148,6 +162,11 @@ def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
     assert evidence["parameters"]["Ktrans"]["failures"] == {"output_unavailable": 1}
     assert qc["inference_fallback_reasons"] == {"test_numerical_fallback": 1}
     assert qc["qc_acceptance_policy"]["identification"]["basis"] == "selected_nlls"
+    assert qc["timing_diagnostics"]["tau_e"]["applicable_retained"] == 0
+    assert qc["timing_diagnostics"]["sensitivity_refits_performed"] is False
+    for name in ("selected", "reference"):
+        for edge in ("lower", "upper"):
+            assert qc["delay_correction"]["counts"][name + "_at_" + edge + "_bound"] == 0
 
 
 def test_memory_reservation_accounts_for_grid_families_and_workers(tmp_path: Path) -> None:

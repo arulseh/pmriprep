@@ -1,3 +1,11 @@
+1.0.0rc6.dev19 (2026-11-05)
+===========================
+
+* ENH: Emit the native selected DCE delay map and timing summary provenance
+  without additional sensitivity refits or changes to parameter maps and binary
+  QC. Distinguish selected/reference boundary counts and explain limit-selected
+  offsets. Flag coarse-sampled 2CXM Fp/PS as timing limited in their sidecars.
+
 1.0.0rc6.dev18 (2026-11-04)
 ===========================
 

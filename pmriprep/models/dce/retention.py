@@ -10,6 +10,19 @@ from pmriprep.utils.dce_constants import (
 _RATE_BOUND_RTOL: float = 1e-10
 
 
+def rate_ceiling_hits(model_name: str, params: dict[str, float]) -> tuple[str, ...]:
+    """Return finite rates touching their numerical ceiling, including tolerance."""
+    ceilings = (
+        (("Fp", FP_BOUNDS.max), ("PS", PS_BOUNDS.max))
+        if model_name == "2cxm" else (("Ktrans", KTRANS_BOUNDS.max),)
+    )
+    return tuple(
+        name for name, ceiling in ceilings
+        if np.isfinite(params.get(name, np.nan))
+        and params[name] >= ceiling - _RATE_BOUND_RTOL * max(1.0, abs(ceiling))
+    )
+
+
 def is_degenerate_fit(
     model_name: str,
     params: dict[str, float],
@@ -22,11 +35,10 @@ def is_degenerate_fit(
         (("Fp", FP_BOUNDS.max), ("PS", PS_BOUNDS.max))
         if model_name == "2cxm" else (("Ktrans", KTRANS_BOUNDS.max),)
     )
-    for name, ceiling in rate_ceilings:
-        value = params.get(name, np.nan)
-        tolerance = _RATE_BOUND_RTOL * max(1.0, abs(ceiling))
-        if not np.isfinite(value) or value >= ceiling - tolerance:
-            return True
+    if rate_ceiling_hits(model_name, params) or any(
+        not np.isfinite(params.get(name, np.nan)) for name, _ in rate_ceilings
+    ):
+        return True
     if model_name != "patlak":
         if not np.isfinite(ve) or not 0 < ve <= VE_BOUNDS.max:
             return True

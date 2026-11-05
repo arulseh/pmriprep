@@ -100,6 +100,7 @@ class TestPKMapKeyDriftGuard:
         from pmriprep.workflows.dce.datasinks import _PK_MAPS
 
         assert {spec.in_attr: spec.map_key for spec in _PK_MAPS} == {
+            "delay_map": "delay",
             "ktrans_map": "ktrans",
             "ve_map": "ve",
             "kep_map": "kep",

@@ -113,4 +113,5 @@ def estimate_dce_mem_gb(
     # cover worker results and their serialized transport while assembling.
     profile_bytes = (shape[0] * shape[1] + 2 * 128 * workers) * points * point_bytes
     _, buffers = estimate_4d_mem_gb(nifti_path, n_buffers=5)
-    return float(buffers + profile_bytes / 1e9 + 0.5 + 0.35 * workers)
+    timing_bytes = shape[0] * shape[1] * shape[2] * 4
+    return float(buffers + (profile_bytes + timing_bytes) / 1e9 + 0.5 + 0.35 * workers)

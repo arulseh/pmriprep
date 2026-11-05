@@ -176,6 +176,12 @@
     ],
     [
       "dce_wf",
+      "outputnode.delay_map",
+      "dce_datasinks_wf",
+      "inputnode.delay_map"
+    ],
+    [
+      "dce_wf",
       "outputnode.delta_bic_map",
       "dce_datasinks_wf",
       "inputnode.delta_bic_map"
