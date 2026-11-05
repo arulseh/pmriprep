@@ -35,11 +35,17 @@
     {% endif %}
 
     <!-- Motion QC -->
-    {% if dsc.images.motion or dsc.qc_metrics.preprocessing.motion_status %}
+    {% if dsc.images.motion or dsc.qc_metrics.preprocessing.motion_status or dsc.qc_metrics.preprocessing.motion_applied is defined %}
     <div class="section">
         <h3>Motion Quality Control</h3>
-        {% if dsc.qc_metrics.preprocessing.motion_status %}
+        {% if dsc.qc_metrics.preprocessing.motion_status or dsc.qc_metrics.preprocessing.motion_applied is defined %}
         <div class="metrics">
+            {% if dsc.qc_metrics.preprocessing.motion_applied is defined %}
+            <div class="metric">
+                <div class="metric-label">Correction</div>
+                <div class="metric-value">{{ 'applied' if dsc.qc_metrics.preprocessing.motion_applied else 'skipped' }}</div>
+            </div>
+            {% endif %}
             {% if dsc.qc_metrics.preprocessing.motion_status is defined %}
             <div class="metric">
                 <div class="metric-label">Motion Status</div>

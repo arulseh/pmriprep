@@ -267,6 +267,12 @@
         <h3>Motion Quality Control</h3>
         {% if dce.qc_metrics.preprocessing %}
         <div class="metrics">
+            {% if dce.qc_metrics.preprocessing.motion_applied is defined %}
+            <div class="metric">
+                <div class="metric-label">Correction</div>
+                <div class="metric-value">{{ 'applied' if dce.qc_metrics.preprocessing.motion_applied else 'skipped' }}</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.preprocessing.motion_status is defined %}
             <div class="metric">
                 <div class="metric-label">Motion Status</div>

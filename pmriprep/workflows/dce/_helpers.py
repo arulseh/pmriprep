@@ -2306,7 +2306,6 @@ def _generate_dce_motion_qc_plot(
     tr: float,
     subject_id: str = "",
     session_id: str = "",
-    motion_applied: bool = True,
     motion_thresh: float = 0.5,
 ) -> str:
     """Generate motion QC plot from DCE motion parameters.
@@ -2324,8 +2323,6 @@ def _generate_dce_motion_qc_plot(
         Subject identifier.
     session_id : str, optional
         Session identifier.
-    motion_applied : bool, optional
-        Whether the estimated ANTs transforms were applied to the input.
     motion_thresh : float, optional
         Configured FD exceedance threshold in millimetres.
 
@@ -2338,18 +2335,11 @@ def _generate_dce_motion_qc_plot(
     from pathlib import Path
     from pmriprep.utils.qc_utils import plot_motion_qc, qc_figure_title
 
-    note = (
-        "ANTs estimated input motion; correction applied."
-        if motion_applied else
-        "ANTs estimated input motion; correction not applied (original frames retained)."
-    )
-
     motion_params = np.loadtxt(motion_params_file, ndmin=2)
     out_path = Path.cwd() / "dce_motion_qc.png"
     plot_motion_qc(
         motion_params, out_path, tr=tr, fd_threshold=motion_thresh,
         title=qc_figure_title(subject_id, session_id, "DCE Motion QC"),
-        note=note,
     )
     return str(out_path)
 

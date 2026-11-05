@@ -1,3 +1,9 @@
+1.0.0rc6.dev23 (2026-11-06)
+===========================
+
+* CHG: Show motion-correction status beside the HTML motion-QC metrics instead
+  of annotating DSC and DCE motion figures.
+
 1.0.0rc6.dev22 (2026-11-06)
 ===========================
 

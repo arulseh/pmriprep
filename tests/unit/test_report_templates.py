@@ -68,6 +68,26 @@ def _assert_in_order(rendered: str, *labels: str) -> None:
     assert positions == sorted(positions)
 
 
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+@pytest.mark.parametrize("applied", [True, False, None])
+def test_motion_correction_card_uses_execution_flag(env, modality: str, applied: bool | None) -> None:
+    """Both reports distinguish applied/skipped without inventing missing provenance."""
+    preprocessing = {"tr_ms": 1500.0}
+    if applied is not None:
+        preprocessing["motion_applied"] = applied
+    rendered = env.get_template(f"sections/section_{modality}.html").render(**{
+        modality: {"qc_metrics": {"preprocessing": preprocessing},
+                   "images": {}, "display_status": {}},
+    })
+    if modality == "dsc":
+        assert ("<h3>Motion Quality Control</h3>" in rendered) is (applied is not None)
+    if applied is None:
+        assert '<div class="metric-label">Correction</div>' not in rendered
+    else:
+        assert '<div class="metric-label">Correction</div>' in rendered
+        assert f'<div class="metric-value">{"applied" if applied else "skipped"}</div>' in rendered
+
+
 @pytest.mark.parametrize(
     "skip_reason", ["no_dsc_run", "model_without_vp", "disabled_by_configuration"],
 )

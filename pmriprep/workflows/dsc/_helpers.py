@@ -1123,27 +1123,19 @@ def _generate_motion_qc_plot(
     -------
     tuple of (str, dict)
         Tuple of (plot_file path, motion_summary dict). ``motion_summary``
-        carries ``motion_applied`` and, when False, a ``motion_note``.
+        carries ``motion_applied`` for the HTML correction-status box.
     """
     import numpy as np
     from pathlib import Path
     from pmriprep.utils.qc_utils import plot_motion_qc
 
-    note = (
-        "ANTs estimated input motion; correction applied."
-        if motion_applied else
-        "ANTs estimated input motion; correction not applied (original frames retained)."
-    )
-
     motion_params = np.loadtxt(motion_params_file, ndmin=2)
     out_path = Path.cwd() / "dsc_motion_qc.png"
     _, motion_summary = plot_motion_qc(
         motion_params, out_path, tr=tr, fd_threshold=motion_thresh,
-        subject_id=subject_id, session_id=session_id, note=note,
+        subject_id=subject_id, session_id=session_id,
     )
     motion_summary["motion_applied"] = bool(motion_applied)
-    if note:
-        motion_summary["motion_note"] = note
     return str(out_path), motion_summary
 
 

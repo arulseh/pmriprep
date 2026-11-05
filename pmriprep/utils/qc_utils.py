@@ -667,7 +667,6 @@ def plot_motion_qc(
     radius: float = 50.0,
     subject_id: str = "",
     session_id: str = "",
-    note: Optional[str] = None,
     fd_threshold: float = 0.5,
 ) -> tuple[Path, dict[str, Any]]:
     """Create a 3-panel motion QC plot.
@@ -694,8 +693,6 @@ def plot_motion_qc(
         Head radius in mm for FD calculation (default 50.0)
     subject_id, session_id : str, optional
         Participant and session identifiers for the figure title.
-    note : str, optional
-        Caption describing motion estimation and transform application.
     fd_threshold : float, optional
         Configured strict FD exceedance threshold in millimetres.
 
@@ -805,14 +802,7 @@ def plot_motion_qc(
     elif subject_id or session_id:
         fig.suptitle(qc_figure_title(subject_id, session_id, "Motion QC"), fontsize=11)
 
-    fig.tight_layout(rect=(0, 0.12, 1, 0.985))
-
-    # Describe motion estimation and whether correction was applied.
-    if note:
-        fig.text(
-            0.5, 0.04, note, ha="center", va="center", fontsize=9,
-            color="#CC3311", wrap=True,
-        )
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
 
     # Save figure
     output_path = Path(output_path)

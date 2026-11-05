@@ -172,35 +172,23 @@ class TestConfoundsProvenance:
 
 
 # ---------------------------------------------------------------------------
-# Motion QC plot annotation (condition D)
+# Motion QC summary provenance
 # ---------------------------------------------------------------------------
-class TestMotionQCPlotAnnotation:
+class TestMotionQCSummary:
     def _params(self, tmp_path):
         par = tmp_path / "motion.par"
         np.savetxt(par, np.zeros((10, 6)))
         return str(par)
 
-    def test_applied_identifies_ants(self, tmp_path: Path, monkeypatch) -> None:
+    @pytest.mark.parametrize("applied", [False, True])
+    def test_summary_records_correction(self, tmp_path: Path, monkeypatch, applied: bool) -> None:
         from pmriprep.workflows.dsc._helpers import _generate_motion_qc_plot
 
         monkeypatch.chdir(tmp_path)
         _, summary = _generate_motion_qc_plot(
-            self._params(tmp_path), tr=1.5, motion_applied=True,
+            self._params(tmp_path), tr=1.5, motion_applied=applied,
         )
-        assert summary["motion_applied"] is True
-        assert "ANTs" in summary["motion_note"]
-        assert "correction applied" in summary["motion_note"]
-
-    def test_off_describes_estimation_only(self, tmp_path: Path, monkeypatch) -> None:
-        from pmriprep.workflows.dsc._helpers import _generate_motion_qc_plot
-
-        monkeypatch.chdir(tmp_path)
-        _, summary = _generate_motion_qc_plot(
-            self._params(tmp_path), tr=1.5, motion_applied=False,
-        )
-        assert summary["motion_applied"] is False
-        assert "estimated input motion" in summary["motion_note"].lower()
-        assert "not applied" in summary["motion_note"].lower()
+        assert summary["motion_applied"] is applied
 
 
 # ---------------------------------------------------------------------------
