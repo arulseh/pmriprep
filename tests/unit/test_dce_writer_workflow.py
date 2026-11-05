@@ -316,7 +316,10 @@ def test_uncertainty_sidecar_records_collected_qc(
     inp.provenance_dict = {"PerfusionProcessing": {"PKModeling": {"model": "tofts"}}}
     inp.config_dict = {"inference": inference}
     fit_qc = {
-        "qc_acceptance_policy": {"identification": identification_policy()},
+        "qc_acceptance_policy": {
+            "identification": identification_policy(), "approximate_test_mode": True,
+            "interpretation": "Maps and QC are approximate and for testing only.",
+        },
         "identification_qc": {"basis": "selected_nlls", "by_model": {"tofts": {"evaluated": 10}}},
         "parameter_uncertainty": {
             "aif_inflation_input_factor": 2.0,

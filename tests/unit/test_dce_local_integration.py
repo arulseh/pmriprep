@@ -42,12 +42,17 @@ def test_routed_slices_preserve_background_missing_values_and_family(
     nib.save(nib.Nifti1Image(concentration, np.eye(4)), tmp_path / "conc.nii.gz")
     nib.save(nib.Nifti1Image(mask, np.eye(4)), tmp_path / "mask.nii.gz")
     np.savetxt(tmp_path / "aif.txt", aif)
-    output = ComputeDCEMaps(
+    interface = ComputeDCEMaps(
         concentration_file=str(tmp_path / "conc.nii.gz"),
         brain_mask_file=str(tmp_path / "mask.nii.gz"), aif_file=str(tmp_path / "aif.txt"),
         volume_tr=7.4, baseline_frames=3, model="auto", n_procs=2,
         delay_correction=True, sloppy=True, save_fitted_curves=True,
-    ).run(cwd=str(tmp_path)).outputs
+    )
+    coarse_hash = interface.inputs.get_hashval()[1]
+    interface.inputs.sloppy = False
+    assert interface.inputs.get_hashval()[1] != coarse_hash
+    interface.inputs.sloppy = True
+    output = interface.run(cwd=str(tmp_path)).outputs
     values = nib.load(output.out_ktrans).get_fdata()
     assert values[2, 2, 1] == 0 and np.isnan(values[0, 0, 0])
     accepted = mask.astype(bool)
@@ -62,6 +67,11 @@ def test_routed_slices_preserve_background_missing_values_and_family(
     assert qc["local_fitting_execution"]["n_procs"] == 2
     assert qc["two_cxm_auto_sampling_eligible"] is False
     assert qc["qc_acceptance_policy"]["fit"]["uncertainty_used_for_acceptance"] is True
+    assert qc["qc_acceptance_policy"]["approximate_test_mode"] is True
+    assert "for testing only" in qc["qc_acceptance_policy"]["interpretation"]
+    assert "A coarse delay profile" in qc["qc_acceptance_policy"]["interpretation"]
+    assert qc["identification_qc"]["by_model"]["extended_tofts"]["evaluated"] == accepted.sum()
+    assert set(np.unique(nib.load(output.out_qc_mask).get_fdata())) <= {0, 1}
     delay = nib.load(output.out_delay).get_fdata()
     np.testing.assert_array_equal(delay[accepted], true_delay)
     counts = qc["delay_correction"]["counts"]
@@ -90,9 +100,12 @@ def test_rounded_uniform_time_file_can_reach_fitting(tmp_path: Path) -> None:
         concentration_file=str(tmp_path / "conc.nii.gz"),
         brain_mask_file=str(tmp_path / "mask.nii.gz"), aif_file=str(tmp_path / "aif.txt"),
         time_points_file=str(tmp_path / "times.txt"), volume_tr=2,
-        baseline_frames=3, model="patlak", delay_correction=False,
+        baseline_frames=3, model="patlak", delay_correction=False, sloppy=True,
     ).run(cwd=str(tmp_path)).outputs
     assert nib.load(output.out_ktrans).get_fdata().item() == pytest.approx(0.1, rel=1e-5)
+    interpretation = output.qc_metrics["qc_acceptance_policy"]["interpretation"]
+    assert "coarse delay profile" not in interpretation
+    assert "Shorter VI" in interpretation
 
 
 def test_conditional_covariance_matches_linear_theory_and_marks_rank_loss() -> None:
@@ -162,6 +175,7 @@ def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
     assert evidence["parameters"]["Ktrans"]["failures"] == {"output_unavailable": 1}
     assert qc["inference_fallback_reasons"] == {"test_numerical_fallback": 1}
     assert qc["qc_acceptance_policy"]["identification"]["basis"] == "selected_nlls"
+    assert qc["qc_acceptance_policy"]["approximate_test_mode"] is False
     assert qc["timing_diagnostics"]["tau_e"]["applicable_retained"] == 0
     assert qc["timing_diagnostics"]["sensitivity_refits_performed"] is False
     for name in ("selected", "reference"):

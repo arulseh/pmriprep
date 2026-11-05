@@ -38,7 +38,7 @@ class AnatConfig:
     create_subtraction: bool = False  # Create a post-contrast minus pre-contrast T1w subtraction image
 
     # Testing / debug
-    sloppy: bool = False  # Use fast, low-quality settings for testing
+    sloppy: bool = False  # Internal copy of the run-wide --sloppy setting
 
     def __post_init__(self) -> None:
         """Validate public anatomical configuration values."""

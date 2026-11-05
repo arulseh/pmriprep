@@ -70,6 +70,11 @@ def test_unified_report_renders_recommendation_and_warnings(
     output_html = ses / f"{prefix}.html"
     figures_dir = ses / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
+    # Report-only regeneration uses the saved run setting, including DSC-only runs.
+    sloppy = deconvolution_qc["method"] == "oSVD"
+    snapshot = ses.parent / "log" / "run-01" / "ses-0001" / "pmriprep.toml"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(f"[execution]\nsloppy = {str(sloppy).lower()}\n")
 
     generate_unified_report(
         subject_id="01", session_id="0001",
@@ -81,6 +86,7 @@ def test_unified_report_renders_recommendation_and_warnings(
     )
 
     html = output_html.read_text()
+    assert html.count("Sloppy mode: results are approximate and for testing only.") == int(sloppy)
     # Per-pipeline section headings rendered
     assert "Anatomical" in html or "anatomical" in html.lower()
     assert "DSC" in html

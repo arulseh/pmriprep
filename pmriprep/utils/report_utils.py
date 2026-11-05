@@ -1484,6 +1484,7 @@ def generate_unified_report(
     figures_dir: str,
     ran_pipelines: dict[str, bool],
     command_string: str = "",
+    sloppy: bool | None = None,
 ) -> str:
     """Generate a unified HTML QC report for all pipelines in a session.
 
@@ -1507,6 +1508,9 @@ def generate_unified_report(
         Dict mapping pipeline name to whether it ran.
     command_string : str, optional
         CLI command used to run PMRIPrep (for reproducibility).
+    sloppy : bool, optional
+        Run-wide testing preset. Report-only regeneration reads the most recent
+        saved session run configuration when this is not supplied.
 
     Returns
     -------
@@ -1517,6 +1521,18 @@ def generate_unified_report(
 
     ses_path = Path(ses_dir)
     fig_path = Path(figures_dir)
+    if sloppy is None:
+        import toml  # type: ignore[import-untyped]
+
+        subject_path = ses_path.parent if session_id else ses_path
+        pattern = f"*/ses-{session_id}/pmriprep.toml" if session_id else "*/pmriprep.toml"
+        snapshots = sorted((subject_path / "log").glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        sloppy = False
+        if snapshots:
+            try:
+                sloppy = toml.load(snapshots[0]).get("execution", {}).get("sloppy") is True
+            except (OSError, ValueError):
+                logger.warning("Could not read testing-mode status from %s", snapshots[0])
 
     # Build BIDS prefix
     prefix = f"sub-{subject_id}"
@@ -1620,6 +1636,7 @@ def generate_unified_report(
         "version": pmriprep.__version__,
         "processing_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "command_string": command_string,
+        "sloppy": sloppy,
         # Pipeline data (None if not run)
         "anat": pipeline_data.get("anat"),
         "tumor_seg": pipeline_data.get("tumor_seg"),

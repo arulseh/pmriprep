@@ -42,6 +42,7 @@ class GenerateUnifiedReportInputSpec(BaseInterfaceInputSpec):
 
     # CLI command for reproducibility
     command_string = traits.Str("", usedefault=True, desc="CLI command used to run PMRIPrep")
+    sloppy = traits.Bool(False, usedefault=True, desc="Run-wide approximate testing preset")
 
 
 class GenerateUnifiedReportOutputSpec(TraitedSpec):
@@ -102,6 +103,7 @@ class GenerateUnifiedReport(BaseInterface):
             figures_dir=figures_dir,
             ran_pipelines=ran_pipelines,
             command_string=self.inputs.command_string,
+            sloppy=self.inputs.sloppy,
         )
 
         return runtime

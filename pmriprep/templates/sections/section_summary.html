@@ -1,6 +1,9 @@
 <!-- Summary Section: aggregate recommendations and warnings from all pipelines -->
 <section id="summary">
     <h2>Summary</h2>
+    {% if sloppy %}
+    <p class="preload-note warning">Sloppy mode: results are approximate and for testing only.</p>
+    {% endif %}
 
     <!-- Overall QC Recommendation (worst across all pipelines) -->
     {% if overall_recommendation %}

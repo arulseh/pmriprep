@@ -57,7 +57,9 @@ def _validate_config_mapping(config: Any) -> Dict[str, Any]:
         section_value = result.setdefault(section, {})
         if not isinstance(section_value, dict):
             raise ValueError(f"Configuration section {section!r} must be a mapping.")
-        valid_options = {item.name for item in fields(config_class)}
+        if "sloppy" in section_value:
+            raise ValueError(f"{section}.sloppy is CLI-only; use --sloppy for the entire run.")
+        valid_options = {item.name for item in fields(config_class)} - {"sloppy"}
         unknown_options = set(section_value) - valid_options
         if unknown_options:
             raise ValueError(
@@ -212,11 +214,11 @@ def merge_cli_config(
         result.setdefault("dsc", {})["hdbet_conda_env"] = cli_args["hdbet_conda_env"]
         result.setdefault("dce", {})["hdbet_conda_env"] = cli_args["hdbet_conda_env"]
 
-    # --sloppy sets sloppy on DSC, DCE, and anat configs
-    if cli_args.get("sloppy"):
-        result.setdefault("dsc", {})["sloppy"] = True
-        result.setdefault("dce", {})["sloppy"] = True
-        result.setdefault("anat", {})["sloppy"] = True
+    # Internal node settings all receive the single run-wide CLI choice.
+    for section in ("dsc", "dce", "anat"):
+        if "sloppy" in file_config.get(section, {}):
+            raise ValueError(f"{section}.sloppy is CLI-only; use --sloppy for the entire run.")
+        result.setdefault(section, {})["sloppy"] = bool(cli_args.get("sloppy", False))
 
     return result
 

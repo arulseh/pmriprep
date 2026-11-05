@@ -1410,6 +1410,9 @@ class ComputeDCEMaps(BaseInterface):
         vi (variational Bayes).
     delay_correction : bool
         Estimate local effective input delay, or fix delay to zero when false.
+    sloppy : bool
+        Use a 1-s delay grid and shorter VI for testing. Maps and identification
+        QC are approximate; model eligibility and QC thresholds are unchanged.
     tsnr_threshold : float
         tSNR threshold for voxel inclusion (0 = no threshold). Default: 0.
     baseline_frames : int
@@ -2701,6 +2704,20 @@ class ComputeDCEMaps(BaseInterface):
             )
         )
 
+        qc_metrics["qc_acceptance_policy"]["approximate_test_mode"] = bool(self.inputs.sloppy)
+        if self.inputs.sloppy:
+            timing_interpretation = (
+                "A coarse delay profile can miss acceptable offsets and underestimate "
+                "timing uncertainty. "
+                if self.inputs.delay_correction else ""
+            )
+            qc_metrics["qc_acceptance_policy"]["interpretation"] = (
+                "Maps and QC are approximate and for testing only. "
+                + timing_interpretation
+                + "Shorter VI can change reported estimates. "
+                "The same QC checks are evaluated, but a passing mask does not "
+                "establish production-quality identification."
+            )
         return runtime
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]

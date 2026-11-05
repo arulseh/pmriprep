@@ -647,6 +647,7 @@ def test_dce_voxel_accounting_renders(env):
     assert '>80</div>' in rendered
     assert "65 (81.2%)" in rendered
     assert "50 (62.5%)" in rendered
+    assert "Sloppy mode:" not in rendered
 
 
 def test_dce_voxel_accounting_keeps_zero_and_unavailable_cards(env):

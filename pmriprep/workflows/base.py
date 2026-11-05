@@ -3132,6 +3132,7 @@ def _init_master_workflow_nodes(
     session_id: Optional[str],
     output_dir: Path,
     command_string: str,
+    sloppy: bool = False,
 ) -> _MasterWorkflowNodes:
     """Create master public nodes and the unified-report completion barrier.
 
@@ -3149,6 +3150,8 @@ def _init_master_workflow_nodes(
         Derivatives output root.
     command_string : str
         Invocation recorded in the report.
+    sloppy : bool
+        Run-wide testing preset, also recorded by the report node.
 
     Returns
     -------
@@ -3216,6 +3219,7 @@ def _init_master_workflow_nodes(
             ran_dsc=decision.run_dsc,
             ran_dce=decision.run_dce,
             command_string=command_string,
+            sloppy=sloppy,
         ),
         name="unified_report",
     )
@@ -3428,6 +3432,7 @@ def _prepare_master_workflow_context(
     work_dir: Optional[Union[str, Path]],
     mem_limit_gb: Optional[float],
     layout: Optional["BIDSLayout"],
+    sloppy: bool = False,
 ) -> _MasterWorkflowContext:
     """Resolve discovery, defaults, memory policy, and pipeline decisions.
 
@@ -3448,6 +3453,8 @@ def _prepare_master_workflow_context(
         that exceeds the budget; the caller must provide sufficient memory.
     layout : BIDSLayout, optional
         Reusable BIDS index for session discovery.
+    sloppy : bool
+        Single testing preset applied to all resolved processing configurations.
 
     Returns
     -------
@@ -3474,6 +3481,8 @@ def _prepare_master_workflow_context(
     )
     resolved_dsc_config = copy.deepcopy(dsc_config) if dsc_config is not None else DSCConfig()
     resolved_dce_config = copy.deepcopy(dce_config) if dce_config is not None else DCEConfig()
+    for config in (resolved_anat_config, resolved_dsc_config, resolved_dce_config):
+        config.sloppy = sloppy
     session_data = discover_session_data(
         resolved_bids_dir, subject_id, session_id, layout=layout
     )
@@ -3568,6 +3577,7 @@ def init_pmriprep_wf(
     user_specified: Optional[dict[str, bool]] = None,
     name: str = "pmriprep_wf",
     layout: Optional["BIDSLayout"] = None,
+    sloppy: bool = False,
 ) -> pe.Workflow:
     """Initialize the master PMRIPrep workflow.
 
@@ -3612,6 +3622,8 @@ def init_pmriprep_wf(
         Keys: dce_dose, dsc_dose, dsc_agent_standard_dose, dsc_preload.
     name : str
         Workflow name (default: "pmriprep_wf").
+    sloppy : bool
+        Run-wide testing preset for anatomy, DSC and DCE, also shown in the report.
     layout : BIDSLayout, optional
         Existing BIDS index reused for discovery. None constructs an index.
 
@@ -3645,6 +3657,7 @@ def init_pmriprep_wf(
         work_dir=work_dir,
         mem_limit_gb=mem_limit_gb,
         layout=layout,
+        sloppy=sloppy,
     )
     bids_dir = context.bids_dir
     output_dir = context.output_dir
@@ -3683,6 +3696,7 @@ def init_pmriprep_wf(
         session_id=session_id,
         output_dir=output_dir,
         command_string=command_string,
+        sloppy=sloppy,
     )
     inputnode = master_nodes.inputnode
     outputnode = master_nodes.outputnode

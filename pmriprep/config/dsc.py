@@ -129,7 +129,7 @@ class DSCConfig:
     leakage_method: Literal["bsw", "none"] = "bsw"
 
     # Testing / debug
-    sloppy: bool = False  # Use fast, low-quality settings for testing
+    sloppy: bool = False  # Internal copy of the run-wide --sloppy setting
 
     def __post_init__(self) -> None:
         """Ensure numeric fields have correct types after initialization.

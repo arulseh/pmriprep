@@ -133,6 +133,8 @@ progress during its warm start and each spatial sweep, with elapsed time and
 estimated remaining time. HD-BET uses
 test-time augmentation on CUDA and MPS; CPU and sloppy execution
 disable it for speed.
+`--sloppy` is a run-wide, CLI-only testing preset; results and QC are approximate.
+It also uses a coarser DCE delay search.
 
 ## Configuration
 

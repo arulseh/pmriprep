@@ -444,3 +444,24 @@ def test_delay_correction_boolean_and_retired_settings() -> None:
     for option in ("mcmc_samples", "aif_bat_alignment"):
         with pytest.raises(ValueError, match="Unknown"):
             build_dce_config({"dce": {option: 1}})
+
+
+def test_sloppy_is_run_wide_and_cli_only(tmp_path: Path) -> None:
+    """File configuration cannot create mixed normal/sloppy pipelines."""
+    for section in ("anat", "dsc", "dce"):
+        for value in ("true", "false"):
+            path = _write_config(tmp_path / "config.yaml", f"{section}:\n  sloppy: {value}\n")
+            with pytest.raises(ValueError, match="CLI-only; use --sloppy"):
+                load_config(path)
+        with pytest.raises(ValueError, match="CLI-only; use --sloppy"):
+            merge_cli_config({}, {section: {"sloppy": True}})
+    path = _write_config(tmp_path / "config.yaml", "dce:\n  model: 2cxm\n  delay_correction: false\n")
+    config = load_config(path)
+    for arguments, expected_global in (([], False), (["--sloppy"], True)):
+        parsed = _build_parser().parse_args(["/tmp/bids", "/tmp/out", "participant", *arguments])
+        merged = merge_cli_config(vars(parsed), config)
+        dce = build_dce_config(merged)
+        assert dce.sloppy is expected_global
+        assert dce.model == "2cxm" and dce.delay_correction is False
+        assert build_dsc_config(merged).sloppy is expected_global
+        assert build_anat_config(merged).sloppy is expected_global

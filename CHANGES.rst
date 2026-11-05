@@ -1,3 +1,9 @@
+1.0.0rc6.dev20 (2026-11-05)
+===========================
+
+* CHG: Make sloppy mode a run-wide, CLI-only testing preset with one HTML
+  summary warning. Record approximate DCE QC in its sidecar policy.
+
 1.0.0rc6.dev19 (2026-11-05)
 ===========================
 

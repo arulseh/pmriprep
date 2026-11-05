@@ -148,7 +148,7 @@ class DCEConfig:
     hdbet_conda_env: Optional[str] = None
 
     # Testing / debug
-    sloppy: bool = False  # Use fast, low-quality settings for testing
+    sloppy: bool = False  # Internal copy of the run-wide --sloppy setting
 
     @property
     def uses_vfa_t1(self) -> bool:

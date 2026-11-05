@@ -1115,7 +1115,7 @@ def test_prepare_master_context_isolates_session_config_mutation(
         "pmriprep.workflows.base.discover_session_data", lambda *args, **kwargs: session_data
     )
     monkeypatch.setattr("pmriprep.utils.mem._system_ram_gb", lambda: 128.0)
-    source = DCEConfig(no_t1=False, b1_method="auto")
+    source = DCEConfig(no_t1=False, b1_method="auto", sloppy=True)
 
     first = _prepare_master_workflow_context(
         bids_dir=tmp_path / "bids",
@@ -1130,6 +1130,7 @@ def test_prepare_master_context_isolates_session_config_mutation(
         work_dir=tmp_path / "work",
         mem_limit_gb=None,
         layout=None,
+        sloppy=True,
     )
     first.dce_config.no_t1 = True
     first.dce_config.b1_method = "none"
@@ -1153,6 +1154,9 @@ def test_prepare_master_context_isolates_session_config_mutation(
     assert second.dce_config.no_t1 is False
     assert second.dce_config.b1_method == "auto"
     assert first.dce_config is not second.dce_config
+    assert source.sloppy is True
+    assert all(config.sloppy for config in (first.anat_config, first.dsc_config, first.dce_config))
+    assert not any(config.sloppy for config in (second.anat_config, second.dsc_config, second.dce_config))
 
 
 def test_select_master_structural_references_routes_each_application(
@@ -1461,6 +1465,7 @@ def test_init_master_workflow_nodes_sets_public_contract(tmp_path: Path) -> None
         session_id="0001",
         output_dir=tmp_path / "out",
         command_string="pmriprep ...",
+        sloppy=True,
     )
 
     assert nodes.inputnode.inputs.t1w_pre == str(tmp_path / "t1w.nii.gz")
@@ -1472,4 +1477,5 @@ def test_init_master_workflow_nodes_sets_public_contract(tmp_path: Path) -> None
     assert nodes.report_barrier.inputs.dce_done == ""
     assert nodes.unified_report.inputs.ran_dsc is True
     assert nodes.unified_report.inputs.ran_dce is False
+    assert nodes.unified_report.inputs.sloppy is True
     assert "dce_ktrans" in nodes.outputnode.inputs.copyable_trait_names()

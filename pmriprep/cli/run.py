@@ -697,7 +697,7 @@ Examples:
         "--sloppy",
         action="store_true",
         default=False,
-        help="Use reduced-quality settings for development and testing. "
+        help="Use run-wide reduced-quality settings for development and testing. "
         "Not for production use.",
     )
     g_other.add_argument(
@@ -1227,6 +1227,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     user_specified=user_specified,
                     name=workflow_dirname(subject_id, session_id),
                     layout=bids_layout,
+                    sloppy=args.sloppy,
                 )
                 _configure_motion_threads(workflow, args.nprocs, omp)
 

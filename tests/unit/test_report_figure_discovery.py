@@ -5,7 +5,6 @@ from pathlib import Path
 
 from pmriprep.utils.report_utils import (
     _collect_pipeline_images,
-    generate_unified_report,
 )
 
 
@@ -46,7 +45,7 @@ def test_entity_rich_fit_figure_restores_complete_html_section(
     tmp_path: Path,
 ) -> None:
     """Figure discovery restores the fit image, parameters, and R-squared."""
-    ses_dir = tmp_path / "sub-01" / "ses-01"
+    ses_dir = tmp_path / "pmriprep" / "sub-01" / "ses-01"
     figures_dir = ses_dir / "figures"
     perf_dir = ses_dir / "perf"
     figures_dir.mkdir(parents=True)
@@ -71,16 +70,16 @@ def test_entity_rich_fit_figure_restores_complete_html_section(
     }))
     report = ses_dir / "sub-01_ses-01.html"
 
-    generate_unified_report(
+    from pmriprep.interfaces.reports import GenerateUnifiedReport
+
+    GenerateUnifiedReport(
         subject_id="01",
         session_id="01",
-        output_path=str(report),
-        ses_dir=str(ses_dir),
-        figures_dir=str(figures_dir),
-        ran_pipelines={"anat": False, "tumor_seg": False, "dsc": False, "dce": True},
-    )
+        output_dir=str(tmp_path), ran_dce=True, sloppy=True,
+    ).run(cwd=str(tmp_path))
 
     html = report.read_text()
+    assert html.count("Sloppy mode: results are approximate and for testing only.") == 1
     assert "Example Voxel Fit" in html
     assert "(4, 5, 6)" in html
     assert "0.1234 min<sup>-1</sup>" in html
