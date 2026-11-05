@@ -87,6 +87,10 @@ def test_unified_report_renders_recommendation_and_warnings(
 
     html = output_html.read_text()
     assert html.count("Sloppy mode: results are approximate and for testing only.") == int(sloppy)
+    methods = (ses / "logs" / "CITATION.md").read_text()
+    testing_disclosure = "The run used reduced-quality testing settings (--sloppy)"
+    assert (testing_disclosure in methods) == sloppy
+    assert (testing_disclosure in html) == sloppy
     # Per-pipeline section headings rendered
     assert "Anatomical" in html or "anatomical" in html.lower()
     assert "DSC" in html
@@ -198,8 +202,7 @@ def test_boilerplate_scientific_wording_matches_configurable_methods(supplied_ma
     assert "@schabel_2008" in dce
     assert "@tofts_1999" in dce
     assert "@schwarz_1978" in dce
-    assert "@sourbron_2007" in dce
-    assert "product integration" in dce
+    assert "piecewise cubic Hermite (PCHIP)" in dce
 
 
 @pytest.mark.parametrize("supplied_mask", [False, True])
@@ -371,6 +374,7 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
             "t1_mapping": {
                 "method": "assumed",
                 "assumed_t1_ms": 1200.0,
+                "assumed_t1_policy": "uniform_field_strength_reference",
                 "assumed_t1_field_strength_t": 3.0,
                 "b1_correction": "precomputed",
             },
@@ -390,12 +394,12 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
             },
         }
     )
-    assert "uniform field-strength-dependent T1 of 1200 ms at 3 T" in text
+    assert "uniform T1 of 1200 ms (field-strength reference at 3 T)" in text
     assert "with B1+ transmit field correction" in text
     assert "Parker population AIF" in text
     assert "hematocrit of 0.42" in text
     assert "@sourbron_2013" in text
-    assert "piecewise-linear plasma arterial input function" in text
+    assert "piecewise cubic Hermite (PCHIP) interpolant of the sampled plasma AIF" in text
     assert "nonlinear variational Bayesian inference" in text
     assert "@chappell_2009" in text
     assert "relative standard deviation of 60%" in text
@@ -432,18 +436,16 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
 @pytest.mark.parametrize(
     ("model", "candidates", "inference", "expected"),
     [
-        ("patlak", [], "nlls", "bounded weighted linear least squares."),
-        ("extended_tofts", [], "nlls", "bounded weighted nonlinear least squares."),
-        ("auto", ["patlak"], "nlls", "bounded weighted linear least squares."),
+        ("patlak", [], "nlls", "bounded linear least squares."),
+        ("extended_tofts", [], "nlls", "bounded nonlinear least squares."),
+        ("auto", ["patlak"], "nlls", "bounded linear least squares."),
         ("auto", ["extended_tofts", "2cxm"], "nlls",
-         "bounded weighted nonlinear least squares."),
+         "bounded nonlinear least squares."),
         ("auto", ["patlak", "extended_tofts"], "nlls",
-         "bounded weighted linear least squares for Patlak and "
-         "bounded weighted nonlinear least squares for the other candidate models."),
-        ("auto", [], "nlls", "bounded weighted least squares."),
+         "bounded linear least squares for Patlak and "
+         "bounded nonlinear least squares for the other candidate models."),
+        ("auto", [], "nlls", "bounded least squares."),
         ("patlak", [], "vi", "nonlinear variational Bayesian inference [@chappell_2009]."),
-        ("patlak", [], "map", "maximum a posteriori inference "
-         "with Laplace approximation for uncertainty quantification [@woolrich_2009]."),
     ],
 )
 def test_dce_methods_describe_the_model_specific_solver(
@@ -453,10 +455,12 @@ def test_dce_methods_describe_the_model_specific_solver(
     text = ru._build_dce_boilerplate({
         "pk_modeling": {
             "model": model, "candidate_models": candidates, "inference": inference,
+            "qc_acceptance_policy": {"identification": {"basis": "selected_nlls"}},
         },
     })
     sentence = next(s for s in text.split(". ") if s.startswith("DCE parameter estimation"))
     assert sentence.rstrip(".") == f"DCE parameter estimation used {expected}".rstrip(".")
+    assert ("VI posterior uncertainty was reported" in text) == (inference == "vi")
 
 
 @pytest.mark.parametrize("method", ["wlls", "nlls"])

@@ -122,6 +122,11 @@ Key DCE options:
 | `--dce-no-t1` | Use the uniform fallback T1 |
 | `--dce-t1-map FILE` | Supply a millisecond T1 map world-aligned to DCE |
 
+Automatic DCE selection compares Patlak and extended Tofts; 2CXM is eligible
+at volume intervals ≤2 s with additional evidence checks. Explicit 2CXM is
+available at any interval, but coarse sampling limits parameter identification.
+VI refines least-squares parameter estimates with the model and delay held fixed.
+
 Use `pmriprep --help` for the complete execution interface. `--use-plugin`
 accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 `--resource-monitor`, `--write-graph`, `--stop-on-first-crash`, and `--sloppy`
@@ -134,7 +139,7 @@ estimated remaining time. HD-BET uses
 test-time augmentation on CUDA and MPS; CPU and sloppy execution
 disable it for speed.
 `--sloppy` is a run-wide, CLI-only testing preset; results and QC are approximate.
-It also uses a coarser DCE delay search.
+It also uses a coarser DCE delay search when delay correction is enabled.
 
 ## Configuration
 
@@ -156,6 +161,8 @@ dce:
   inference: nlls
   b1_method: auto
   t1_method: nlls
+  t1_default_ms: null  # e.g., 1400 to configure the uniform fallback (ms)
+  delay_correction: true
   smooth_fwhm: 3.0
 
 anat:
@@ -172,26 +179,26 @@ DSC fields:
 
 | Field | Default | Description |
 |---|---:|---|
+| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
+| `nawm_mask` | `null` | NAWM mask (native-DSC space) |
+| `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
+| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
+| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
+| `pre_bolus` | `5` | Initial baseline frames; final baseline may be refined |
+| `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
+| `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
+| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
+| `leakage_method` | `bsw` | BSW correction (guidance for joint signal-domain CPI); `none` disables leakage correction/estimation |
+| `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
+| `aif_mask_file` | `null` | AIF search mask (native-DSC space); no search outside it. If exhausted, produce AIF-independent maps only |
+| `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
+| `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `cpi` |
 | `inference` | `vi` | `vi` or `svb` for CPI |
 | `cpi_control_points` | `0` | Number of CPI residue control points (0 = automatic; otherwise 5–12) |
 | `cpi_infer_delay` | `true` | Fit voxelwise arrival delay; false fixes it at zero and reports timing as not estimated |
 | `cpi_dispersion` | `none` | `none` omits arterial-dispersion fitting; `auto` or `gamma` enables the dispersed model (substantially slower) |
 | `cpi_fallback` | `osvd` | Replace rejected CPI fits with oSVD; `none` leaves those measurements missing |
-| `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
-| `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
-| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
-| `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
-| `aif_mask_file` | `null` | AIF search mask (native-DSC space); no search outside it. If exhausted, produce AIF-independent maps only |
-| `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
-| `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
-| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
-| `nawm_mask` | `null` | NAWM mask (native-DSC space) |
-| `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
-| `leakage_method` | `bsw` | BSW correction (guidance for joint signal-domain CPI); `none` disables leakage correction/estimation |
-| `pre_bolus` | `5` | Initial baseline frames; final baseline may be refined |
-| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
-| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
@@ -200,8 +207,18 @@ DCE fields:
 
 | Field | Default | Description |
 |---|---:|---|
-| `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
-| `inference` | `nlls` | `nlls` or `vi` |
+| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
+| `nawm_mask` | `null` | NAWM mask (native-DCE space) |
+| `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space) |
+| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
+| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
+| `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
+| `no_t1` | `false` | Skip VFA fitting and use the uniform fallback T1 |
+| `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
+| `t1_default_ms` | `null` | Uniform fallback T1 in ms, within measured-T1 safety limits; null uses field defaults. Usable measured/external maps take precedence |
+| `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
+| `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
+| `b1_map_encoding` | `auto` | Infer (`auto`) or specify precomputed B1+ pixel encoding (`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio`) |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
@@ -212,23 +229,13 @@ DCE fields:
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |
 | `target_peak` | `null` | Explicit blood-scale AIF peak calibration in mM |
-| `delay_correction` | `true` | Estimate local AIF delay; `false` fixes delay to zero |
-| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
-| `nawm_mask` | `null` | NAWM mask (native-DCE space) |
-| `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space) |
-| `no_t1` | `false` | Skip VFA fitting and use the uniform fallback T1 |
-| `t1_default_ms` | `null` | Uniform fallback T1 in ms, within measured-T1 safety limits; null uses field defaults. Usable measured/external maps take precedence |
-| `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
-| `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
-| `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
-| `b1_map_encoding` | `auto` | Infer (`auto`) or specify precomputed B1+ pixel encoding (`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio`) |
-| `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
-| `motion_correct` | `true` | Apply ANTs rigid motion correction; false estimates motion for QC without resampling |
-| `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
+| `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
+| `inference` | `nlls` | `nlls` or `vi` |
+| `delay_correction` | `true` | Local correction of the effective AIF–tissue model offset; `false` fixes it to zero |
+| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad vp prior for VI (60% relative SD); `skip` disables it. NLLS is always unconstrained |
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
 | `ser_early_time_s` | `60.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `300.0` | Late SER sample time after the selected global contrast reference (s) |
-| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad Bayesian vp prior (60% relative SD); `skip` disables it. NLLS is always unconstrained |
 | `no_dsc_validation` | `false` | Skip descriptive DSC–DCE vascular concordance measurement |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DCE space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
@@ -323,9 +330,10 @@ Output availability depends on the supplied modalities and configuration:
   and signal-quality diagnostics, masks, and regional
   statistics.
 - DCE outputs include PK, model-selection, model-free, timing, and fit-quality
-  derivatives, a QC mask, and regional statistics. Quantitative maps are not
-  filtered. Regional statistics are reported for all finite voxels and, when a
-  QC mask is available, separately for voxels that pass QC.
+  derivatives, a binary QC mask for fit quality and parameter identification, and
+  regional statistics. Quantitative maps are not filtered. Statistics are reported
+  for all finite voxels and, when a QC mask is available, separately for voxels
+  that pass QC.
 
 Accepted VFA T1 mapping emits a millisecond `T1map` registered to the native
 DCE reference grid. Population-T1 fallbacks and external T1 maps are consumed
@@ -353,7 +361,8 @@ Smoothed maps are additional derivatives. DCE kep is recomputed from smoothed
 Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at
 native resolution. Unsmoothed maps are used for quantitative regional analysis.
 
-DSC/CPI and DCE fitting use equal temporal weights; motion estimates are used for QC.
+DSC/CPI and DCE fitting use equal temporal weights; motion estimates are used for QC,
+not as a measure of residual motion after correction.
 DCE also outputs the selected model delay in seconds at native resolution.
 This AIF-relative fitted offset is not a measure of vascular transit time.
 

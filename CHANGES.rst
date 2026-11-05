@@ -1,3 +1,10 @@
+1.0.0rc6.dev21 (2026-11-05)
+===========================
+
+* FIX: Describe executed RC6 motion, DCE fitting, T1 fallback, AIF support and
+  identification QC in generated methods. Preserve testing-mode disclosure in
+  copied methods and clarify the quick-start configuration tables.
+
 1.0.0rc6.dev20 (2026-11-05)
 ===========================
 

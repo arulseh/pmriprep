@@ -330,27 +330,27 @@ class TestDCEInterfacePassthrough:
 @pytest.mark.parametrize(
     ("modality", "motion_applied", "present", "absent"),
     [
-        pytest.param("dsc", True, ("motion-corrected using MCFLIRT",), (), id="dsc-on"),
+        pytest.param("dsc", True, ("motion-corrected using ANTs",), (), id="dsc-on"),
         pytest.param(
             "dsc",
             False,
-            ("DSC motion correction was omitted", "residual motion"),
-            ("motion-corrected using MCFLIRT",),
+            ("DSC motion correction was omitted", "without resampling"),
+            ("motion-corrected using ANTs",),
             id="dsc-off",
         ),
-        pytest.param("dsc", None, ("motion-corrected using MCFLIRT",), (), id="dsc-default"),
+        pytest.param("dsc", None, ("DSC time-series data were motion-corrected.",), ("using ANTs",), id="dsc-unspecified-tool"),
         pytest.param(
             "dce",
             True,
-            ("motion-corrected using MCFLIRT", "@jenkinson_2002"),
+            ("motion-corrected using ANTs", "@jenkinson_2002"),
             (),
             id="dce-on",
         ),
         pytest.param(
             "dce",
             False,
-            ("DCE motion correction was omitted", "residual motion"),
-            ("motion-corrected using MCFLIRT", "DCE permeability images"),
+            ("DCE motion correction was omitted", "without resampling"),
+            ("motion-corrected using ANTs", "DCE permeability images"),
             id="dce-off",
         ),
     ],
@@ -365,11 +365,16 @@ def test_boilerplate_describes_motion_choice(
     from pmriprep.utils.report_utils import _build_dce_boilerplate, _build_dsc_boilerplate
 
     builder = _build_dsc_boilerplate if modality == "dsc" else _build_dce_boilerplate
-    preprocessing = {} if motion_applied is None else {"motion_applied": motion_applied}
+    preprocessing = {} if motion_applied is None else {
+        "motion_applied": motion_applied, "motion_tool": "ANTs",
+        "reference_type": "baseline_mean",
+    }
     text = builder({"preprocessing": preprocessing})
 
     assert all(clause in text for clause in present)
     assert all(clause not in text for clause in absent)
+    if motion_applied is not None:
+        assert "[@tustison_2021; @avants_2014]" in text
 
 
 class TestMotionAppliedSurvivesPipelineQCFilter:

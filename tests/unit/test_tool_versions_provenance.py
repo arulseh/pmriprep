@@ -102,9 +102,9 @@ class TestBoilerplateVersionRendering:
         d = {
             "anat": {"qc_metrics": {"brain_extraction": {"tool": "hdbet"},
                                     "tissue_segmentation": True}},
-            "dsc": {"qc_metrics": {"preprocessing": {"motion_applied": True},
+            "dsc": {"qc_metrics": {"preprocessing": {"motion_applied": True, "motion_tool": "ANTs"},
                                    "deconvolution": {"method": "oSVD"}}},
-            "dce": {"qc_metrics": {"preprocessing": {"motion_applied": True},
+            "dce": {"qc_metrics": {"preprocessing": {"motion_applied": True, "motion_tool": "ANTs"},
                                    "t1_mapping": {"method": "nlls", "b1_correction": "afi"}}},
         }
         return ran, d
@@ -119,9 +119,12 @@ class TestBoilerplateVersionRendering:
         assert "a Nipype v1.10.0-based" in txt
         assert "N4BiasFieldCorrection (v2.6.5)" in txt
         assert "FAST (FSL v6.0.7.1)" in txt
-        assert "MCFLIRT (FSL v6.0.7.1)" in txt
+        assert "ANTs (v2.6.5)" in txt
         assert "HD-BET (v2.0.1)" in txt
         assert "HD-GLIO (v2.0)" in txt
+        d["anat"]["qc_metrics"]["brain_extraction"]["tool"] = "ants"
+        ants = _generate_boilerplate_text("0.78.0", ran, d, versions=vers)
+        assert "ANTs brain extraction (v2.6.5) [@tustison_2014; @tustison_2021]" in ants
         # Method citations get NO version.
         assert "Tofts (" not in txt and "Patlak (" not in txt
 
@@ -136,12 +139,12 @@ class TestBoilerplateVersionRendering:
         for tok in ("(FSL ", "(ANTs ", "(2.0.1)", "Nipype 1."):
             assert tok not in none
 
-    def test_mcflirt_not_mangled_by_flirt_rule(self) -> None:
+    def test_motion_and_anatomical_tools_use_their_own_versions(self) -> None:
         from pmriprep.utils.report_utils import _inject_tool_versions
 
-        md = "using MCFLIRT [@jenkinson_2002] and using FLIRT [@jenkinson_2002]."
-        out = _inject_tool_versions(md, {"FSL": "6.0"})
-        assert "MCFLIRT (FSL v6.0) [@jenkinson_2002]" in out
+        md = "using ANTs [@tustison_2021; @avants_2014] and using FLIRT [@jenkinson_2002]."
+        out = _inject_tool_versions(md, {"FSL": "6.0", "ANTs": "2.6.5"})
+        assert "ANTs (v2.6.5) [@tustison_2021; @avants_2014]" in out
         assert "using FLIRT (FSL v6.0) [@jenkinson_2002]" in out
 
     def test_load_tool_versions_reads_dataset_description(

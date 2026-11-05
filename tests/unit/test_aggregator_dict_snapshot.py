@@ -1,8 +1,8 @@
 """Aggregator snapshot: ``_load_pipeline_sidecars`` returns the nested shape.
 
 The HTML aggregator reads canonical per-image sidecars (anchor
-``desc-{anat,dsc,dce}Preproc_*`` + the pipeline-internal resume sidecars
-for DSC/DCE) and translates flat ``QC*`` keys into the nested
+``desc-{anat,dsc,dce}Preproc_*``, including the DSC/DCE PipelineQC block)
+and translates flat ``QC*`` keys into the nested
 ``qc_metrics`` shape that the boilerplate generators
 (``_build_dsc_boilerplate`` etc.) expect.
 
@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from pmriprep.utils.report_utils import _load_pipeline_sidecars
 
@@ -59,10 +61,38 @@ def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
     assert out["processing_warnings"] == ["AIF fell back to template"]
 
 
-def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
+@pytest.mark.parametrize("delay_enabled", [False, True])
+def test_load_pipeline_sidecars_dce(tmp_path: Path, delay_enabled: bool) -> None:
     """DCE: anchor PipelineQC + QC* flat keys."""
+    from pmriprep.models.dce.identification import identification_policy
+    from pmriprep.utils.sidecar_builders import filter_pipeline_qc
+    from pmriprep.utils.report_utils import _build_dce_boilerplate
+    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
+
     ses = tmp_path / "pmriprep" / "sub-02" / "ses-0001"
     prefix = "sub-02_ses-0001"
+    qc = {
+        "preprocessing": {"motion_tool": "ANTs", "motion_version": "2.6.5", "motion_applied": False},
+        "t1_mapping": {"method": "nlls", "b1_correction": "afi"},
+        "signal_conversion": {
+            "t1_source": "assumed", "assumed_t1_ms": 1400,
+            "assumed_t1_policy": "uniform_configured", "b1_correction_applied": False,
+        },
+        "aif_detection": {"aif_source": "auto", "detection_method": "whole_brain", "aif_support_voxels": 1},
+        "pk_modeling": {
+            "model": "auto" if delay_enabled else "2cxm", "qc_voxel_rsquared": 0.85,
+            "candidate_models": ["patlak", "extended_tofts", "2cxm"] if delay_enabled else [],
+            "inference": "vi", "temporal_weighting": "unit",
+            "inference_fallback": {"n_nlls_fallback": 1},
+            "delay_correction": {"enabled": delay_enabled, "maximum_seconds": 12, "grid_step_seconds": 0.1},
+            "qc_acceptance_policy": {"identification": identification_policy()},
+        },
+    }
+    collected = _collect_qc_metrics(
+        b1_qc=None, t1_qc=qc["t1_mapping"], signal_conversion_qc=qc["signal_conversion"],
+        preprocess_qc=qc["preprocessing"], brain_extraction_qc=None, registration_qc=None,
+        aif_qc=qc["aif_detection"], pk_qc=qc["pk_modeling"], validation_result=None,
+    )
 
     _write(
         ses / "perf" / f"{prefix}_desc-dcePreproc_dce.json",
@@ -70,19 +100,36 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
             "QCRecommendationAction": "include",
             "QCRecommendationReason": "AIF good",
             "QCWarnings": ["NAWM mask in DCE space not available"],
-            "PipelineQC": {
-                "t1_mapping": {"method": "nlls", "b1_correction": "afi"},
-                "pk_modeling": {"model": "tofts", "qc_voxel_rsquared": 0.85},
-            },
+            "PipelineQC": filter_pipeline_qc(collected),
         },
     )
 
     out = _load_pipeline_sidecars(ses, prefix, "dce")
 
     assert out["t1_mapping"]["method"] == "nlls"
-    assert out["pk_modeling"]["model"] == "tofts"
+    assert out["pk_modeling"]["model"] == qc["pk_modeling"]["model"]
     assert out["recommendation"]["action"] == "include"
     assert out["warnings"] == ["NAWM mask in DCE space not available"]
+    text = _build_dce_boilerplate(out)
+    assert "ANTs (v2.6.5)" in text and "without resampling" in text
+    assert "motion-corrected using" not in text
+    assert "user-configured uniform T1 of 1400 ms" in text
+    assert "field-strength" not in text
+    assert "Variable flip angle T1 mapping did not provide a usable map" in text
+    assert ", using a user-configured uniform T1" in text
+    assert "B1+ transmit field correction" not in text
+    assert "single voxel, reported with reduced confidence" in text
+    assert "quality-weighted averaging" not in text
+    assert "whole-brain search" in text and "MRA-atlas-guided" not in text
+    assert "piecewise cubic Hermite (PCHIP)" in text
+    assert ("in-plane neighbourhood" in text) == delay_enabled
+    assert ("0–12 s in 0.1-s steps" in text) == delay_enabled
+    assert ("delay was fixed at zero" in text) != delay_enabled
+    assert ("exchange model was selected only where" in text) == delay_enabled
+    assert "VI refined least-squares estimates with the model and delay held fixed" in text
+    assert "same model and delay" in text
+    assert "binary DCE QC mask" in text and "corresponding least-squares fit" in text
+    assert "VI posterior uncertainty was reported separately" in text
 
 
 def test_load_pipeline_sidecars_anat(tmp_path: Path) -> None:
@@ -168,7 +215,8 @@ def test_anat_boilerplate_unknown_tool_omits_citation() -> None:
     text = _build_anat_boilerplate({})
     assert "Brain extraction was performed." in text
     assert "@isensee_2019" not in text
-    assert "@avants_2011" not in text
+    assert "@tustison_2014" not in text
+    assert "@tustison_2021" not in text
 
     # tool present but unrecognized (e.g., a future tool not yet in the
     # boilerplate dict) — must not silently miscite HD-BET.
@@ -184,6 +232,8 @@ def test_anat_boilerplate_unknown_tool_omits_citation() -> None:
     )
     assert "HD-BET" in text3
     assert "@isensee_2019" in text3
+    ants = _build_anat_boilerplate({"brain_extraction": {"tool": "ants"}})
+    assert "ANTs brain extraction [@tustison_2014; @tustison_2021]" in ants
 
 
 def test_anat_boilerplate_coregistration_is_conditional() -> None:
