@@ -340,17 +340,23 @@ def _enrich_dce(
         if aif_block:
             perf["AIF"] = aif_block
 
-        # Explicit unit traceability. The AIF curve consumed by PK
-        # modelling is in true plasma [Gd] (mM) after /(1-Hct); Parker
-        # reference peaks are blood-voxel units pre-Hct. Emit the block
-        # only when at least one concrete measurement (peak or Hct) is
-        # available, to avoid description-only blocks.
+        # External AIFs are supplied in plasma units; internally generated
+        # curves undergo blood-to-plasma conversion. Emit unit traceability
+        # only when a peak or hematocrit was recorded.
         final_peak_plasma = aif.get("final_peak_mm")
-        hct_used = aif.get("hematocrit")
+        hct_used = aif_block.get("Hematocrit")
+        if hct_used is not None:
+            perf["Hematocrit"] = {
+                "value": hct_used,
+                "Source": "aif_detection",
+            }
         if final_peak_plasma is not None or hct_used is not None:
             units_block: Dict[str, Any] = {
                 "description": (
-                    "AIF is in true plasma [Gd] (mM) after /(1-Hct) "
+                    "External AIF supplied in plasma [Gd] (mM); "
+                    "no hematocrit conversion applied."
+                    if aif_block.get("Source") == "external"
+                    else "AIF is in true plasma [Gd] (mM) after /(1-Hct) "
                     "conversion; Parker reference peaks are blood-voxel "
                     "(pre-Hct)."
                 ),
@@ -378,13 +384,6 @@ def _enrich_dce(
             }
             if fs is not None:
                 perf["BloodT1Reference"]["field_strength_T"] = fs
-
-    # Hematocrit
-    from pmriprep.utils.dce_constants import HEMATOCRIT_ARTERIAL
-    perf["Hematocrit"] = {
-        "value": float(HEMATOCRIT_ARTERIAL),
-        "Source": "default_population_average",
-    }
 
     # PK Modeling (consolidates former top-level PharmacokineticModel,
     # BayesianInference, ModelSelection)

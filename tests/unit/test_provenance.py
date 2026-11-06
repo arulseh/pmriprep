@@ -31,12 +31,14 @@ def _make_dsc_sidecar() -> dict:
 class TestEnrichDCE:
     """Tests for DCE provenance enrichment."""
 
-    def test_full_qc_enrichment(self) -> None:
+    @pytest.mark.parametrize("hematocrit", [0.42, 0.0, 0.35])
+    def test_full_qc_enrichment(self, hematocrit: float) -> None:
         """Full QC metrics produce reference, mapping, AIF, and PK provenance."""
         sidecar = _make_dce_sidecar()
         qc = {
             "t1_mapping": {"method": "vfa", "b1_correction": "AFI"},
             "aif_detection": {
+                "hematocrit": hematocrit,
                 "aif_source": "auto",
                 "n_aif_voxels_selected": 8,
                 "peak_mm_mean": 6.2,
@@ -105,7 +107,11 @@ class TestEnrichDCE:
         assert blood_t1["AppliedToArterialSignalConversion"] is False
 
         assert "Hematocrit" in perf
-        assert perf["Hematocrit"]["value"] == pytest.approx(0.42)
+        assert perf["Hematocrit"] == {
+            "value": hematocrit, "Source": "aif_detection",
+        }
+        assert perf["AIF"]["Hematocrit"] == hematocrit
+        assert perf["AIFUnits"]["hematocrit_used"] == hematocrit
 
         assert "T1Mapping" in perf
         assert perf["T1Mapping"]["method"] == "vfa"
@@ -229,6 +235,26 @@ class TestEnrichDCE:
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         assert "T1Mapping" not in result["PerfusionProcessing"]
 
+    def test_external_aif_plasma_units(self) -> None:
+        """A supplied plasma curve records its peak without claiming conversion."""
+        result = enrich_provenance_from_qc(
+            _make_dce_sidecar(),
+            {"aif_detection": {
+                "aif_source": "external", "final_peak_mm": 6.0,
+            }},
+            "DCE",
+        )
+        perf = result["PerfusionProcessing"]
+        assert perf["AIF"]["Source"] == "external"
+        assert perf["AIFUnits"] == {
+            "description": (
+                "External AIF supplied in plasma [Gd] (mM); "
+                "no hematocrit conversion applied."
+            ),
+            "aif_peak_plasma_mM": 6.0,
+        }
+        assert "Hematocrit" not in perf
+
     def test_empty_qc(self) -> None:
         """Empty qc_metrics produces no enrichment."""
         sidecar = _make_dce_sidecar()
@@ -236,7 +262,7 @@ class TestEnrichDCE:
         perf = result["PerfusionProcessing"]
         assert "AIF" not in perf
         assert "T1Mapping" not in perf
-        assert "Hematocrit" in perf  # always added for DCE
+        assert "Hematocrit" not in perf
 
     def test_pk_model_auto_selection(self) -> None:
         """Auto model selection includes candidate models and distribution."""

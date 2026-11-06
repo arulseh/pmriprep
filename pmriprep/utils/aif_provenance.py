@@ -301,7 +301,9 @@ def build_aif_provenance_block(
     n_ipsilateral = aif_qc.get("n_ipsilateral")
     if n_ipsilateral is not None:
         block["NumberOfIpsilateralCandidates"] = int(n_ipsilateral)
-    hct = aif_qc.get("hematocrit") or aif_qc.get("hematocrit_used")
+    hct = aif_qc.get("hematocrit")
+    if hct is None:
+        hct = aif_qc.get("hematocrit_used")
     if hct is not None:
         block["Hematocrit"] = float(hct)
     dose_factor = aif_qc.get("dose_factor")

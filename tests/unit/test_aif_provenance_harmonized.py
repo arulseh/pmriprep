@@ -143,7 +143,8 @@ class TestBuildProvenanceBlockDSC:
 
 
 class TestBuildProvenanceBlockDCE:
-    def test_detected(self) -> None:
+    @pytest.mark.parametrize("hematocrit", [0.42, 0.0])
+    def test_detected(self, hematocrit: float) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
         block = build_aif_provenance_block(
@@ -152,7 +153,7 @@ class TestBuildProvenanceBlockDCE:
                 "quality_score": 0.75,
                 "aif_confidence": "standard",
                 "aif_uncertainty_inflation_factor": 1.0,
-                "hematocrit": 0.42,
+                "hematocrit": hematocrit,
                 "peak_scaling_enabled": True,
                 "peak_scaling_applied": True,
                 "raw_peak_mm": 4.0,
@@ -173,7 +174,7 @@ class TestBuildProvenanceBlockDCE:
         assert block["QualityFlag"] == "pass"
         assert block["Confidence"] == "standard"
         assert block["UncertaintyInflationFactor"] == pytest.approx(1.0)
-        assert block["Hematocrit"] == pytest.approx(0.42)
+        assert block["Hematocrit"] == hematocrit
         assert block["AtlasSearchOutcome"] == "selected"
         assert block["AtlasSearchSupportVoxels"] == 830
         assert block["WholeBrainSearchSupportVoxels"] == 4120

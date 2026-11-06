@@ -1,3 +1,10 @@
+1.0.0rc6.dev29 (2026-11-06)
+===========================
+
+* FIX: Report the executed DCE hematocrit consistently in shared and AIF
+  provenance, including zero, and omit it when no value was recorded. Describe
+  external AIFs as supplied plasma curves without hematocrit conversion.
+
 1.0.0rc6.dev28 (2026-11-06)
 ===========================
 
