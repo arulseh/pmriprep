@@ -33,7 +33,7 @@ docker pull ghcr.io/arulseh/pmriprep:latest
 
 Run:
 ```bash
-docker run --rm --init \
+docker run --rm --init --gpus 1 \
   -v /path/to/bids:/data:ro \
   -v /path/to/output:/out \
   -v /path/to/work:/work \
@@ -41,8 +41,8 @@ docker run --rm --init \
   /data /out participant --participant-label 01 -w /work
 ```
 
-Add `--gpus 1` to the Docker command for NVIDIA GPU support. HD-BET falls
-back to CPU when needed; HD-GLIO tumor segmentation is skipped when GPU is
+Remove `--gpus 1` when running without an NVIDIA GPU. HD-BET falls
+back to CPU; HD-GLIO tumor segmentation is skipped when GPU is
 unavailable.
 
 #### Apptainer
@@ -54,7 +54,7 @@ apptainer pull pmriprep.sif docker://ghcr.io/arulseh/pmriprep:latest
 
 Run:
 ```bash
-apptainer run --cleanenv \
+apptainer run --cleanenv --nv \
   --bind /path/to/bids:/data:ro \
   --bind /path/to/output:/out \
   --bind /path/to/work:/work \
@@ -62,7 +62,7 @@ apptainer run --cleanenv \
   /data /out participant --participant-label 01 -w /work
 ```
 
-Add `--nv` for NVIDIA GPU support. HD-BET falls back to CPU when needed;
+Remove `--nv` when running without an NVIDIA GPU. HD-BET falls back to CPU;
 HD-GLIO tumor segmentation is skipped when GPU is unavailable.
 
 ### Source installation
@@ -137,6 +137,10 @@ at volume intervals ≤2 s with additional evidence checks. Explicit 2CXM is
 available at any interval, but coarse sampling limits parameter identification.
 VI refines least-squares parameter estimates with the model and delay held fixed.
 
+PMRIPrep automatically creates lesion and normal-appearing white-matter (NAWM)
+masks when tumor segmentation runs with the required anatomical inputs. Supplying
+masks through the configuration is optional.
+
 ## Configuration
 
 The file schema has four optional top-level mappings: `dsc`, `dce`, `anat`, and
@@ -185,8 +189,8 @@ DSC fields:
 | `cpi_infer_delay` | `true` | Fit voxelwise arrival delay; `false` fixes delay at zero |
 | `cpi_dispersion` | `none` | `none` omits arterial-dispersion fitting; `auto` or `gamma` enables (substantially slower) |
 | `cpi_fallback` | `osvd` | Replace rejected CPI fits with oSVD; `none` leaves those measurements missing |
-| `nawm_mask` | `null` | NAWM mask (native-DSC space) |
-| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
+| `nawm_mask` | `null` | Optional user-supplied NAWM mask (native-DSC space) |
+| `lesion_mask` | `null` | Optional user-supplied lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space); binary or integer labels |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
@@ -223,8 +227,8 @@ DCE fields:
 | `no_dsc_validation` | `false` | Skip descriptive DSC–DCE vascular concordance measurement |
 | `ser_early_time_s` | `60.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `300.0` | Late SER sample time after the selected global contrast reference (s) |
-| `nawm_mask` | `null` | NAWM mask (native-DCE space) |
-| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
+| `nawm_mask` | `null` | Optional user-supplied NAWM mask (native-DCE space) |
+| `lesion_mask` | `null` | Optional user-supplied lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space); binary or integer labels |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DCE space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
@@ -323,9 +327,6 @@ Output availability depends on the supplied modalities and configuration:
   regional statistics. Quantitative maps are not filtered. Statistics are reported
   for all finite voxels and, when a QC mask is available, separately for voxels
   that pass QC.
-
-SER and IAUC maps are omitted when the acquisition does not cover their
-requested post-contrast windows; timing coverage remains recorded in QC.
 
 Accepted VFA T1 mapping emits a millisecond `T1map` registered to the native
 DCE reference grid. Population-T1 fallbacks and external T1 maps are consumed
