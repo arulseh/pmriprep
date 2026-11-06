@@ -554,22 +554,14 @@ def _build_dsc_preproc_meta(
     presence_warnings: list | None = None,
     config_dict: dict | None = None,
 ) -> dict:
-    """Compose the ``desc-dscPreproc_dsc.json`` sidecar.
-
-    Starts from the minimal-base meta, layers on flat-prefixed cosmetic
-    QC keys via ``enrich_dsc_preproc_sidecar``, and finally attaches
-    QC recommendation/warnings flat keys via
-    ``enrich_recommendation_keys`` so the HTML aggregator can read the
-    overall recommendation banner directly from this anchor sidecar.
-    ``PipelineQC`` and ``PipelineConfiguration`` nest the full merged
-    QC envelope and processing config for the HTML aggregator.
-    """
+    """Build the DSC series anchor with one run-QC record and report warnings."""
     from pmriprep.utils.sidecar_builders import (
         build_provenance_block,
         enrich_dsc_preproc_sidecar,
         enrich_recommendation_keys,
         filter_pipeline_qc,
         sanitize_for_json,
+        scope_preproc_processing,
     )
 
     out = dict(base)
@@ -581,7 +573,6 @@ def _build_dsc_preproc_meta(
         )
     enrich_dsc_preproc_sidecar(
         out,
-        preload_qc=preload_qc if isinstance(preload_qc, dict) else None,
         preprocessing_stats=(
             preprocessing_stats if isinstance(preprocessing_stats, dict) else None
         ),
@@ -600,10 +591,16 @@ def _build_dsc_preproc_meta(
             list(presence_warnings) if presence_warnings else None
         ),
     )
-    if isinstance(qc_metrics, dict):
-        out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
+    qc = dict(qc_metrics or {})
+    if isinstance(preload_qc, dict):
+        qc.setdefault("preload", preload_qc)
+    if isinstance(preprocessing_stats, dict):
+        qc.setdefault("preprocessing", preprocessing_stats)
+    if qc:
+        out["PipelineQC"] = filter_pipeline_qc(qc)
     if isinstance(config_dict, dict):
-        out["PipelineConfiguration"] = build_provenance_block(config_dict)
+        out["PipelineConfiguration"] = build_provenance_block(config_dict, qc_metrics)
+    scope_preproc_processing(out)
     return dict(sanitize_for_json(out))
 
 

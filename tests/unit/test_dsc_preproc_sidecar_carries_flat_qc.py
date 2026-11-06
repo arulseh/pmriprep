@@ -1,17 +1,11 @@
-"""``desc-dscPreproc_dsc.json`` carries flat-prefixed cosmetic QC.
-
-Asserts that ``enrich_dsc_preproc_sidecar`` injects ``Preload*`` and
-unprefixed motion/signal keys onto a base sidecar dict, and that base
-fields (``SkullStripped``, ``SpatialReference``, ``Sources``, and
-``VoxelSize``) survive enrichment unchanged.
-"""
+"""DSC anchor QC retains measurements and acquisition context without mutation."""
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
 
-from pmriprep.utils.sidecar_builders import enrich_dsc_preproc_sidecar
+from pmriprep.workflows.dsc.datasinks import _build_dsc_preproc_meta
 
 
 @pytest.fixture
@@ -68,41 +62,19 @@ class TestPreprocEnrichment:
         preprocessing_stats: dict[str, Any],
     ) -> None:
         """One enrichment writes preload, motion and signal QC without losing inputs."""
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar),
-            preload_qc=preload_qc,
-            preprocessing_stats=preprocessing_stats,
+        out = _build_dsc_preproc_meta(
+            dict(base_sidecar), base_sidecar["Description"],
+            preload_qc=preload_qc, preprocessing_stats=preprocessing_stats,
         )
-        assert out["PreloadK2Method"] == "bsw"
-        assert out["PreloadSource"] == "unknown"
-        assert "PreloadAdministeredDoseFraction" not in out
-        assert out["PreloadK2Median"] == pytest.approx(-0.002)
-        assert out["PreloadK2Signed"] is True
-        assert out["PreloadK2ReferenceSelectionDomain"] == "raw_signal"
-        assert out["PreloadPercentNegativeK2"] == pytest.approx(61.0)
-        assert out["PreloadPercentK2Undefined"] == pytest.approx(0.4)
-        assert out["PreloadK2ValidVoxels"] == 1000
-
-        # Motion fields have no modality prefix
-        assert out["MotionFDMean"] == pytest.approx(0.18)
-        assert out["MotionFDMax"] == pytest.approx(0.62)
-        assert out["MotionPercentOutliers"] == pytest.approx(1.5)
-        assert out["MotionStatus"] == "PASS"
-        # Signal
-        assert out["CNRWholeBrain"] == pytest.approx(5.4)
-        assert out["FractionCNRGreaterThan4"] == pytest.approx(0.81)
-        assert out["MeanTSNR"] == pytest.approx(38.2)
-        assert out["PeakSignalDropPercent"] == pytest.approx(24.0)
+        assert out["PipelineQC"]["preload"] == preload_qc
+        assert out["PipelineQC"]["preprocessing"] == preprocessing_stats
         assert out["NumberOfVolumes"] == 60
-
-        # Producer carries tr_ms; sidecar must convert to canonical BIDS
-        # RepetitionTime in seconds.
         assert out["RepetitionTime"] == pytest.approx(1.5)
         assert {key: out[key] for key in base_sidecar} == base_sidecar
 
     def test_no_qc_preserves_base_metadata(self, base_sidecar: dict[str, Any]) -> None:
         """Empty QC leaves the supplied metadata intact."""
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar), preload_qc=None, preprocessing_stats=None,
+        out = _build_dsc_preproc_meta(
+            dict(base_sidecar), base_sidecar["Description"],
         )
         assert out == base_sidecar

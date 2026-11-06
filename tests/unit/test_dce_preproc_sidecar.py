@@ -1,12 +1,11 @@
-"""DCE preproc-4D sidecar carries flat-key cosmetic QC.
-
-Mirrors ``test_dsc_preproc_sidecar_carries_flat_qc.py``.
-"""
+"""DCE T1-source metadata, acquisition metadata and run-QC serialization."""
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
+
+from pmriprep.workflows.dce.datasinks import _build_t1_map_meta
 
 from pmriprep.utils.sidecar_builders import (
     enrich_dce_preproc_sidecar,
@@ -62,7 +61,7 @@ def dce_qc_metrics() -> dict[str, Any]:
 
 class TestT1Keys:
     def test_t1_mapping_keys(self, base_sidecar, dce_qc_metrics):
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
+        out = _build_t1_map_meta(dict(base_sidecar), None, "/tmp", qc_metrics=dce_qc_metrics)
         assert out["T1MappingMethod"] == "nlls"
         assert out["T1B1Correction"] == "afi"
         assert out["T1CorrectionApplied"] == "fallback"
@@ -86,7 +85,7 @@ class TestT1Keys:
                 "assumed_t1_ms": 1200.0,
             },
         }
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+        out = _build_t1_map_meta(dict(base_sidecar), None, "/tmp", qc_metrics=qc)
         assert out["T1AssumedValue"] == pytest.approx(1200.0)
         assert out["T1AssumedValueUnits"] == "ms"
         assert out["T1AssumptionFieldStrength"] == pytest.approx(3.0)
@@ -99,7 +98,7 @@ class TestT1Keys:
         """Missing retained-source accounting cannot publish a measured T1 map."""
         qc = {"t1_mapping": {"method": "nlls"}}
 
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+        out = _build_t1_map_meta(dict(base_sidecar), None, "/tmp", qc_metrics=qc)
 
         assert out["T1Source"] == "not_established"
         assert out["T1MappingAttempted"] is True
@@ -122,7 +121,7 @@ class TestT1Keys:
             },
         }
 
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+        out = _build_t1_map_meta(dict(base_sidecar), None, "/tmp", qc_metrics=qc)
 
         assert out["T1Source"] == "uniform_configured_fallback"
         assert out["T1AssumptionPolicy"] == "uniform_configured"
@@ -145,7 +144,7 @@ class TestT1Keys:
             },
         }
 
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+        out = _build_t1_map_meta(dict(base_sidecar), None, "/tmp", qc_metrics=qc)
 
         assert out["T1Source"] == "uniform_field_strength_fallback"
         assert out["T1MappingAttempted"] is False
@@ -154,43 +153,12 @@ class TestT1Keys:
         )
 
 
-class TestB1Keys:
-    def test_b1_mapping_keys(self, base_sidecar, dce_qc_metrics):
+class TestAcquisitionKeys:
+    def test_volume_and_excitation_intervals(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert out["B1MeanWholeBrain"] == pytest.approx(0.96)
-        assert out["B1PercentVoxelsCorrectionAbove20"] == pytest.approx(8.5)
-
-
-class TestMotionAndSignalKeys:
-    def test_unprefixed_motion_signal(self, base_sidecar, dce_qc_metrics):
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        # Unprefixed (matches DSC convention; future desc-dcePreproc_dce
-        # and desc-dscPreproc_dsc share these key names)
-        assert out["MotionFDMean"] == pytest.approx(0.21)
-        assert out["MotionFDMax"] == pytest.approx(0.78)
-        assert out["MotionPercentOutliers"] == pytest.approx(2.1)
-        assert out["MotionStatus"] == "PASS"
-        assert out["MotionQCAvailable"] is True
-        assert out["BaselineTSNR"] == pytest.approx(32.4)
-        assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
         assert out["NumberOfVolumes"] == 75
-        assert out["BaselineFramesUsed"] == 5
-        assert out["BaselineMinimumFrames"] == 5
-        assert out["BolusArrivalFrameDetected"] == 2
-        assert out["BaselineFallbackApplied"] is True
-        assert out["BaselineFallbackReason"] == (
-            "detected_bolus_before_minimum_baseline"
-        )
-        assert out["BaselineQCStatus"] == "POOR"
-        # Volume and excitation TR retain their distinct BIDS meanings.
         assert out["RepetitionTime"] == pytest.approx(4.06)
         assert out["RepetitionTimeExcitation"] == pytest.approx(0.0038)
-
-    def test_baseline_tsnr_nan_dropped(self, base_sidecar, dce_qc_metrics):
-        """NaN baseline tSNR is dropped from the flat sidecar keys."""
-        dce_qc_metrics["preprocessing"]["baseline_tsnr"] = float("nan")
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert "BaselineTSNR" not in out
 
 
 def test_baseline_and_aif_processing_warnings_coexist() -> None:
@@ -270,14 +238,6 @@ class TestEmptyInputs:
                    if k not in {"T1w_in_use",})
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
 
-    def test_partial_qc_metrics(self, base_sidecar):
-        qc = {"t1_mapping": {"method": "nlls"}}
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
-        assert out["T1MappingMethod"] == "nlls"
-        # Missing fields stay absent (no None / empty values)
-        assert "T1B1Correction" not in out
-        assert "B1MeanWholeBrain" not in out
-        assert "MotionFDMean" not in out
 
 
 class TestSanitizeForJson:

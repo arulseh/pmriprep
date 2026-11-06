@@ -1,3 +1,9 @@
+1.0.0rc6.dev38 (2026-11-06)
+===========================
+
+* MNT: Consolidate run-level perfusion QC in PipelineQC, remove redundant
+  flat fields and diagnostic arrays, and omit inactive branch settings.
+
 1.0.0rc6.dev37 (2026-11-06)
 ===========================
 

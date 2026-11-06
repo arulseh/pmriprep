@@ -99,7 +99,7 @@ def test_tumor_seg_derivatives_and_sidecars(
             "erosion_voxels_final": 1,
             "erosion_mm_final": 1.25,
             "valid": False,
-            "n_voxels": 56,
+            "n_voxels": 56.0,
             "minimum_required_voxels": 100,
             "quantitative_use_exclusion_reason": (
                 "insufficient_voxels_after_erosion_relaxation"
@@ -130,6 +130,8 @@ def test_tumor_seg_derivatives_and_sidecars(
 
     for sc in sidecars:
         body = json.loads(sc.read_text())
+        if "TumorSegQC" in body:
+            assert type(body["TumorSegQC"]["nawm"]["n_voxels"]) is int
         assert "Sources" in body, f"{sc.name} missing Sources"
         assert isinstance(body["Sources"], list) and body["Sources"], (
             f"{sc.name} has empty Sources"

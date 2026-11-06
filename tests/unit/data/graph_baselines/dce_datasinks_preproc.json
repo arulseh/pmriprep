@@ -735,7 +735,7 @@
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "dce_mean_meta": "1c6572f5bbe00a0d945d34494afcdfc78ef65d8b9a5b34d19562c0c63259ffdd",
     "dce_mean_sink": "e3559021d0c32100066320a2a676bf2ca1b4670f0c194a7a66b0b7d3adf6312a",
-    "dce_moco_meta": "5bbcf6e98686b06f51b99c164dc9eb5cb1d9dccb2b86321ea806312fc3a3431d",
+    "dce_moco_meta": "b3d33a463bda28639640f160fe7162b9cde0708cf8d41c4b5949009831789263",
     "dce_moco_sink": "e3559021d0c32100066320a2a676bf2ca1b4670f0c194a7a66b0b7d3adf6312a",
     "ktrans_map_meta": "16efdc2c9836ee91db8345ac68d1b395c2c78f364fff4c034f65ea15da94423a",
     "ktrans_map_sink": "e3559021d0c32100066320a2a676bf2ca1b4670f0c194a7a66b0b7d3adf6312a"
@@ -860,6 +860,7 @@
     },
     "dce_moco_meta": {
       "description": "Motion-corrected 4D DCE time series",
+      "function_str": "def _build_dce_preproc_meta(\n    base: dict,\n    description: str,\n    qc_metrics: dict | None = None,\n    provenance_dict: dict | None = None,\n    preflight_warnings: list | None = None,\n    presence_warnings: list | None = None,\n    config_dict: dict | None = None,\n) -> dict:\n    \"\"\"Build the DCE series anchor with one run-QC record and report warnings.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_provenance_block,\n        enrich_dce_preproc_sidecar,\n        enrich_recommendation_keys,\n        filter_pipeline_qc,\n        sanitize_for_json,\n        scope_preproc_processing,\n    )\n\n    out = dict(base)\n    motion_applied = (\n        bool(config_dict.get(\"motion_correct\", True))\n        if isinstance(config_dict, dict)\n        else True\n    )\n    out[\"Description\"] = (\n        description\n        if motion_applied\n        else \"Preprocessed 4D DCE time series without rigid-body motion correction\"\n    )\n    out[\"SkullStripped\"] = False\n    if isinstance(config_dict, dict):\n        out[\"MotionCorrectionApplied\"] = motion_applied\n    enrich_dce_preproc_sidecar(\n        out,\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n    )\n    enrich_recommendation_keys(\n        out,\n        modality=\"DCE\",\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n        provenance_dict=(\n            provenance_dict if isinstance(provenance_dict, dict) else None\n        ),\n        preflight_warnings=(\n            list(preflight_warnings) if preflight_warnings else None\n        ),\n        presence_warnings=(\n            list(presence_warnings) if presence_warnings else None\n        ),\n    )\n    if isinstance(qc_metrics, dict):\n        out[\"PipelineQC\"] = filter_pipeline_qc(qc_metrics)\n    if isinstance(config_dict, dict):\n        out[\"PipelineConfiguration\"] = build_provenance_block(config_dict, qc_metrics)\n    scope_preproc_processing(out)\n    return dict(sanitize_for_json(out))\n",
       "presence_warnings": [
         "Brain mask in DCE space not available",
         "NAWM mask in DCE space not available",

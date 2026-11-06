@@ -937,7 +937,7 @@
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "mean_meta": "c3ac3b781c177b50dec5c9a48981d84936b55e91ec0d95b0f688b616fce3c91c",
     "mean_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
-    "moco_meta": "ed3aeaeab1cde104be2eb771d81322be077890870a47fb00c5b0416b78d4dbea",
+    "moco_meta": "f2369afa5720ad2870af5ed5e2b4053e9e656327202b335babad00369f79a03b",
     "moco_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
     "mtt_map_meta": "6a5c62929f52e51d848d60d21ccf42635e63fc512b81c3648f6bfd41f491e85c",
     "mtt_map_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
@@ -1090,6 +1090,7 @@
     },
     "moco_meta": {
       "description": "Motion-corrected 4D DSC time series",
+      "function_str": "def _build_dsc_preproc_meta(\n    base: dict,\n    description: str,\n    preload_qc: dict | None = None,\n    preprocessing_stats: dict | None = None,\n    qc_metrics: dict | None = None,\n    provenance_dict: dict | None = None,\n    preflight_warnings: list | None = None,\n    presence_warnings: list | None = None,\n    config_dict: dict | None = None,\n) -> dict:\n    \"\"\"Build the DSC series anchor with one run-QC record and report warnings.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_provenance_block,\n        enrich_dsc_preproc_sidecar,\n        enrich_recommendation_keys,\n        filter_pipeline_qc,\n        sanitize_for_json,\n        scope_preproc_processing,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    out[\"SkullStripped\"] = False\n    if isinstance(config_dict, dict):\n        out[\"MotionCorrectionApplied\"] = bool(\n            config_dict.get(\"motion_correct\", True)\n        )\n    enrich_dsc_preproc_sidecar(\n        out,\n        preprocessing_stats=(\n            preprocessing_stats if isinstance(preprocessing_stats, dict) else None\n        ),\n    )\n    enrich_recommendation_keys(\n        out,\n        modality=\"DSC\",\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n        provenance_dict=(\n            provenance_dict if isinstance(provenance_dict, dict) else None\n        ),\n        preflight_warnings=(\n            list(preflight_warnings) if preflight_warnings else None\n        ),\n        presence_warnings=(\n            list(presence_warnings) if presence_warnings else None\n        ),\n    )\n    qc = dict(qc_metrics or {})\n    if isinstance(preload_qc, dict):\n        qc.setdefault(\"preload\", preload_qc)\n    if isinstance(preprocessing_stats, dict):\n        qc.setdefault(\"preprocessing\", preprocessing_stats)\n    if qc:\n        out[\"PipelineQC\"] = filter_pipeline_qc(qc)\n    if isinstance(config_dict, dict):\n        out[\"PipelineConfiguration\"] = build_provenance_block(config_dict, qc_metrics)\n    scope_preproc_processing(out)\n    return dict(sanitize_for_json(out))\n",
       "presence_warnings": [
         "Brain mask in DSC space not available",
         "NAWM mask in DSC space not available",

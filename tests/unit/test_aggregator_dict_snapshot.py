@@ -324,3 +324,31 @@ def test_load_pipeline_sidecars_malformed_anchor(tmp_path: Path) -> None:
 
     out = _load_pipeline_sidecars(ses, prefix, "dce")
     assert out == {}
+
+
+def test_qc_compaction_preserves_disagreements_and_report_inputs() -> None:
+    """Compaction cannot hide distinct baseline stages or mutate producer QC."""
+    from copy import deepcopy
+    from pmriprep.utils.sidecar_builders import filter_pipeline_qc
+
+    qc = {
+        "aif_detection": {
+            "n_baseline_frames": 8, "aif_baseline_frames": 8,
+            "baseline_frames_used": 7, "bootstrap_baseline_frames": 5,
+            "baseline_frames_initial": 5, "quality_score": 0.8,
+            "final_peak_mm": 6.0, "emitted_peak_mm": 6.0,
+        },
+        "pk_modeling": {"qc_voxel_rsquared": 0.9,
+                        "timing_diagnostics": {"n_observations": 10,
+                                               "observation_indices": list(range(10))}},
+    }
+    original = deepcopy(qc)
+    out = filter_pipeline_qc(qc)
+    assert qc == original
+    assert out["aif_detection"] == {
+        "n_baseline_frames": 8, "baseline_frames_used": 7,
+        "bootstrap_baseline_frames": 5, "quality_score": 0.8, "emitted_peak_mm": 6.0,
+    }
+    assert out["pk_modeling"] == {
+        "qc_voxel_rsquared": 0.9, "timing_diagnostics": {"n_observations": 10},
+    }

@@ -41,6 +41,10 @@ PathLike = Union[str, Path]
 
 _PIPELINE_QC_STRIP_KEYS = frozenset({
     "fd_list", "outlier_frames",
+    "observation_indices", "observation_times_seconds",
+    "original_observation_times_seconds",
+    "tissue_baseline_diagnostics", "gamma_fit_diagnostics",
+    "cascade_postfilter_diags", "cascade_spatial_filter_diags",
     "motion_command", "motion_executable", "motion_reference",
     "candidate_coords", "candidate_scores",
     "cascade_anchor_outcomes", "cascade_gate_decisions",
@@ -70,6 +74,25 @@ def filter_pipeline_qc(qc: Dict[str, Any]) -> Dict[str, Any]:
                 _strip(d[key])
 
     _strip(filtered)
+    aif = filtered.get("aif_detection")
+    if isinstance(aif, dict):
+        # Drop aliases only when their canonical value agrees. Distinct stages
+        # and any disagreement remain visible.
+        aliases = {
+            "baseline_frames_initial": "bootstrap_baseline_frames",
+            "baseline_preliminary_frames": "preliminary_baseline_frames",
+            "aif_baseline_frames": "n_baseline_frames",
+            "baseline_frames_used": "n_baseline_frames",
+            "averaged_aif_final_roi_size": "cascade_accepted_roi_size",
+            "final_peak_mm": "emitted_peak_mm",
+            "scaling_factor": "peak_scaling_factor",
+            "required_scaling_factor": "peak_scaling_required_factor",
+        }
+        for alias, canonical in aliases.items():
+            if alias in aif and canonical in aif and aif[alias] == aif[canonical]:
+                del aif[alias]
+        if aif.get("detection_method") and filtered.get("config") == {"aif_source": "auto"}:
+            del filtered["config"]
     return filtered
 
 
@@ -148,14 +171,21 @@ def dump_sidecar_json(obj: Any) -> str:
     return json.dumps(sanitize_for_json(obj), indent=2, default=str)
 
 
-def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+def build_provenance_block(
+    config_dict: Dict[str, Any], qc_metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Build the ``PipelineConfiguration`` block for a paired sidecar."""
-    return {
-        "ProcessingConfiguration": {
-            k: v for k, v in config_dict.items()
-            if k not in _CONFIG_STRIP_KEYS and v is not None
-        },
+    config = {
+        k: v for k, v in config_dict.items()
+        if k not in _CONFIG_STRIP_KEYS and v is not None
     }
+    if config.get("method") in {"sSVD", "oSVD", "tikhonov"}:
+        config = {k: v for k, v in config.items()
+                  if not k.startswith("cpi_") and k != "inference"}
+    t1 = (qc_metrics or {}).get("t1_mapping") or {}
+    if t1.get("method") == "assumed" and t1.get("skipped"):
+        config.pop("t1_method", None)
+    return {"ProcessingConfiguration": config}
 
 
 # ---------------------------------------------------------------------------
@@ -802,7 +832,10 @@ def build_tumor_seg_dseg_sidecar(
         },
     }
     if isinstance(qc_metrics, dict) and qc_metrics:
-        sc["TumorSegQC"] = qc_metrics
+        sc["TumorSegQC"] = copy.deepcopy(qc_metrics)
+        nawm = sc["TumorSegQC"].get("nawm")
+        if isinstance(nawm, dict) and isinstance(nawm.get("n_voxels"), (int, float)):
+            nawm["n_voxels"] = int(nawm["n_voxels"])
     return sc
 
 
@@ -1509,9 +1542,6 @@ def build_aif_timeseries_sidecar(
         "Units": units,
         "ColumnDescriptions": {column_name: column_description},
     }
-    sidecar["Subject"] = f"sub-{subject}"
-    if session:
-        sidecar["Session"] = f"ses-{session}"
     if volume_tr_s is not None and volume_tr_s > 0:
         sidecar["SamplingFrequency"] = 1.0 / float(volume_tr_s)
         sidecar["StartTime"] = 0.0
@@ -1531,119 +1561,32 @@ def build_aif_timeseries_sidecar(
 # ---------------------------------------------------------------------------
 
 
-def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Flat ``Preload*``-prefixed keys for the DSC preproc-4D sidecar.
-
-    Reads from the producer-shape ``preload_qc`` dict. Optional fields are
-    omitted when not present in the source dict.
-    """
-    if not preload_qc or not isinstance(preload_qc, dict):
-        return {}
-
-    out: Dict[str, Any] = {}
-    if "k2_method" in preload_qc:
-        out["PreloadK2Method"] = str(preload_qc["k2_method"])
-    if "preload_source" in preload_qc:
-        out["PreloadSource"] = str(preload_qc["preload_source"])
-    if preload_qc.get("preload_administered_dose_fraction") is not None:
-        out["PreloadAdministeredDoseFraction"] = float(
-            preload_qc["preload_administered_dose_fraction"]
-        )
-    if "k2_median" in preload_qc:
-        out["PreloadK2Median"] = float(preload_qc["k2_median"])
-    if "k2_min" in preload_qc:
-        out["PreloadK2Minimum"] = float(preload_qc["k2_min"])
-    if "k2_p05" in preload_qc:
-        out["PreloadK2Percentile05"] = float(preload_qc["k2_p05"])
-    if "k2_p95" in preload_qc:
-        out["PreloadK2Percentile95"] = float(preload_qc["k2_p95"])
-    if "k2_signed" in preload_qc:
-        out["PreloadK2Signed"] = bool(preload_qc["k2_signed"])
-    if "k2_reference_available" in preload_qc:
-        out["PreloadK2ReferenceAvailable"] = bool(
-            preload_qc["k2_reference_available"]
-        )
-    if "k2_reference_selection" in preload_qc:
-        out["PreloadK2ReferenceSelection"] = str(
-            preload_qc["k2_reference_selection"]
-        )
-    if "k2_reference_selection_domain" in preload_qc:
-        out["PreloadK2ReferenceSelectionDomain"] = str(
-            preload_qc["k2_reference_selection_domain"]
-        )
-    if "k2_reference_selected_voxels" in preload_qc:
-        out["PreloadK2ReferenceSelectedVoxels"] = int(
-            preload_qc["k2_reference_selected_voxels"]
-        )
-    if "k2_reference_selected_fraction" in preload_qc:
-        out["PreloadK2ReferenceSelectedFraction"] = float(
-            preload_qc["k2_reference_selected_fraction"]
-        )
-    if "percent_negative_k2" in preload_qc:
-        out["PreloadPercentNegativeK2"] = float(preload_qc["percent_negative_k2"])
-    if "percent_k2_undefined" in preload_qc:
-        out["PreloadPercentK2Undefined"] = float(preload_qc["percent_k2_undefined"])
-    if "n_k2_valid" in preload_qc:
-        out["PreloadK2ValidVoxels"] = int(preload_qc["n_k2_valid"])
-    if "k2_reference_failure_reason" in preload_qc:
-        out["PreloadK2ReferenceFailureReason"] = str(
-            preload_qc["k2_reference_failure_reason"]
-        )
-    return out
-
-
-def _preprocessing_cosmetic_keys(
-    preprocessing_stats: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Flat motion/signal QC keys for the DSC preproc-4D sidecar.
-
-    Uses unprefixed keys shared with DCE preprocessing sidecars.
-    ``RepetitionTime`` is in seconds, converted from the producer's ``tr_ms``.
-    """
-    if not preprocessing_stats or not isinstance(preprocessing_stats, dict):
-        return {}
-
-    p = preprocessing_stats
-    out: Dict[str, Any] = {}
-    if "fd_mean" in p:
-        out["MotionFDMean"] = float(p["fd_mean"])
-    if "fd_max" in p:
-        out["MotionFDMax"] = float(p["fd_max"])
-    if "percent_outliers" in p:
-        out["MotionPercentOutliers"] = float(p["percent_outliers"])
-    if "motion_status" in p:
-        out["MotionStatus"] = str(p["motion_status"])
-    if "mean_cnr" in p:
-        out["CNRWholeBrain"] = float(p["mean_cnr"])
-    if "fraction_cnr_gt_4" in p:
-        out["FractionCNRGreaterThan4"] = float(p["fraction_cnr_gt_4"])
-    if "mean_tsnr" in p:
-        out["MeanTSNR"] = float(p["mean_tsnr"])
-    if "peak_drop_pct" in p:
-        out["PeakSignalDropPercent"] = float(p["peak_drop_pct"])
-    if "n_volumes" in p:
-        out["NumberOfVolumes"] = int(p["n_volumes"])
-    if "tr_ms" in p:
-        out["RepetitionTime"] = float(p["tr_ms"]) / 1000.0
-    return out
-
-
 def enrich_dsc_preproc_sidecar(
     sidecar: Dict[str, Any],
     *,
-    preload_qc: Optional[Dict[str, Any]] = None,
     preprocessing_stats: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Add flat-prefixed cosmetic QC keys to a DSC preproc-4D sidecar.
-
-    Mutates and returns ``sidecar``. Adds ``Preload*`` and unprefixed
-    motion/signal keys from the producer-shape input dicts. Existing
-    sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-    ``VoxelSize``) are preserved.
-    """
-    sidecar.update(_preload_cosmetic_keys(preload_qc))
-    sidecar.update(_preprocessing_cosmetic_keys(preprocessing_stats))
+    """Add series acquisition metadata; signal and motion QC live in PipelineQC."""
+    p = preprocessing_stats or {}
+    if "n_volumes" in p:
+        sidecar["NumberOfVolumes"] = int(p["n_volumes"])
+    if "tr_ms" in p:
+        sidecar["RepetitionTime"] = float(p["tr_ms"]) / 1000.0
     return sidecar
+
+
+def scope_preproc_processing(sidecar: Dict[str, Any]) -> None:
+    """Keep acquisition context without duplicating the run's PipelineQC record."""
+    perf = sidecar.get("PerfusionProcessing")
+    if isinstance(perf, dict):
+        duplicated = {
+            "AIF", "Hematocrit", "AIFUnits", "BloodT1Reference", "T1Mapping",
+            "SignalConversion", "PKModeling", "InferenceFallback", "Deconvolution",
+            "LeakageCorrection", "PreloadDetection", "BaselineFrames", "QuantificationMode",
+        }
+        sidecar["PerfusionProcessing"] = {
+            key: value for key, value in perf.items() if key not in duplicated
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1776,10 +1719,8 @@ def enrich_recommendation_keys(
 # ---------------------------------------------------------------------------
 # DCE sidecar enrichment
 #
-# Enriches the sidecar with QC metrics read from the
-# producer-shape ``qc_metrics`` sub-blocks (``t1_mapping``, ``b1_mapping``,
-# ``preprocessing``, ``pk_modeling``, ``dsc_dce_validation``,
-# ``cbv_constraint``) and writes flat top-level PascalCase keys.
+# T1-map source/acceptance metadata and preprocessed-series acquisition fields.
+# Run-level diagnostics stay in the anchor PipelineQC record.
 # ---------------------------------------------------------------------------
 
 
@@ -1787,7 +1728,7 @@ def _dce_t1_cosmetic_keys(
     t1_qc: Optional[Dict[str, Any]],
     signal_qc: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Flat ``T1*`` keys for DCE preproc-4D sidecar."""
+    """Describe the retained T1 source and mapping outcome on the T1 sidecar."""
     if not isinstance(t1_qc, dict):
         t1_qc = {}
     out: Dict[str, Any] = {}
@@ -1866,89 +1807,19 @@ def _dce_t1_cosmetic_keys(
     return out
 
 
-def _dce_b1_cosmetic_keys(b1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Flat ``B1*`` keys for DCE preproc-4D sidecar."""
-    if not b1_qc or not isinstance(b1_qc, dict):
-        return {}
-    out: Dict[str, Any] = {}
-    if "mean_b1" in b1_qc:
-        out["B1MeanWholeBrain"] = float(b1_qc["mean_b1"])
-    if "pct_correction_gt_20" in b1_qc:
-        out["B1PercentVoxelsCorrectionAbove20"] = float(b1_qc["pct_correction_gt_20"])
-    return out
-
-
-def _dce_preprocessing_cosmetic_keys(
-    preproc: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Flat motion/signal QC keys for DCE preproc-4D sidecar.
-
-    Mirrors the DSC unprefixed convention (``MotionFDMean``, ...). Adds
-    DCE-specific ``BaselineTSNR`` and ``PeakEnhancementPercent``.
-    """
-    if not preproc or not isinstance(preproc, dict):
-        return {}
-    out: Dict[str, Any] = {}
-    if "fd_mean" in preproc:
-        out["MotionFDMean"] = float(preproc["fd_mean"])
-    if "fd_max" in preproc:
-        out["MotionFDMax"] = float(preproc["fd_max"])
-    if "percent_outliers" in preproc:
-        out["MotionPercentOutliers"] = float(preproc["percent_outliers"])
-    if "motion_status" in preproc:
-        out["MotionStatus"] = str(preproc["motion_status"])
-    if "motion_qc_available" in preproc:
-        out["MotionQCAvailable"] = bool(preproc["motion_qc_available"])
-    if "motion_qc_error" in preproc:
-        out["MotionQCError"] = str(preproc["motion_qc_error"])
-    tsnr = preproc.get("baseline_tsnr")
-    if tsnr is not None and tsnr == tsnr:  # present and not NaN
-        out["BaselineTSNR"] = float(tsnr)
-    if "peak_enh_pct" in preproc:
-        out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
-    if "n_volumes" in preproc:
-        out["NumberOfVolumes"] = int(preproc["n_volumes"])
-    if "baseline_frames_used" in preproc:
-        out["BaselineFramesUsed"] = int(preproc["baseline_frames_used"])
-    if "baseline_minimum_frames" in preproc:
-        out["BaselineMinimumFrames"] = int(preproc["baseline_minimum_frames"])
-    if "detected_bolus_frame" in preproc:
-        out["BolusArrivalFrameDetected"] = int(preproc["detected_bolus_frame"])
-    if "baseline_fallback_applied" in preproc:
-        out["BaselineFallbackApplied"] = bool(preproc["baseline_fallback_applied"])
-    if "baseline_fallback_reason" in preproc:
-        out["BaselineFallbackReason"] = str(preproc["baseline_fallback_reason"])
-    if "baseline_status" in preproc:
-        out["BaselineQCStatus"] = str(preproc["baseline_status"])
-    if "volume_tr_s" in preproc:
-        out["RepetitionTime"] = float(preproc["volume_tr_s"])
-        if "tr_ms" in preproc:
-            out["RepetitionTimeExcitation"] = float(preproc["tr_ms"]) / 1000.0
-    return out
-
-
 def enrich_dce_preproc_sidecar(
     sidecar: Dict[str, Any],
     *,
     qc_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Add flat-prefixed cosmetic QC keys to a DCE preproc-4D sidecar.
-
-    Mutates and returns ``sidecar``. Adds ``T1*``, ``B1*``, and motion/signal
-    fields from the producer-shape ``qc_metrics`` envelope. Existing
-    sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-    ``VoxelSize``) are preserved.
-    """
-    if not qc_metrics or not isinstance(qc_metrics, dict):
-        return sidecar
-    sidecar.update(
-        _dce_t1_cosmetic_keys(
-            qc_metrics.get("t1_mapping"),
-            qc_metrics.get("signal_conversion"),
-        )
-    )
-    sidecar.update(_dce_b1_cosmetic_keys(qc_metrics.get("b1_mapping")))
-    sidecar.update(_dce_preprocessing_cosmetic_keys(qc_metrics.get("preprocessing")))
+    """Add acquisition metadata; applied conversion and QC remain in PipelineQC."""
+    p = (qc_metrics or {}).get("preprocessing") or {}
+    if "n_volumes" in p:
+        sidecar["NumberOfVolumes"] = int(p["n_volumes"])
+    if "volume_tr_s" in p:
+        sidecar["RepetitionTime"] = float(p["volume_tr_s"])
+        if "tr_ms" in p:
+            sidecar["RepetitionTimeExcitation"] = float(p["tr_ms"]) / 1000.0
     return sidecar
 
 

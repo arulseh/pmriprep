@@ -474,23 +474,14 @@ def _build_dce_preproc_meta(
     presence_warnings: list | None = None,
     config_dict: dict | None = None,
 ) -> dict:
-    """Compose the ``desc-dcePreproc_dce.json`` sidecar with flat-key QC.
-
-    Mirrors the DSC ``_build_dsc_preproc_meta`` pattern: starts from the
-    perfusion base sidecar, layers on flat ``T1*``/``B1*``/motion/signal
-    cosmetic keys via ``enrich_dce_preproc_sidecar``, and finally
-    attaches QC recommendation/warnings flat keys via
-    ``enrich_recommendation_keys`` so the HTML aggregator can read the
-    overall recommendation banner directly from this anchor sidecar.
-    ``PipelineQC`` and ``PipelineConfiguration`` nest the full merged
-    QC envelope and processing config for the HTML aggregator.
-    """
+    """Build the DCE series anchor with one run-QC record and report warnings."""
     from pmriprep.utils.sidecar_builders import (
         build_provenance_block,
         enrich_dce_preproc_sidecar,
         enrich_recommendation_keys,
         filter_pipeline_qc,
         sanitize_for_json,
+        scope_preproc_processing,
     )
 
     out = dict(base)
@@ -528,7 +519,8 @@ def _build_dce_preproc_meta(
     if isinstance(qc_metrics, dict):
         out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
     if isinstance(config_dict, dict):
-        out["PipelineConfiguration"] = build_provenance_block(config_dict)
+        out["PipelineConfiguration"] = build_provenance_block(config_dict, qc_metrics)
+    scope_preproc_processing(out)
     return dict(sanitize_for_json(out))
 
 
