@@ -1,3 +1,10 @@
+1.0.0rc6.dev32 (2026-11-06)
+===========================
+
+* FIX: Exclude outside-brain image background from DSC/DCE regional statistics
+  while preserving legitimate zero values, original region sizes and excluded
+  coverage counts.
+
 1.0.0rc6.dev31 (2026-11-06)
 ===========================
 

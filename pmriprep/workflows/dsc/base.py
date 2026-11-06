@@ -1076,6 +1076,8 @@ def init_dsc_lesion_stats_wf(
         Percentage signal recovery.
     ncbv_map, ncbf_map
         Normalized CBV / CBF maps.
+    brain_mask
+        Perfusion analysis support; outside voxels are excluded from quantitative summaries.
     nawm_mask
         NAWM reference mask.
     fallback_mask
@@ -1113,6 +1115,7 @@ def init_dsc_lesion_stats_wf(
                 "ttp_map",
                 "ncbv_map",
                 "ncbf_map",
+                "brain_mask",
                 "nawm_mask",
                 "fallback_mask",
                 "aif_qc",
@@ -1165,6 +1168,7 @@ def init_dsc_lesion_stats_wf(
         ("ttp_map", "ttp_map"),
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
+        ("brain_mask", "brain_mask"),
         ("nawm_mask", "nawm_mask"),
         ("fallback_mask", "fallback_mask"),
         ("aif_qc", "aif_qc"),
@@ -2470,6 +2474,9 @@ def init_dsc_preproc_wf(
     # (tumor-seg, user ROI, user lesion) route to their respective nodes.
     # -------------------------------------------------------------------
     workflow.connect([
+        (hdbet_dsc, lesion_stats_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask"),
+        ]),
         (deconvolution_wf, lesion_stats_wf, [
             ("outputnode.out_rel_cbf", "inputnode.cbf_map"),
             ("outputnode.out_rel_cbv", "inputnode.cbv_map"),

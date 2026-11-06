@@ -201,6 +201,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "lesion_stats",
+      "brain_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "outputnode",
       "brain_mask"
     ],
@@ -225,6 +231,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "roi_stats",
+      "brain_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "signal_to_concentration",
       "brain_mask_file"
     ],
@@ -239,6 +251,12 @@
       "out_mask",
       "smooth_pk_maps",
       "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "user_lesion_stats",
+      "brain_mask"
     ],
     [
       "dce_brain_extract",
@@ -2395,7 +2413,7 @@
     "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "c28321cd48efbb941cd617a0ffd203a6ef31a2fe99eb69262bb04219a55cd11f",
     "dce_early_mean": "5b46e6b8906b3c47d6a11ebd1630ec659cee716dc703fed3a9c3fc752622bf9b",
-    "dce_pk_fit_qc": "ea610e699089c32c3606df70138abb51296b2e1d643b6b2c1804c041076006bc",
+    "dce_pk_fit_qc": "9dd301e0b5da0365f9fc420c8d04a79e6b93b6b1e95391752fe9ba364491831f",
     "dce_pk_maps_qc": "8a796024e48c475edefc903bb449e51ea720bbeeeb1c1315ce764fdabfe8489a",
     "derive_smoothed_kep": "599bb294e5520863fe6b795cd72eabac724c5573e6d25e84d3ba435eaa690365",
     "dsc_dce_validation": "da5d51bf521025d8b460e0958d7283097da1db47e0cd23af83eb7f31de11be16",

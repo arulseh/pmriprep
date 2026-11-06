@@ -417,6 +417,8 @@ def init_dce_lesion_stats_wf(
         PK parameter maps (shared by all three nodes).
     iauc60_map, iauc90_map, iauc120_map, peak_enhancement_map, ttp_map, ser_map
         Model-free maps.
+    brain_mask
+        Perfusion analysis support; outside voxels are excluded from quantitative summaries.
     nawm_mask
         NAWM reference mask.
     tumor_lesion_mask, mask_origin
@@ -454,6 +456,7 @@ def init_dce_lesion_stats_wf(
                 "peak_enhancement_map",
                 "ttp_map",
                 "ser_map",
+                "brain_mask",
                 "nawm_mask",
                 "qc_mask",
                 "tumor_lesion_mask",
@@ -502,6 +505,7 @@ def init_dce_lesion_stats_wf(
         ("peak_enhancement_map", "peak_enhancement_map"),
         ("ttp_map", "ttp_map"),
         ("ser_map", "ser_map"),
+        ("brain_mask", "brain_mask"),
         ("nawm_mask", "nawm_mask"),
         ("qc_mask", "qc_mask"),
     ]
@@ -2763,6 +2767,9 @@ def init_dce_preproc_wf(
     # stats nodes (fanned out inside the sub-wf); the three lesion masks
     # (tumor-seg, user ROI, user lesion) route to their respective nodes.
     workflow.connect([
+        (dce_brain_extraction_wf, lesion_stats_wf, [
+            ("outputnode.out_mask", "inputnode.brain_mask"),
+        ]),
         (pk_wf, lesion_stats_wf, [
             ("outputnode.out_ktrans", "inputnode.ktrans_map"),
             ("outputnode.out_ve", "inputnode.ve_map"),

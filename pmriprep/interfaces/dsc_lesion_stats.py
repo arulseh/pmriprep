@@ -33,6 +33,7 @@ from pmriprep.utils.lesion_stats import (
     detect_mask_type,
     extract_label_mask,
     is_integer_valued,
+    restrict_maps_to_brain,
 )
 from pmriprep.utils.nifti import physical_voxel_volume_mm3
 
@@ -44,6 +45,8 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     lesion_mask = traits.Str(desc="Lesion/tumor mask in DSC space")
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
+
+    brain_mask = traits.Str(desc="Perfusion brain mask defining quantitative support")
 
     # Optional NAWM mask for reference values
     nawm_mask = traits.Str(desc="NAWM mask in DSC space for reference values")
@@ -137,6 +140,11 @@ class DSCLesionStats(BaseInterface):
 
         # Load all available perfusion maps
         maps = self._load_maps()
+        self._analysis_mask: Optional[np.ndarray] = None
+        if self._has_input("brain_mask"):
+            maps, self._analysis_mask = restrict_maps_to_brain(
+                maps, self._map_affines, self.inputs.brain_mask, self.inputs.lesion_mask,
+            )
         fallback_mask = self._load_fallback_mask(lesion_data.shape)
 
         if self.inputs.force_binary:
@@ -251,6 +259,10 @@ class DSCLesionStats(BaseInterface):
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_volume_mm3,
             )
+            if result.nawm_reference and self._analysis_mask is not None:
+                result.nawm_reference["outside_brain_mask_voxels"] = int(
+                    np.count_nonzero(nawm_data & ~self._analysis_mask)
+                )
             if result.nawm_reference and fallback_mask is not None:
                 result.nawm_reference["cpi_fallback"] = (
                     self._compute_fallback_summary(nawm_data, fallback_mask)
@@ -312,6 +324,7 @@ class DSCLesionStats(BaseInterface):
             Dictionary mapping map name to 3D numpy array.
         """
         maps: Dict[str, np.ndarray] = {}
+        self._map_affines: Dict[str, np.ndarray] = {}
 
         map_attrs = [
             ("cbf_map", "cbf"),
@@ -331,6 +344,7 @@ class DSCLesionStats(BaseInterface):
                 if Path(path).is_file():
                     img = nib.load(path)
                     maps[name] = np.asarray(img.dataobj)  # type: ignore[attr-defined]
+                    self._map_affines[name] = np.asarray(img.affine)  # type: ignore[attr-defined]
 
         return maps
 
@@ -415,6 +429,9 @@ class DSCLesionStats(BaseInterface):
             volume_mm3=volume_mm3,
             volume_ml=volume_ml,
         )
+        support = getattr(self, "_analysis_mask", None)
+        if support is not None:
+            region.outside_brain_mask_voxels = int(np.count_nonzero(mask & ~support))
         if fallback_mask is not None:
             region.cpi_fallback = self._compute_fallback_summary(
                 mask, fallback_mask

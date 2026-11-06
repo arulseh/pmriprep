@@ -645,6 +645,12 @@
     [
       "hdbet_dsc",
       "dsc_brain_mask_file",
+      "lesion_stats",
+      "brain_mask"
+    ],
+    [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
       "outputnode",
       "brain_mask_dsc"
     ],
@@ -663,6 +669,12 @@
     [
       "hdbet_dsc",
       "dsc_brain_mask_file",
+      "roi_stats",
+      "brain_mask"
+    ],
+    [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
       "smooth_hemodynamic",
       "brain_mask_file"
     ],
@@ -671,6 +683,12 @@
       "dsc_brain_mask_file",
       "transform_brain_mask_qc",
       "hdbet_mask_file"
+    ],
+    [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
+      "user_lesion_stats",
+      "brain_mask"
     ],
     [
       "hdbet_dsc",

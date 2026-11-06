@@ -90,6 +90,7 @@ class RegionStatistics:
         volume_ml: Volume in milliliters.
         perfusion_maps: Dictionary mapping map name to its statistics.
         cpi_fallback: CPI-to-oSVD replacement count and fraction for the region.
+        outside_brain_mask_voxels: Region voxels excluded from quantitative summaries.
     """
 
     region_name: str
@@ -98,6 +99,7 @@ class RegionStatistics:
     volume_ml: float
     perfusion_maps: Dict[str, MapStatistics] = field(default_factory=dict)
     cpi_fallback: Optional[Dict[str, Any]] = None
+    outside_brain_mask_voxels: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -109,6 +111,8 @@ class RegionStatistics:
         }
         if self.cpi_fallback is not None:
             result["cpi_fallback"] = self.cpi_fallback
+        if self.outside_brain_mask_voxels is not None:
+            result["outside_brain_mask_voxels"] = self.outside_brain_mask_voxels
         return result
 
 
@@ -661,6 +665,47 @@ NAWM_RANGES: Dict[str, Tuple[float, float]] = {
 }
 
 
+def restrict_maps_to_brain(
+    maps: Dict[str, np.ndarray],
+    map_affines: Dict[str, np.ndarray],
+    brain_mask_file: str,
+    region_file: str,
+) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
+    """Exclude unmeasured image background from regional map copies.
+
+    Parameters
+    ----------
+    maps : dict
+        Quantitative arrays, including legitimate zero-valued measurements.
+    map_affines : dict
+        Affine for each map.
+    brain_mask_file : str
+        Perfusion analysis brain mask.
+    region_file : str
+        Region image defining the statistics grid.
+
+    Returns
+    -------
+    maps : dict
+        Copies with NaN outside the brain mask; source images are unchanged.
+    support : numpy.ndarray
+        Boolean brain-mask support on the validated grid.
+    """
+    brain: Any = nib.load(brain_mask_file)
+    region: Any = nib.load(region_file)
+    support = np.asarray(brain.dataobj) > 0
+    if support.ndim != 3 or support.shape != region.shape or not np.allclose(
+        brain.affine, region.affine,
+    ):
+        raise ValueError("Statistics brain mask must match the 3-D region image grid")
+    filtered = {}
+    for name, data in maps.items():
+        if data.shape != support.shape or not np.allclose(map_affines[name], brain.affine):
+            raise ValueError(f"Statistics map {name} must match the brain mask grid")
+        filtered[name] = np.where(support, data, np.nan)
+    return filtered, support
+
+
 def compute_nawm_reference(
     nawm_mask: np.ndarray,
     maps: Dict[str, np.ndarray],
@@ -913,7 +958,7 @@ def _slice_nawm_for_map(
 
     out: Dict[str, Any] = {}
     if include_mask_context:
-        for k in ("voxel_count", "volume_ml"):
+        for k in ("voxel_count", "volume_ml", "outside_brain_mask_voxels"):
             if k in nawm_reference:
                 out[k] = nawm_reference[k]
         if (
@@ -1046,6 +1091,8 @@ def extract_per_map_lesion_stats(
             fragment["voxel_count"] = region_block["voxel_count"]
         if "volume_ml" in region_block:
             fragment["volume_ml"] = region_block["volume_ml"]
+        if "outside_brain_mask_voxels" in region_block:
+            fragment["outside_brain_mask_voxels"] = region_block["outside_brain_mask_voxels"]
         if (
             map_name in {"cbf", "cbv", "mtt", "ncbf"}
             and isinstance(region_block.get("cpi_fallback"), dict)

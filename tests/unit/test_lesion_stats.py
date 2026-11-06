@@ -1,5 +1,7 @@
 """Unit tests for lesion/tumor ROI statistics extraction utilities."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -1344,3 +1346,41 @@ class TestMultiLabelRoiStats:
         stats = json.loads(open(result.outputs.stats_json).read())
         assert set(stats["Regions"].keys()) == {"roi"}
         assert stats["LesionMaskType"] == "binary"
+
+
+@pytest.mark.parametrize('modality', ['dsc', 'dce'])
+def test_regional_statistics_exclude_background_but_keep_measured_zero(tmp_path, modality) -> None:
+    """The image support, not a positive-value test or fit QC, defines coverage."""
+    import json
+    import nibabel as nib
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+    from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+    def save(name, values):
+        path = tmp_path / (name + '.nii.gz')
+        nib.save(nib.Nifti1Image(np.array(values, dtype=np.float32).reshape(2, 2, 1), np.eye(4)), path)
+        return str(path)
+
+    inputs = dict(
+        subject_id='test', session_id='01', force_binary=True,
+        lesion_mask=save('roi', [1, 1, 1, 1]),
+        nawm_mask=save('nawm', [1, 1, 1, 1]),
+        brain_mask=save('brain', [1, 1, 1, 0]),
+    )
+    data = save('parameter', [0, 2, np.nan, 0])
+    interface = DSCLesionStats if modality == 'dsc' else DCELesionStats
+    key = 'cbv' if modality == 'dsc' else 'ktrans'
+    inputs[key + '_map'] = data
+    output = interface(**inputs).run(cwd=str(tmp_path))
+    result = json.loads(Path(output.outputs.stats_json).read_text())
+    fragment = extract_per_map_lesion_stats(result, key)
+    region = fragment['Regions']['roi']
+    assert region['voxel_count'] == 4
+    assert region['outside_brain_mask_voxels'] == 1
+    assert region['stats']['n_valid'] == 2
+    assert region['stats']['n_total'] == 4
+    assert region['stats']['mean'] == 1.0
+    assert fragment['NAWMReference']['outside_brain_mask_voxels'] == 1
+    assert fragment['NAWMReference']['n_valid'] == 2
+    assert nib.load(data).get_fdata().flat[3] == 0

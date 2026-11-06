@@ -33,6 +33,7 @@ from pmriprep.utils.lesion_stats import (
     detect_mask_type,
     extract_label_mask,
     is_integer_valued,
+    restrict_maps_to_brain,
 )
 from pmriprep.utils.nifti import physical_voxel_volume_mm3
 
@@ -44,6 +45,8 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     lesion_mask = traits.Str(desc="Lesion/tumor mask in DCE space")
     subject_id = traits.Str(mandatory=True, desc="Subject ID (without sub- prefix)")
     session_id = traits.Str(mandatory=True, desc="Session ID (without ses- prefix)")
+
+    brain_mask = traits.Str(desc="Perfusion brain mask defining quantitative support")
 
     # Optional NAWM mask for reference values
     nawm_mask = traits.Str(desc="NAWM mask in DCE space for reference values")
@@ -144,6 +147,11 @@ class DCELesionStats(BaseInterface):
         # computed separately so primary statistics remain reconstructible
         # directly from the published maps.
         maps = self._load_maps()
+        self._analysis_mask: Optional[np.ndarray] = None
+        if self._has_input("brain_mask"):
+            maps, self._analysis_mask = restrict_maps_to_brain(
+                maps, self._map_affines, self.inputs.brain_mask, self.inputs.lesion_mask,
+            )
         qc_maps = self._qc_filtered_maps(maps)
         region_masks: Dict[str, np.ndarray] = {}
 
@@ -264,6 +272,10 @@ class DCELesionStats(BaseInterface):
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_volume_mm3,
             )
+            if result.nawm_reference and self._analysis_mask is not None:
+                result.nawm_reference["outside_brain_mask_voxels"] = int(
+                    np.count_nonzero(nawm_data & ~self._analysis_mask)
+                )
             qc_nawm_maps = {
                 k: v for k, v in qc_maps.items()
                 if k in nawm_maps
@@ -426,6 +438,9 @@ class DCELesionStats(BaseInterface):
             volume_mm3=volume_mm3,
             volume_ml=volume_ml,
         )
+        support = getattr(self, "_analysis_mask", None)
+        if support is not None:
+            region.outside_brain_mask_voxels = int(np.count_nonzero(mask & ~support))
 
         # Compute statistics for each available map. compute_advanced=True
         # turns on upper-tail and distribution-shape summaries.

@@ -3151,6 +3151,10 @@ def _generate_dce_pk_fit_qc(
                 pk_voxel_metrics["voxel_accounting_regions"] = (
                     regional_accounting
                 )
+                pk_voxel_metrics["voxel_accounting_region_definition"] = (
+                    "Tumour regions use separately resampled, hole-filled binary masks. "
+                    "Every region is intersected with the brain mask."
+                )
 
         # Calculate the enhancing-tumor peak-concentration risk metrics.
         peak_ct = np.nanmax(conc_data, axis=-1)
