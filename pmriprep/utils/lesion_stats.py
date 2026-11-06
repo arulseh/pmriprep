@@ -650,21 +650,6 @@ def combine_tumor_masks(
     return ("", "")
 
 
-# Per-map NAWM reference ranges for quantities with interpretable scales.
-# PMRIPrep's DSC CBF and CBV maps are relative, so absolute physiological
-# ranges in mL/100 g(/min) must not be applied to them. NAWM-normalized maps,
-# time parameters, and DCE fractions/rates retain meaningful scales.
-NAWM_RANGES: Dict[str, Tuple[float, float]] = {
-    "mtt":    (3.0, 8.0),       # s (field-independent)
-    "ncbv":   (0.85, 1.15),     # normalization sanity check
-    "ncbf":   (0.85, 1.15),
-    "ve":     (0.05, 0.30),
-    "vp":     (0.005, 0.05),
-    "ktrans": (0.0, 0.02),      # NAWM intact BBB
-    "Ktrans": (0.0, 0.02),
-}
-
-
 def restrict_maps_to_brain(
     maps: Dict[str, np.ndarray],
     map_affines: Dict[str, np.ndarray],
@@ -713,15 +698,6 @@ def compute_nawm_reference(
 ) -> Dict[str, Any]:
     """Compute NAWM reference values for normalization context.
 
-    Carries two distinct QC fields:
-        - ``mask_qc_status`` describes the NAWM mask itself (validity,
-          voxel count). Same value on every map's downstream slice.
-        - per-map ``value_qc_status`` reports whether THAT map's NAWM
-          median falls within its registered reference range. Stored as
-          ``<map>_value_qc_status`` keys
-          alongside the per-map sub-dict so that
-          ``extract_per_map_lesion_stats`` can slice cleanly.
-
     Parameters
     ----------
     nawm_mask : np.ndarray
@@ -734,8 +710,8 @@ def compute_nawm_reference(
     Returns
     -------
     dict
-        Dictionary with NAWM statistics for each available map plus
-        the QC fields described above.
+        Descriptive statistics and finite-value counts for each available map,
+        with the NAWM mask size and volume.
     """
     voxel_count, volume_mm3, volume_ml = compute_region_volume(
         nawm_mask, voxel_volume_mm3,
@@ -765,49 +741,6 @@ def compute_nawm_reference(
                 "n_valid": stats.n_valid,
                 "n_total": stats.n_total,
             }
-
-    # No mask-size editorializing here. The NAWM mask may come from the
-    # upstream auto-NAWM builder (which enforces config.tumor_seg.nawm_min_voxels
-    # = 500 by default), the bilateral fallback, or a user-supplied mask in
-    # the force_binary ROI path. Each has its own validity contract; consumers
-    # can apply their own size threshold using the emitted ``voxel_count`` and
-    # ``volume_ml`` fields.
-
-    # Value-level QC: only maps with interpretable scales are registered.
-    violations: List[str] = []
-    n_maps_checked = 0
-    for map_name, sub in list(reference.items()):
-        if not isinstance(sub, dict) or "median" not in sub:
-            continue
-        rng = NAWM_RANGES.get(map_name)
-        if rng is None:
-            continue
-        lo, hi = rng
-        median = sub.get("median")
-        if median is None:
-            continue
-        n_maps_checked += 1
-        in_range = lo <= median <= hi
-        sub["value_qc_status"] = "PASS" if in_range else "WARNING"
-        if not in_range:
-            violations.append(f"{map_name}={median} outside [{lo}, {hi}]")
-    if n_maps_checked == 0:
-        reference["value_qc_status"] = "UNKNOWN"
-        reference["value_qc_notes"] = (
-            "No emitted maps have registered NAWM reference ranges; "
-            "range QC not applied."
-        )
-    elif violations:
-        reference["value_qc_status"] = "WARNING"
-        reference["value_qc_notes"] = (
-            "Out-of-range NAWM medians: " + "; ".join(violations)
-        )
-    else:
-        reference["value_qc_status"] = "PASS"
-        reference["value_qc_notes"] = (
-            f"All NAWM medians within registered ranges "
-            f"({n_maps_checked} map(s) checked)."
-        )
 
     return reference
 
@@ -945,8 +878,6 @@ def _slice_nawm_for_map(
         - optional ``voxel_count``, ``volume_ml`` global mask context
         - ``median``, ``std``, ``p25``, ``p75``, ``n_valid``, and ``n_total``
           for ``map_name`` in that map's native units
-        - ``value_qc_status`` / ``value_qc_notes`` for that map only
-          (cross-map contamination avoided)
 
     Returns None when no NAWM reference is available for the map.
     """
@@ -966,35 +897,12 @@ def _slice_nawm_for_map(
             and isinstance(nawm_reference.get("cpi_fallback"), dict)
         ):
             out["cpi_fallback"] = nawm_reference["cpi_fallback"]
-    # Per-map stats and per-map value QC verdict.
+    # Per-map descriptive statistics and coverage.
     for k in (
         "median", "std", "p25", "p75", "n_valid", "n_total",
-        "value_qc_status",
     ):
         if k in map_stats:
             out[k] = map_stats[k]
-
-    # Carry value_qc_notes ONLY when relevant to this specific map, to avoid
-    # cross-map contamination (a map that PASSed individually shouldn't ship
-    # with notes complaining about a sibling map's WARNING). Three cases:
-    per_map_status = out.get("value_qc_status")
-    if per_map_status == "WARNING":
-        # This map itself failed → surface the modality-level range note.
-        modality_notes = nawm_reference.get("value_qc_notes")
-        if modality_notes:
-            out["value_qc_notes"] = modality_notes
-    elif per_map_status is None:
-        # No per-map verdict (e.g., this map has no entry in the range
-        # table). Surface the modality-level status + notes so consumers
-        # know QC was not applied to this map.
-        modality_status = nawm_reference.get("value_qc_status")
-        if modality_status is not None:
-            out["value_qc_status"] = modality_status
-        modality_notes = nawm_reference.get("value_qc_notes")
-        if modality_notes:
-            out["value_qc_notes"] = modality_notes
-    # When per_map_status == "PASS", deliberately do NOT carry
-    # value_qc_notes — the map is fine, no cross-map context needed.
 
     return out
 

@@ -1,3 +1,9 @@
+1.0.0rc6.dev34 (2026-11-06)
+===========================
+
+* CHG: Retire NAWM median range PASS/WARNING labels. Preserve descriptive
+  statistics and coverage; fitting bounds and binary QC are unchanged.
+
 1.0.0rc6.dev33 (2026-11-06)
 ===========================
 

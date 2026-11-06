@@ -207,8 +207,8 @@ class TestComputeDCEDerivedMetrics:
 class TestComputeNAWMReference:
     """Tests for compute_nawm_reference()."""
 
-    def test_relative_cbv_is_not_range_gated(self) -> None:
-        """Relative CBV statistics are emitted without absolute-value QC."""
+    def test_nawm_reference_statistics_and_coverage(self) -> None:
+        """NAWM statistics retain their map values and finite coverage."""
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
         rng = np.random.default_rng(42)
@@ -224,9 +224,6 @@ class TestComputeNAWMReference:
         assert "std" in ref["cbv"]
         assert ref["cbv"]["n_valid"] == 512
         assert ref["cbv"]["n_total"] == 512
-        assert ref["value_qc_status"] == "UNKNOWN"
-        assert "value_qc_status" not in ref["cbv"]
-        # No mask-size editorial — voxel_count is informational only.
 
     def test_quantitative_iauc60_reference_is_reported(self) -> None:
         """Raw IAUC60 retains NAWM context without constructing a ratio map."""
@@ -240,33 +237,9 @@ class TestComputeNAWMReference:
 
         assert ref["iauc60"]["median"] == pytest.approx(0.03)
         assert ref["iauc60"]["std"] == pytest.approx(0.0)
-        assert ref["value_qc_status"] == "UNKNOWN"
-
-    def test_normalized_and_time_maps_are_range_gated(self) -> None:
-        """nCBV and MTT retain interpretable NAWM scales."""
-        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
-        nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
-        maps = {
-            "ncbv": np.ones((10, 10, 10)),
-            "mtt": np.full((10, 10, 10), 5.0),
-        }
-        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
-
-        assert ref["value_qc_status"] == "PASS"
-        assert ref["ncbv"]["value_qc_status"] == "PASS"
-        assert ref["mtt"]["value_qc_status"] == "PASS"
-
-    def test_extreme_ncbv_warns(self) -> None:
-        """Extreme nCBV median produces a value-level warning."""
-        nawm_mask = np.ones((10, 10, 10), dtype=bool)
-        maps = {"ncbv": np.full((10, 10, 10), 2.0)}
-        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
-
-        assert ref["value_qc_status"] == "WARNING"
-        assert "ncbv" in ref["value_qc_notes"]
 
     def test_small_nawm_mask_emits_size_without_editorial(self) -> None:
-        """Small NAWM mask: voxel_count + volume_ml emitted; no mask_qc_status fabricated.
+        """Small NAWM masks retain size and descriptive statistics.
 
         NAWM may come from upstream auto-NAWM (config.tumor_seg.nawm_min_voxels=500),
         bilateral fallback, OR a user-supplied mask via the force_binary ROI path.
@@ -281,77 +254,6 @@ class TestComputeNAWMReference:
             nawm_mask, {"cbv": cbv_data}, 1.0,
         )
         assert ref["voxel_count"] == 1
-
-    def test_no_maps_in_range_table_reports_unknown_not_pass(self) -> None:
-        """Maps without registered ranges produce UNKNOWN rather than PASS.
-
-        Guards against compute_nawm_reference returning
-        ``value_qc_status="PASS"`` with a misleading "All NAWM medians
-        within ranges" note when zero maps had registered ranges (e.g.,
-        DCE-only modality with kep / iauc60).
-        """
-        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
-        nawm_mask[1:9, 1:9, 1:9] = True
-        # kep and peak_enhancement have no registered NAWM ranges.
-        maps = {
-            "kep": np.full((10, 10, 10), 0.5),
-            "peak_enhancement": np.full((10, 10, 10), 50.0),
-        }
-        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
-        assert ref["value_qc_status"] == "UNKNOWN"
-        assert "No emitted maps" in ref["value_qc_notes"]
-
-
-class TestSliceNawmForMap:
-    """per-map NAWM slicing avoids cross-map qc_notes contamination."""
-
-    def test_pass_map_does_not_carry_sibling_warning_notes(self) -> None:
-        """A PASSing map must not ship modality-level notes about sibling violations."""
-        from pmriprep.utils.lesion_stats import _slice_nawm_for_map
-
-        nawm = {
-            "voxel_count": 1000, "volume_ml": 50.0,
-            "ncbv": {"median": 1.0, "std": 0.1, "p25": 0.95, "p75": 1.05,
-                     "value_qc_status": "PASS"},
-            "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38,
-                    "value_qc_status": "WARNING"},
-            "value_qc_status": "WARNING",
-            "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
-        }
-        # ncbv individually PASSed → must not carry the sibling violation note
-        out = _slice_nawm_for_map(nawm, "ncbv")
-        assert out["value_qc_status"] == "PASS"
-        assert "value_qc_notes" not in out
-
-    def test_warning_map_does_carry_modality_notes(self) -> None:
-        """A WARNING map should surface the modality-level violation context."""
-        from pmriprep.utils.lesion_stats import _slice_nawm_for_map
-
-        nawm = {
-            "voxel_count": 1000, "volume_ml": 50.0,
-            "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38,
-                    "value_qc_status": "WARNING"},
-            "value_qc_status": "WARNING",
-            "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
-        }
-        out = _slice_nawm_for_map(nawm, "cbv")
-        assert out["value_qc_status"] == "WARNING"
-        assert "Out-of-range" in out["value_qc_notes"]
-
-    def test_map_without_per_map_verdict_inherits_modality_status(self) -> None:
-        """When per-map QC wasn't applied (no range entry), surface modality status."""
-        from pmriprep.utils.lesion_stats import _slice_nawm_for_map
-
-        nawm = {
-            "voxel_count": 1000, "volume_ml": 50.0,
-            "kep": {"median": 0.5, "std": 0.1, "p25": 0.4, "p75": 0.6},
-            "value_qc_status": "UNKNOWN",
-            "value_qc_notes": "Field strength unknown; NAWM ranges not applied.",
-        }
-        out = _slice_nawm_for_map(nawm, "kep")
-        # Inherits modality-level UNKNOWN (no per-map verdict on kep)
-        assert out["value_qc_status"] == "UNKNOWN"
-        assert "Field strength unknown" in out["value_qc_notes"]
 
 
 class TestMapStatisticsToDict:
@@ -660,8 +562,7 @@ class TestCohensDAugmentation:
         result.regions["tumor"] = region
         result.nawm_reference = {
             "cbv": {"mean": 1.5, "median": 1.4, "std": 0.4,
-                    "n_valid": 50, "n_total": 50, "p25": 1.2, "p75": 1.8,
-                    "value_qc_status": "PASS"},
+                    "n_valid": 50, "n_total": 50, "p25": 1.2, "p75": 1.8},
         }
         result.augment_with_cohens_d()
         d = result.regions["tumor"].perfusion_maps["cbv"].cohens_d_vs_nawm
@@ -725,14 +626,9 @@ class TestExtractPerMapLesionStatsEnrichment:
             },
             "NAWMReference": {
                 "voxel_count": 1000, "volume_ml": 50.0,
-                "ncbv": {"median": 1.0, "std": 0.1, "p25": 0.95, "p75": 1.05,
-                         "value_qc_status": "PASS"},
-                "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38,
-                        "value_qc_status": "WARNING"},
-                "mtt": {"median": 5.5, "std": 1.0, "p25": 4.8, "p75": 6.2,
-                        "value_qc_status": "PASS"},
-                "value_qc_status": "WARNING",
-                "value_qc_notes": "Out-of-range NAWM medians: cbv. Hematocrit=0.45.",
+                "ncbv": {"median": 1.0, "std": 0.1, "p25": 0.95, "p75": 1.05},
+                "cbv": {"median": 0.34, "std": 0.05, "p25": 0.30, "p75": 0.38},
+                "mtt": {"median": 5.5, "std": 1.0, "p25": 4.8, "p75": 6.2},
             },
             "DerivedMetrics": {
                 "fractional_volumes": {
