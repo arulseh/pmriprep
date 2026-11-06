@@ -788,6 +788,7 @@ def build_dce_provenance(
     dose_multiplier: float = 1.0,
     dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     agent_standard_dose: float = 0.1,
+    agent_standard_dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     bids_agent_string: Optional[str] = None,
     scanner_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
@@ -815,6 +816,8 @@ def build_dce_provenance(
         How the dose was determined (ParameterSource constant).
     agent_standard_dose : float
         Standard clinical dose in mmol Gd/kg.
+    agent_standard_dose_source : str
+        How the standard dose was determined (ParameterSource constant).
     bids_agent_string : str, optional
         Raw ContrastBolusAgent string from BIDS sidecar.
     scanner_metadata : dict, optional
@@ -866,6 +869,7 @@ def build_dce_provenance(
             "standard_dose_mmol_kg": float(agent_standard_dose),
             "dose_multiplier": float(dose_multiplier),
             "Source": str(dose_source),
+            "AgentStandardDoseSource": str(agent_standard_dose_source),
         },
     }
     if scanner_metadata:

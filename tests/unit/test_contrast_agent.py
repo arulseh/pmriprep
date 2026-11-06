@@ -361,12 +361,14 @@ class TestBuildDceProvenance:
             r1_relaxivity=5.0,
             field_strength=3.0,
             bids_agent_string="Gadavist 7ml",
+            agent_standard_dose_source=ParameterSource.BIDS_SIDECAR,
         )
         agent = prov["PerfusionProcessing"]["ContrastAgent"]
         assert agent["GenericName"] == "gadobutrol"
         assert agent["BrandName"] == "Gadavist"
         assert agent["OriginalString"] == "Gadavist 7ml"
         assert agent["Source"] == "bids_sidecar"
+        assert prov["PerfusionProcessing"]["ContrastDose"]["AgentStandardDoseSource"] == "bids_sidecar"
 
     def test_unspecified_agent_requires_r1(self) -> None:
         with pytest.raises(ValueError, match="explicit r1_relaxivity"):

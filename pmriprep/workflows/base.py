@@ -2419,6 +2419,10 @@ def _init_master_dce_workflow(
             dose_multiplier=dce_config.dose,
             dose_source=_dce_dose_source,
             agent_standard_dose=dce_sidecar["agent_standard_dose"],
+            agent_standard_dose_source=(
+                ParameterSource.BIDS_SIDECAR if _agent_name is not None
+                else ParameterSource.DEFAULT_FALLBACK
+            ),
             bids_agent_string=_bids_agent_string,
             scanner_metadata=dce_sidecar,
         )

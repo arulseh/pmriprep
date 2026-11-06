@@ -101,7 +101,15 @@ class DSCBrainExtract(SimpleInterface):
         self._results["dsc_brain_file"] = out_brain
         self._results["dsc_brain_mask_file"] = out_mask
         self._results["method_used"] = method_used
-        qc_metrics: dict[str, object] = {"method_used": method_used}
+        from pmriprep.utils.nifti import physical_voxel_volume_mm3
+
+        mask_img: Any = nib.load(out_mask)
+        n_voxels = int(np.count_nonzero(mask_img.get_fdata() > 0))
+        qc_metrics: dict[str, object] = {
+            "method_used": method_used,
+            "brain_voxels": n_voxels,
+            "brain_volume_ml": n_voxels * physical_voxel_volume_mm3(mask_img.affine) / 1000.0,
+        }
         if method_used == "hdbet":
             from pmriprep.utils.hdbet import resolve_hdbet_execution
 

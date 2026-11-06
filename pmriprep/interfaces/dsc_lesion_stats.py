@@ -86,6 +86,7 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Additional maps (all optional)
+    k2_map = traits.Str(desc="Signed leakage coefficient map path")
     psr_map = traits.Str(desc="PSR map path")
     ttp_map = traits.Str(desc="AIF-corrected TTP map path")
 
@@ -336,6 +337,7 @@ class DSCLesionStats(BaseInterface):
             ("ncbf_map", "ncbf"),
             ("psr_map", "psr"),
             ("ttp_map", "ttp"),
+            ("k2_map", "k2"),
         ]
 
         for attr, name in map_attrs:

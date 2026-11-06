@@ -231,7 +231,25 @@
     [
       "compute_maps",
       "out_k2",
+      "lesion_stats",
+      "k2_map"
+    ],
+    [
+      "compute_maps",
+      "out_k2",
       "outputnode",
+      "k2_map"
+    ],
+    [
+      "compute_maps",
+      "out_k2",
+      "roi_stats",
+      "k2_map"
+    ],
+    [
+      "compute_maps",
+      "out_k2",
+      "user_lesion_stats",
       "k2_map"
     ],
     [

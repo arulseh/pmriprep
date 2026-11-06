@@ -195,10 +195,10 @@ def test_partial_dsc_writer_publishes_independent_maps_and_geometry(
         assert not list(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
 
 
-def test_cbv_sidecars_report_statistics_from_their_own_images(
+def test_dsc_sidecars_report_statistics_from_their_own_images(
     tmp_path: Path, minimal_inputs: dict,
 ) -> None:
-    """Lesion, user-lesion and ROI summaries retain distinct CBV estimators."""
+    """Every mask path reports each map's own values, including signed K2."""
     from pmriprep.workflows.dsc.base import init_dsc_lesion_stats_wf
 
     def save_image(name: str, data: np.ndarray) -> str:
@@ -215,7 +215,8 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
     nawm = np.zeros(shape, dtype=bool)
     nawm[2:] = True
     normalized_cbv = auc_cbv / np.nanmedian(auc_cbv[nawm])
-    images = {"cbv": residue_cbv, "cbv_auc": auc_cbv, "ncbv": normalized_cbv}
+    images = {"cbv": residue_cbv, "cbv_auc": auc_cbv, "ncbv": normalized_cbv,
+              "k2": (indices - 32) * 0.001}
 
     lesion = np.zeros(shape, dtype=np.float32)
     lesion[0] = 2
@@ -228,6 +229,7 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
     inputs = dict(minimal_inputs)
     for name, attr in (
         ("cbv", "rel_cbv_map"), ("cbv_auc", "rel_cbv_auc_map"), ("ncbv", "ncbv_map"),
+        ("k2", "k2_map"),
     ):
         inputs[attr] = save_image(name, images[name])
 
@@ -236,6 +238,7 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
     stats_wf.inputs.inputnode.cbv_map = inputs["rel_cbv_map"]
     stats_wf.inputs.inputnode.cbv_auc_map = inputs["rel_cbv_auc_map"]
     stats_wf.inputs.inputnode.ncbv_map = inputs["ncbv_map"]
+    stats_wf.inputs.inputnode.k2_map = inputs["k2_map"]
     stats_wf.inputs.inputnode.nawm_mask = save_image("nawm", nawm)
     stats_wf.inputs.inputnode.tumor_lesion_mask = save_image("lesion", lesion)
     stats_wf.inputs.inputnode.roi_mask = save_image("roi", roi)
@@ -253,6 +256,7 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
     )
     for map_key, desc in (
         ("cbv", "dscRelCbv"), ("cbv_auc", "dscRelAUCCbv"), ("ncbv", "dscNawmNormCbv"),
+        ("k2", "dscK2"),
     ):
         image = images[map_key]
         sidecar = _load_sidecar(derivatives, desc)
@@ -263,9 +267,10 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
             assert stats["median"] == round(float(np.nanmedian(image[mask])), 6)
             assert stats["n_valid"] == int(np.count_nonzero(np.isfinite(image[mask])))
             assert stats["n_total"] == int(np.count_nonzero(mask))
-            reference = fragment["NAWMReference"]
-            assert reference["median"] == round(float(np.nanmedian(image[nawm])), 6)
-            assert reference["n_valid"] == int(np.count_nonzero(np.isfinite(image[nawm])))
+            if map_key != "k2":
+                reference = fragment["NAWMReference"]
+                assert reference["median"] == round(float(np.nanmedian(image[nawm])), 6)
+                assert reference["n_valid"] == int(np.count_nonzero(np.isfinite(image[nawm])))
 
 
 @pytest.mark.parametrize("method,detection,source", [

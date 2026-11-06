@@ -710,3 +710,46 @@ class TestDCERegistrationQCStatusGating:
         assert "correlation" not in qc_metrics
         assert qc_metrics["missing_required_metrics"] == ["correlation"]
         assert qc_metrics["qc_status"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("selected", ["header", "A", "B"])
+def test_registration_reports_applied_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selected: str,
+) -> None:
+    """Public provenance follows the selected transform and copied image."""
+    from types import SimpleNamespace
+    from pmriprep.interfaces.dce import DCERegistration
+    from pmriprep.utils import registration, transforms
+
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "source.nii.gz"
+    _save_volume(source, np.ones((3, 3, 3)), np.eye(4))
+    interface = DCERegistration(t1w_file=str(source), dce_mean=str(source))
+
+    def header(moving: str, fixed: str, image: str, matrix: str) -> None:
+        _save_volume(Path(image), np.ones((3, 3, 3)), np.eye(4))
+        _identity_flirt_mat(Path(matrix))
+
+    def fitted(**kwargs: object) -> None:
+        for suffix, value in (("a", 2.0), ("b", 3.0)):
+            _save_volume(Path(str(kwargs[f"out_file_{suffix}"])),
+                         np.full((3, 3, 3), value), np.eye(4))
+            _identity_flirt_mat(Path(str(kwargs[f"out_matrix_{suffix}"])))
+
+    def overlap(moving: str, fixed: str) -> float:
+        tag = "A" if "pathA" in moving else "B" if "pathB" in moving else "header"
+        return 0.98 if tag == selected else 0.90
+
+    monkeypatch.setattr(interface, "_run_header_alignment", header)
+    monkeypatch.setattr(interface, "_run_flirt_dual_path", fitted)
+    monkeypatch.setattr(interface, "_compute_qc_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(registration, "compute_dice_for_selection", overlap)
+    monkeypatch.setattr(transforms, "fsl_to_x5", lambda *a, **k: "transform.h5")
+    interface._run_interface(SimpleNamespace())
+    qc = interface._results["qc_metrics"]
+    assert qc["path_selection"]["selected"] == selected
+    assert qc["method"] == ("header" if selected == "header" else "flirt")
+    np.testing.assert_array_equal(
+        nib.load(interface._results["out_file"]).get_fdata(),
+        {"header": 1.0, "A": 2.0, "B": 3.0}[selected],
+    )

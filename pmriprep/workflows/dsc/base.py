@@ -1078,6 +1078,8 @@ def init_dsc_lesion_stats_wf(
         ``cbv_map`` is the deconvolution residue-integral CBV.
     cbv_auc_map
         AUC-based CBV, using the configured leakage correction.
+    k2_map
+        Signed leakage coefficient.
     psr_map
         Percentage signal recovery.
     ncbv_map, ncbf_map
@@ -1119,6 +1121,7 @@ def init_dsc_lesion_stats_wf(
                 "tmax_map",
                 "psr_map",
                 "ttp_map",
+                "k2_map",
                 "ncbv_map",
                 "ncbf_map",
                 "brain_mask",
@@ -1172,6 +1175,7 @@ def init_dsc_lesion_stats_wf(
         ("tmax_map", "tmax_map"),
         ("psr_map", "psr_map"),
         ("ttp_map", "ttp_map"),
+        ("k2_map", "k2_map"),
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
         ("brain_mask", "brain_mask"),
@@ -2494,6 +2498,7 @@ def init_dsc_preproc_wf(
             ("outputnode.out_tmax", "inputnode.tmax_map"),
             ("outputnode.out_psr", "inputnode.psr_map"),
             ("outputnode.out_ttp", "inputnode.ttp_map"),
+            ("outputnode.out_k2", "inputnode.k2_map"),
             ("outputnode.out_fallback_mask", "inputnode.fallback_mask"),
         ]),
         (normalization_wf, lesion_stats_wf, [

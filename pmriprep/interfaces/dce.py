@@ -4569,6 +4569,7 @@ class DCERegistration(SimpleInterface):
             dce_mean,
             foreground_dice=selected_dice,
         )
+        qc_metrics["method"] = "header" if selected_path == "header" else "flirt"
         qc_metrics["path_selection"] = {
             "dice_header": dice_header,
             "dice_a": dice_a,

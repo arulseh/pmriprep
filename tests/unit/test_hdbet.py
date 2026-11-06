@@ -271,6 +271,8 @@ class TestDSCBrainExtract:
 
         mock_bet.assert_called_once()
         assert iface._results["method_used"] == "bet"
+        assert iface._results["qc_metrics"]["brain_voxels"] == 1000
+        assert iface._results["qc_metrics"]["brain_volume_ml"] == pytest.approx(1.0)
 
     def test_fallback_chain_all_fail_to_threshold(
         self, tmp_path: Path,
@@ -307,12 +309,21 @@ class TestDSCBrainExtract:
             dsc_mean_file=in_file,
             hdbet_device="mps",
         )
-        with patch.object(interface, "_run_hdbet", return_value=True):
+        def write_mask(*args: object) -> bool:
+            _make_nifti(str(args[2]), np.ones((3, 3, 3)))
+            return True
+
+        with (
+            patch.object(interface, "_run_hdbet", side_effect=write_mask),
+            patch("os.getcwd", return_value=str(tmp_path)),
+        ):
             interface._run_interface(MagicMock())
 
         qc = interface._results["qc_metrics"]
         assert qc == {
             "method_used": "hdbet",
+            "brain_voxels": 27,
+            "brain_volume_ml": 0.027,
             "hdbet_device": "mps",
             "hdbet_tta_used": True,
         }

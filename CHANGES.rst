@@ -1,3 +1,9 @@
+1.0.0rc6.dev36 (2026-11-06)
+===========================
+
+* FIX: Include signed K2 in DSC regional statistics and report DSC brain-mask
+  volume, DCE standard-dose source and DCE registration method.
+
 1.0.0rc6.dev35 (2026-11-06)
 ===========================
 
