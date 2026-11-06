@@ -299,7 +299,7 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     assert maps.time_to_peak[0, 0, 0] == 12.0
     assert maps.signal_enhancement_ratio.shape == (1, 1, 1)
     assert maps.iauc_qc["reference_frame"] == 0
-    assert maps.iauc_qc["configured_baseline_frames"] == 2
+    assert maps.iauc_qc["input_baseline_frames"] == 2
     assert maps.iauc_qc["effective_baseline_frames"] == 2
     assert maps.iauc_qc["detected_bolus_arrival_frame"] == 0
 

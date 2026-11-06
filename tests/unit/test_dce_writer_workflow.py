@@ -474,7 +474,7 @@ def test_dce_factory_model_free_no_model_entity(
             "reference_frame": 5,
             "reference_time_s": 25.0,
             "reference_selection": "earlier_of_baseline_count_and_detected_arrival",
-            "configured_baseline_frames": 8,
+            "input_baseline_frames": 8,
             "effective_baseline_frames": 5,
             "detected_bolus_arrival_frame": 6,
             "available_post_reference_duration_s": available_duration,
@@ -574,7 +574,7 @@ def test_dce_factory_model_free_no_model_entity(
     assert iauc_sidecar["ValueDomain"] == "signed finite concentration integral, or NaN"
     assert iauc_sidecar["NegativeValueHandling"] == "retained"
     assert iauc_sidecar["ReferenceFrame"] == 5
-    assert iauc_sidecar["ConfiguredBaselineFrames"] == 8
+    assert iauc_sidecar["InputBaselineFrames"] == 8
     assert iauc_sidecar["DetectedBolusArrivalFrame"] == 6
     assert iauc_sidecar["ResolvedWindow"]["complete"] is (available_duration >= 60)
     assert (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.nii.gz").exists()

@@ -296,7 +296,7 @@ def _build_model_free_extra(
                 "ReferenceFrame": iauc_qc.get("reference_frame"),
                 "ReferenceTimeSeconds": iauc_qc.get("reference_time_s"),
                 "ReferenceSelection": iauc_qc.get("reference_selection"),
-                "ConfiguredBaselineFrames": iauc_qc.get("configured_baseline_frames"),
+                "InputBaselineFrames": iauc_qc.get("input_baseline_frames"),
                 "EffectiveBaselineFrames": iauc_qc.get("effective_baseline_frames"),
                 "DetectedBolusArrivalFrame": iauc_qc.get("detected_bolus_arrival_frame"),
                 "AvailablePostReferenceDurationSeconds": iauc_qc.get(
@@ -311,7 +311,7 @@ def _build_model_free_extra(
             "ReferenceFrame": reference_qc.get("reference_frame"),
             "ReferenceTimeSeconds": reference_qc.get("reference_time_s"),
             "ReferenceSelection": reference_qc.get("reference_selection"),
-            "ConfiguredBaselineFrames": reference_qc.get("configured_baseline_frames"),
+            "InputBaselineFrames": reference_qc.get("input_baseline_frames"),
             "EffectiveBaselineFrames": reference_qc.get("effective_baseline_frames"),
             "DetectedBolusArrivalFrame": reference_qc.get(
                 "detected_bolus_arrival_frame"

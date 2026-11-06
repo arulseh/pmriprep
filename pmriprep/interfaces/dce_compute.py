@@ -2043,7 +2043,7 @@ class ComputeDCEMaps(BaseInterface):
         iauc_qc = {
             "reference_frame": iauc_reference_frame,
             "reference_time_s": reference_time_s,
-            "configured_baseline_frames": int(self.inputs.baseline_frames),
+            "input_baseline_frames": int(self.inputs.baseline_frames),
             "effective_baseline_frames": prepared.baseline_frames,
             "detected_bolus_arrival_frame": detected_bolus_frame,
             "reference_selection": "earlier_of_baseline_count_and_detected_arrival",

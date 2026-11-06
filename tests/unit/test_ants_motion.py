@@ -215,6 +215,7 @@ def test_dsc_interface_selected_series(tmp_path: Path, monkeypatch: Any, apply: 
     assert result.fd_mean == pytest.approx(.4)
     assert result.n_outliers == 5
     assert result.qc_metrics["motion_applied"] is apply
+    assert result.qc_metrics["motion_reference_frames"] == 3
 
 
 @pytest.mark.parametrize("budget,requested,expected", [

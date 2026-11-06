@@ -1,3 +1,9 @@
+1.0.0rc6.dev35 (2026-11-06)
+===========================
+
+* FIX: Label DSC motion-reference frames separately from the final baseline;
+  label DCE model-free input baseline counts without implying configured values.
+
 1.0.0rc6.dev34 (2026-11-06)
 ===========================
 

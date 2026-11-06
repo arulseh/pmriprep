@@ -152,7 +152,7 @@ class MotionCorrection(SimpleInterface):
                                    float(self.inputs.motion_thresh), float(self.inputs.head_radius))
         metrics.update(result.provenance)
         metrics["reference_type"] = "baseline_mean"
-        metrics["baseline_frames"] = min(int(self.inputs.baseline_frames), metrics["n_volumes"])
+        metrics["motion_reference_frames"] = min(int(self.inputs.baseline_frames), metrics["n_volumes"])
         image: Any = nib.load(result.out_file)
         mean_file = str(Path.cwd() / "motion_mean.nii.gz")
         header = image.header.copy()
