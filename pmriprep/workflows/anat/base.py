@@ -580,6 +580,8 @@ def init_anat_tissue_segmentation_wf(
     )
     hybrid_fast_chain.inputs.denoise = denoise
     hybrid_fast_chain.inputs.prepare_subtraction = prepare_subtraction
+    # This Function invokes N4 internally and inherits the run's thread limit.
+    hybrid_fast_chain._pmriprep_threaded = True
     merge_fast = pe.Node(
         niu.Function(
             input_names=["normal_input", "hybrid_input"],

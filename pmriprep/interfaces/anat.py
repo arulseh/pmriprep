@@ -7,6 +7,7 @@ tissue segmentation, and ACPC alignment.
 
 import logging
 import os
+import shlex
 from pathlib import Path
 from typing import Any, Optional
 
@@ -738,23 +739,16 @@ class BrainExtraction(CommandLine):
         cmd_parts: list[str] = []
 
         if tool == "hdbet":
+            from pmriprep.utils.hdbet import build_hdbet_command
+
             device, use_tta = self._get_hdbet_execution()
-
-            hdbet_base = f"hd-bet -i {in_file} -o {out_file} -device {device}"
-            if not use_tta:
-                hdbet_base += " --disable_tta"
-
-            if isdefined(self.inputs.conda_env) and self.inputs.conda_env:
-                hdbet_cmd = (
-                    f"conda run -n {self.inputs.conda_env} "
-                    f"--no-capture-output {hdbet_base}"
-                )
-            else:
-                hdbet_cmd = hdbet_base
-            cmd_parts.append(hdbet_cmd)
+            conda_env = str(self.inputs.conda_env) if isdefined(self.inputs.conda_env) else ""
+            cmd_parts.append(shlex.join(build_hdbet_command(
+                in_file, out_file, device, use_tta, conda_env,
+            )))
 
             # Create mask by binarizing the brain output
-            cmd_parts.append(f"fslmaths {out_file} -bin {out_mask}")
+            cmd_parts.append(shlex.join(["fslmaths", out_file, "-bin", out_mask]))
 
         else:  # ants
             ants_template = getattr(self.inputs, "ants_template", None)
@@ -782,7 +776,7 @@ class BrainExtraction(CommandLine):
             cmd_parts.append(f"mv {ants_mask} {out_mask}")
             cmd_parts.append(f"rm -f {ants_prefix}*")
 
-        return "bash -c '" + " && ".join(cmd_parts) + "'"
+        return "bash -c " + shlex.quote(" && ".join(cmd_parts))
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List expected outputs."""

@@ -93,7 +93,7 @@ Common options:
 | `--participant-label LABEL [...]` | Select participants (without `sub-` prefix) |
 | `--session-label LABEL [...]` | Select sessions (without `ses-` prefix) |
 | `-w PATH`, `--work-dir PATH` | Set the Nipype working directory |
-| `--nprocs N` | CPU budget for workflow scheduling and fitting (default: 1) |
+| `--nprocs N` | CPU budget for workflow scheduling and fitting (default: auto, up to 8) |
 | `--omp-nthreads N` | Limit threads per process |
 | `--mem-gb GB` | Set the Nipype memory limit |
 | `--config-file PATH` | Load options from a YAML or JSON configuration file |
@@ -125,7 +125,8 @@ Key DCE options:
 Use `pmriprep --help` for the complete execution interface. `--use-plugin`
 accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 `--resource-monitor`, `--write-graph`, `--stop-on-first-crash`, and `--sloppy`
-follow the corresponding NiPreps conventions.
+follow the corresponding NiPreps conventions. The default CPU budget is capped
+at 8; consider setting `--nprocs` if more CPUs are available.
 
 CPI fitting uses single-threaded workers up to the process and node-memory
 limits; `--sloppy` reduces its fitting iterations for testing. HD-BET uses

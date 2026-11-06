@@ -239,6 +239,7 @@ def test_cli_rejects_incompatible_native_interface_before_bids_indexing(
     args = run._build_parser().parse_args(
         [str(tmp_path / "bids"), str(tmp_path / "out"), "participant"]
     )
+    args.nprocs, args.nprocs_source = run._effective_nprocs(args.nprocs, None, {})
     monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.setattr(run.plogger, "init", lambda **kwargs: None)
     messages = []
@@ -274,6 +275,7 @@ def test_cli_without_dce_does_not_require_native_backend(
     args = run._build_parser().parse_args(
         [str(tmp_path / "bids"), str(tmp_path / "out"), "participant", option]
     )
+    args.nprocs, args.nprocs_source = run._effective_nprocs(args.nprocs, None, {})
     monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.setattr(run.plogger, "init", lambda **kwargs: None)
     monkeypatch.setattr(backend, "check_backend",

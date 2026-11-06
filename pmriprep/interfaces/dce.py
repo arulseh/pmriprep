@@ -4013,11 +4013,10 @@ class DCEBrainExtract(SimpleInterface):
 
     Notes
     -----
-    When ``hdbet_conda_env`` is set, HD-BET is invoked via::
-
-        conda run -n <env> --no-capture-output hd-bet -i <input> -o <output>
-
-    When unset (default, e.g. inside Docker), HD-BET is called directly.
+    HD-BET uses a single-image runner with bounded CPU threads and one worker
+    for each preprocessing/export stage. When ``hdbet_conda_env`` is set, the
+    runner executes in that environment; otherwise it uses HD-BET's installed
+    Python interpreter.
 
     If HD-BET is not available, falls back to FSL BET with parameters
     optimized for DCE contrast (lower fractional intensity threshold).

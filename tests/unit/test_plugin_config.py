@@ -89,12 +89,26 @@ def test_nipype_plugin_file_alias() -> None:
 
 def test_multiproc_file_nprocs_is_effective_without_cli_override() -> None:
     """A MultiProc file supplies the process count when CLI omits it."""
-    assert _effective_nprocs(None, "MultiProc", {"n_procs": 6}) == 6
+    assert _effective_nprocs(None, "MultiProc", {"n_procs": 52}) == (
+        52, "MultiProc plugin n_procs",
+    )
 
 
 def test_cli_nprocs_overrides_multiproc_file() -> None:
     """Explicit CLI process count has NiPreps precedence."""
-    assert _effective_nprocs(3, "MultiProc", {"n_procs": 6}) == 3
+    assert _effective_nprocs(54, "MultiProc", {"n_procs": 6}) == (54, "--nprocs")
+
+
+@pytest.mark.parametrize("plugin", ["SLURM", "SGE", "PBS", "Linear"])
+def test_remote_plugins_require_explicit_compute_budget(plugin: str, monkeypatch) -> None:
+    """Remote resources cannot be inferred from the submission host."""
+    monkeypatch.setattr("pmriprep.utils.cpu.automatic_cpu_budget", lambda: (4, "automatic"))
+    if plugin == "Linear":
+        assert _effective_nprocs(None, plugin, {}) == (4, "automatic")
+    else:
+        with pytest.raises(ValueError, match="requires explicit --nprocs"):
+            _effective_nprocs(None, plugin, {})
+    assert _effective_nprocs(16, plugin, {}) == (16, "--nprocs")
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.5, "4"])

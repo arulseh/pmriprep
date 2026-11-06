@@ -1,6 +1,10 @@
 """Tests for shared HD-BET utility and perfusion brain extraction interfaces."""
 
 import subprocess
+import os
+import shlex
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +22,81 @@ def _make_nifti(path: str, data: np.ndarray) -> None:
     """Save a simple NIfTI image."""
     img = nib.Nifti1Image(data.astype(np.float32), np.eye(4))
     nib.save(img, path)
+
+
+@pytest.mark.parametrize("conda_env", ["", "hdbet-runtime"])
+def test_bounded_command_shared_by_anatomy_and_perfusion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conda_env: str,
+) -> None:
+    """Both launch paths preserve the tool environment, threads and path quoting."""
+    from pmriprep.interfaces.anat import BrainExtraction
+    from pmriprep.utils.hdbet import build_hdbet_command
+
+    executable = tmp_path / "hd-bet"
+    executable.write_text(f"#!{sys.executable}\n")
+    monkeypatch.setattr("pmriprep.utils.hdbet.shutil.which", lambda _: str(executable))
+    monkeypatch.setenv("OMP_NUM_THREADS", "3")
+    image = tmp_path / "input image.nii.gz"
+    _make_nifti(str(image), np.ones((3, 3, 3)))
+    interface = BrainExtraction(in_file=str(image), device="cpu", conda_env=conda_env)
+    command = build_hdbet_command(str(image), interface._gen_outfilename(), "cpu", False, conda_env)
+    if conda_env:
+        assert command[:6] == ["conda", "run", "-n", conda_env, "--no-capture-output", "python"]
+    else:
+        assert command[0] == sys.executable
+    assert command[command.index("--threads") + 1] == "3"
+    shell_command = shlex.split(interface.cmdline)[2]
+    assert shlex.split(shell_command.split(" && ", 1)[0]) == command
+
+
+def test_bounded_runner_preserves_predictor_and_masking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reset HD-BET's host-thread override and bound the two auxiliary workers."""
+    from pmriprep.utils import hdbet_runner
+
+    threads = []
+    prediction = {}
+    initialization = {}
+    source = tmp_path / "input.nii.gz"
+    output = tmp_path / "brain.nii.gz"
+    _make_nifti(str(source), np.ones((3, 3, 3)))
+
+    def predict(inputs, masks, **kwargs):
+        assert inputs == [[str(source)]]
+        assert threads[-1] == 3
+        assert os.environ["OMP_NUM_THREADS"] == "1"
+        prediction.update(kwargs)
+        _make_nifti(masks[0], np.ones((3, 3, 3)))
+
+    def get_predictor(**kwargs):
+        initialization.update(kwargs)
+        threads.append(128)
+        return SimpleNamespace(predict_from_files=predict)
+
+    def apply_bet(image, mask, out):
+        data = nib.load(image).get_fdata() * (nib.load(mask).get_fdata() > 0)
+        _make_nifti(out, data)
+
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    monkeypatch.setattr(sys, "argv", ["runner", "-i", str(source), "-o", str(output),
+                                      "-device", "cpu", "--disable_tta", "--threads", "3"])
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(set_num_threads=threads.append, device=str))
+    monkeypatch.setitem(sys.modules, "SimpleITK", SimpleNamespace(ProcessObject=SimpleNamespace(
+        SetGlobalDefaultNumberOfThreads=lambda n: None,
+    )))
+    monkeypatch.setitem(sys.modules, "HD_BET.checkpoint_download", SimpleNamespace(maybe_download_parameters=lambda: None))
+    monkeypatch.setitem(sys.modules, "HD_BET.hd_bet_prediction", SimpleNamespace(
+        apply_bet=apply_bet, get_hdbet_predictor=get_predictor,
+    ))
+    hdbet_runner.main()
+    assert threads == [3, 128, 3]
+    assert initialization == {"use_tta": False, "device": "cpu", "verbose": False}
+    assert prediction == dict(save_probabilities=False, overwrite=True,
+                              num_processes_preprocessing=1, num_processes_segmentation_export=1,
+                              folder_with_segs_from_prev_stage=None, num_parts=1, part_id=0)
+    np.testing.assert_array_equal(nib.load(output).get_fdata(), nib.load(source).get_fdata())
+    assert not (tmp_path / "brain_bet.nii.gz").exists()
 
 
 # =============================================================================

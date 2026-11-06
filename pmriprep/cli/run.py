@@ -400,14 +400,16 @@ Examples:
         type=_positive_int,
         default=None,
         metavar="N",
-        help="Maximum number of processors to use (default: 1).",
+        help="Maximum number of processors to use (default: auto, up to 8 "
+        "within detected CPU resource limits).",
     )
     parser.add_argument(
         "--omp-nthreads",
         type=_positive_int,
         default=None,
         metavar="N",
-        help="Per-process thread limit (OMP/MKL/ITK).",
+        help="Per-process thread limit (OMP/MKL/ITK; default: min(nprocs, 8); "
+        "bounded by --nprocs).",
     )
     parser.add_argument(
         "--mem-gb",
@@ -717,7 +719,8 @@ Examples:
         help="Path to a YAML/JSON file specifying the nipype execution "
         "plugin (e.g. SLURM, SGE, PBS). Overrides the default "
         "MultiProc/Linear selection. File must contain top-level keys "
-        "'plugin' (string) and optional 'plugin_args' (mapping). See "
+        "'plugin' (string) and optional 'plugin_args' (mapping). "
+        "Remote scheduler plugins require explicit --nprocs. See "
         "nipype docs for plugin-specific args.",
     )
 
@@ -785,7 +788,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             parser.error(str(error))
 
     try:
-        args.nprocs = _effective_nprocs(args.nprocs, plugin_name, plugin_args)
+        args.nprocs, args.nprocs_source = _effective_nprocs(
+            args.nprocs, plugin_name, plugin_args,
+        )
     except ValueError as error:
         parser.error(str(error))
 
@@ -995,6 +1000,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     logger.log(IMPORTANT, f"PMRIPrep version {__version__}")
     logger.log(IMPORTANT, f"BIDS directory: {args.bids_dir}")
     logger.log(IMPORTANT, f"Output directory: {args.output_dir}")
+    logger.log(IMPORTANT, "CPU budget: %d (%s)", args.nprocs, args.nprocs_source)
 
     # Set per-process thread limits (OMP/ITK/MKL) before any computation.
     # Without this, OMP defaults to cpu_count per worker — with nprocs=32
@@ -1002,20 +1008,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     # thread limits and causing pthread_create EAGAIN.
     import os
 
-    if args.omp_nthreads is not None:
-        omp = args.omp_nthreads
-    else:
-        n_cpus = os.cpu_count() or 1
-        omp = max(1, min(8, n_cpus - 1))
-        logger.info(
-            "Auto-calculated per-process threads: %d (cpus=%d, nprocs=%d)",
-            omp, n_cpus, args.nprocs,
-        )
-
-    os.environ["OMP_NUM_THREADS"] = str(omp)
-    os.environ["MKL_NUM_THREADS"] = str(omp)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(omp)
-    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(omp)
+    omp = _configure_thread_limits(args.nprocs, args.omp_nthreads)
     # nnU-Net multiprocessing workers (process count, NOT thread count —
     # not governed by OMP). Must be 1 to prevent fork storms in HD-BET/HD-GLIO.
     os.environ["nnUNet_def_n_proc"] = "1"
@@ -1229,7 +1222,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                     layout=bids_layout,
                     sloppy=args.sloppy,
                 )
-                _configure_motion_threads(workflow, args.nprocs, omp)
+                _configure_preprocessing_threads(workflow, args.nprocs, omp)
 
                 # Log pipeline summary
                 summary = get_pipeline_summary(workflow)
@@ -1431,18 +1424,129 @@ def _effective_nprocs(
     cli_nprocs: int | None,
     plugin: str | None,
     plugin_args: dict[str, Any],
-) -> int:
-    """Resolve process count with fMRIPrep-compatible precedence."""
+) -> tuple[int, str]:
+    """Resolve the CPU budget and source: CLI, local plugin, then detection.
+
+    Parameters
+    ----------
+    cli_nprocs : int or None
+        Explicit CLI budget, already validated as positive by the parser.
+    plugin : str or None
+        Selected Nipype execution plugin.
+    plugin_args : dict
+        Plugin settings; local MultiProc plugins may supply ``n_procs``.
+
+    Returns
+    -------
+    count : int
+        Resolved local CPU budget.
+    source : str
+        Origin of the budget for the startup log.
+    """
     if cli_nprocs is not None:
-        return cli_nprocs
+        return cli_nprocs, "--nprocs"
     if plugin in {"MultiProc", "LegacyMultiProc"} and "n_procs" in plugin_args:
         value = plugin_args["n_procs"]
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError(
                 "--use-plugin MultiProc 'n_procs' must be a positive integer"
             )
-        return value
-    return 1
+        return value, f"{plugin} plugin n_procs"
+    if plugin not in {None, "Linear", "MultiProc", "LegacyMultiProc"}:
+        raise ValueError(
+            f"--use-plugin {plugin} requires explicit --nprocs: CPU resources "
+            "on the submission host do not describe the compute allocation."
+        )
+    from pmriprep.utils.cpu import automatic_cpu_budget
+
+    return automatic_cpu_budget()
+
+
+def _configure_thread_limits(nprocs: int, requested: int | None) -> int:
+    """Set numerical-library thread limits before computation.
+
+    Parameters
+    ----------
+    nprocs : int
+        Resolved pipeline CPU budget.
+    requested : int or None
+        Explicit per-process limit, or a default capped by the CPU budget.
+
+    Returns
+    -------
+    int
+        Thread count exported to the numerical libraries.
+    """
+    threads = min(nprocs, requested if requested is not None else 8)
+    if requested is not None and requested > nprocs:
+        logger.warning(
+            "Per-process thread request %d exceeds CPU budget %d; using %d threads",
+            requested, nprocs, threads,
+        )
+    for variable in (
+        "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+        "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS",
+    ):
+        os.environ[variable] = str(threads)
+    return threads
+
+
+def _configure_preprocessing_threads(
+    workflow: Any, nprocs: int, omp_nthreads: int,
+) -> None:
+    """Reserve the exported thread limit for threaded preprocessing tools.
+
+    Parameters
+    ----------
+    workflow : pe.Workflow
+        Constructed workflow, including nested anatomical and perfusion nodes.
+    nprocs : int
+        Resolved pipeline CPU budget.
+    omp_nthreads : int
+        Per-process limit exported before workflow construction.
+
+    Notes
+    -----
+    N4/denoising, ANTs extraction and CPU neural-network extraction/segmentation
+    inherit the process thread limits. GPU HD-BET and HD-GLIO reserve at most
+    two CPUs for their single-case preprocessing and export. Function nodes that wrap these tools
+    declare ``_pmriprep_threaded`` explicitly. FLIRT, file operations and
+    independently budgeted fitting pools keep their own reservations.
+    """
+    from pmriprep.interfaces.anat import BiasCorrection, BrainExtraction
+    from pmriprep.interfaces.dce import DCEBrainExtract
+    from pmriprep.interfaces.dsc_brain import DSCBrainExtract
+    from pmriprep.interfaces.hdglio import HDGLIOSegment
+    from pmriprep.utils.hdbet import hdbet_thread_budget, resolve_hdbet_execution
+
+    threads = _configure_motion_threads(workflow, nprocs, omp_nthreads)
+    threaded = (BiasCorrection, BrainExtraction, DCEBrainExtract, DSCBrainExtract, HDGLIOSegment)
+    count = 0
+    gpu_neural_count = 0
+    for node in workflow._get_all_nodes():
+        if isinstance(node.interface, threaded) or getattr(node, "_pmriprep_threaded", False):
+            if isinstance(node.interface, DCEBrainExtract) and node.inputs.method != "hdbet":
+                continue
+            node.n_procs = threads
+            device = None
+            if isinstance(node.interface, BrainExtraction) and node.inputs.tool == "hdbet":
+                device = node.inputs.device
+            elif isinstance(node.interface, (DCEBrainExtract, DSCBrainExtract)):
+                device = node.inputs.hdbet_device
+            if device is not None:
+                resolved, _ = resolve_hdbet_execution(device, node.inputs.sloppy)
+                node.n_procs = hdbet_thread_budget(resolved, threads)
+                node.inputs.use_gpu = resolved in {"cuda", "mps"}
+                gpu_neural_count += int(node.inputs.use_gpu)
+            elif isinstance(node.interface, HDGLIOSegment) and node.inputs.use_gpu:
+                node.n_procs = min(threads, 2)
+                gpu_neural_count += 1
+            count += 1
+    logger.info(
+        "Threaded preprocessing: %d nodes, up to %d CPU(s) each; "
+        "%d GPU HD-BET/HD-GLIO nodes reserve at most 2 CPU(s) each",
+        count, threads, gpu_neural_count,
+    )
 
 
 def _configure_motion_threads(

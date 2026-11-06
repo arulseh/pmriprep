@@ -1,3 +1,17 @@
+1.0.0rc6.dev39 (2026-11-07)
+===========================
+
+* CHG: Default to an automatic CPU budget capped at eight and bounded by
+  detected affinity, Slurm per-task allocation and container CPU quotas.
+  Derive default per-process threads from the resolved budget; preserve
+  explicit CLI and local plugin budgets and log the resolved source.
+* FIX: Match CPU reservations to threaded preprocessing limits and bound
+  per-process threads by the run budget. Require an explicit CPU budget for
+  remote scheduler plugins rather than detecting submission-host resources.
+* FIX: Bound HD-BET CPU threads and preprocessing/export workers while retaining
+  its predictor, inference settings and brain masking. GPU HD-BET and HD-GLIO
+  reserve at most two CPUs; CPU inference uses the configured thread budget.
+
 1.0.0rc6.dev38 (2026-11-06)
 ===========================
 

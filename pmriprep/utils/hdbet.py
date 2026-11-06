@@ -7,7 +7,11 @@ mask derivation from the brain-extracted output.
 """
 
 import logging
+import os
+import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +23,69 @@ from pmriprep.utils.processes import run_isolated_command
 logger = logging.getLogger(__name__)
 
 _TTA_TIMEOUT_MULTIPLIER = 8
+
+
+def hdbet_thread_budget(device: str, limit: int) -> int:
+    """Match HD-BET's CPU reservation and launcher thread limit.
+
+    Parameters
+    ----------
+    device : str
+        Resolved Torch device: cpu, cuda or mps.
+    limit : int
+        Positive per-process CPU limit within the run budget.
+
+    Returns
+    -------
+    int
+        Full limit for CPU inference, or at most two CPUs for GPU inference.
+    """
+    return min(limit, 2) if device in {"cuda", "mps"} else limit
+
+
+def build_hdbet_command(
+    in_file: str, out_brain: str, device: str, use_tta: bool, conda_env: str = "",
+) -> list[str]:
+    """Build a bounded single-image HD-BET command in its Python environment.
+
+    Parameters
+    ----------
+    in_file, out_brain : str
+        Input image and output brain-image paths.
+    device : str
+        Resolved Torch device.
+    use_tta : bool
+        Whether to enable mirrored predictions.
+    conda_env : str
+        Optional HD-BET environment. Otherwise use the installed ``hd-bet``
+        Python entry point's interpreter, falling back to the current Python.
+
+    Returns
+    -------
+    list of str
+        Subprocess arguments, including the exported per-process thread budget.
+    """
+    if conda_env:
+        command = ["conda", "run", "-n", conda_env, "--no-capture-output", "python"]
+    else:
+        command = [sys.executable]
+        executable = shutil.which("hd-bet")
+        if executable:
+            try:
+                with open(executable, "rb") as stream:
+                    shebang = stream.readline(512).decode("utf-8").strip()
+                interpreter = shlex.split(shebang[2:]) if shebang.startswith("#!") else []
+                if interpreter and any("python" in Path(part).name for part in interpreter):
+                    command = interpreter
+            except (OSError, UnicodeError, ValueError):
+                pass
+    threads = hdbet_thread_budget(device, max(1, int(os.environ.get("OMP_NUM_THREADS", "1"))))
+    command += [str(Path(__file__).with_name("hdbet_runner.py")),
+                "-i", str(in_file), "-o", str(out_brain), "-device", device,
+                "--threads", str(threads)]
+    if not use_tta:
+        command.append("--disable_tta")
+    return command
 
 
 def resolve_hdbet_execution(
@@ -66,7 +133,7 @@ def run_hdbet(
 ) -> tuple[bool, Optional[str]]:
     """Run HD-BET brain extraction as a subprocess.
 
-    Builds and executes the ``hd-bet`` command, optionally via a conda
+    Builds and executes the bounded HD-BET runner, optionally via a conda
     environment.  On success, derives a binary brain mask by binarizing
     the brain-extracted output (more consistent than HD-BET's own
     ``_mask.nii.gz``).
@@ -102,27 +169,13 @@ def run_hdbet(
     device, use_tta = resolve_hdbet_execution(device, sloppy)
     effective_timeout = timeout * (_TTA_TIMEOUT_MULTIPLIER if use_tta else 1)
 
-    hdbet_args = [
-        "hd-bet",
-        "-i", str(in_file),
-        "-o", str(out_brain),
-        "-device", device,
-    ]
-    if not use_tta:
-        hdbet_args.append("--disable_tta")
     logger.info(
         "Starting HD-BET on %s with test-time augmentation %s",
         device,
         "enabled" if use_tta else "disabled",
     )
 
-    # Conda wrapping
-    if conda_env:
-        cmd = [
-            "conda", "run", "-n", conda_env, "--no-capture-output",
-        ] + hdbet_args
-    else:
-        cmd = hdbet_args
+    cmd = build_hdbet_command(in_file, out_brain, device, use_tta, conda_env)
 
     try:
         result = run_isolated_command(
