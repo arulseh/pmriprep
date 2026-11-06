@@ -102,10 +102,12 @@ def test_prepare_vp_constraint_distinguishes_absent_dsc_run(
 
 
 @pytest.mark.parametrize("is_auto", [False, True])
+@pytest.mark.parametrize("dsc_present", [False, True])
 def test_prepare_vp_constraint_rejects_nlls_prior_before_loading_dsc(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     is_auto: bool,
+    dsc_present: bool,
 ) -> None:
     """Explicit and auto-selected Patlak NLLS omit the DSC prior."""
     monkeypatch.setattr(
@@ -114,10 +116,11 @@ def test_prepare_vp_constraint_rejects_nlls_prior_before_loading_dsc(
     )
     interface = ComputeDCEMaps(
         brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
-        dsc_ncbv_file="ncbv.nii.gz",
-        dsc_aif_qc={"detection_method": "atlas"},
         constraint_mode="auto",
     )
+    if dsc_present:
+        interface.inputs.dsc_ncbv_file = "ncbv.nii.gz"
+        interface.inputs.dsc_aif_qc = {"detection_method": "atlas"}
 
     result = interface._prepare_vp_constraint(
         _prepared(populated=True, inference="nlls")._replace(is_auto=is_auto)
@@ -208,10 +211,10 @@ def test_patlak_vi_maps_use_qualified_dsc_prior(tmp_path: Path, model: str) -> N
         assert nib.load(outputs.out_model_selection).get_fdata().item() == 1
 
 
-def test_prepare_vp_constraint_reports_missing_nawm_before_nlls_policy(
+def test_prepare_vp_constraint_reports_missing_nawm_for_vi(
     tmp_path: Path,
 ) -> None:
-    """A missing nCBV anchor is the primary NLLS skip reason."""
+    """VI requesting a prior reports a missing nCBV anchor."""
     interface = ComputeDCEMaps(
         brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
         dsc_aif_qc={"detection_method": "atlas"},
@@ -219,7 +222,7 @@ def test_prepare_vp_constraint_reports_missing_nawm_before_nlls_policy(
     )
 
     result = interface._prepare_vp_constraint(
-        _prepared(populated=True, inference="nlls")
+        _prepared(populated=True, inference="vi")
     )
 
     assert result.vp_map is None

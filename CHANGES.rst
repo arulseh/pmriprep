@@ -1,3 +1,10 @@
+1.0.0rc6.dev27 (2026-11-06)
+===========================
+
+* FIX: Let DCE fitting run without waiting for DSC when the vp prior is
+  disabled or unsupported by the selected model/inference. Keep DSC inputs
+  connected to downstream vascular concordance.
+
 1.0.0rc6.dev26 (2026-11-06)
 ===========================
 

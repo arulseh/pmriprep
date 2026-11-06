@@ -2364,11 +2364,9 @@ def init_dce_preproc_wf(
     ])
 
     # ==========================================================================
-    # Node 7b: Resample DSC CBV to DCE space (for vp constraint)
+    # Node 7b: Resample DSC CBV for concordance and the optional vp prior
     # ==========================================================================
-    # DSC CBV (128x128x19, 1.88mm) is in DSC native space, but DCE processing
-    # operates in DCE native space (256x256x26, 0.94mm). Resample DSC CBV
-    # via: DSC → T1w (existing xfm) → DCE (existing xfm).
+    # Resample DSC CBV via DSC → T1w → DCE using the existing transforms.
     dce_dsc_resampling_wf = init_dce_dsc_resampling_wf()
     workflow.connect([
         (inputnode, dce_dsc_resampling_wf, [
@@ -2382,17 +2380,20 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, dce_dsc_resampling_wf, [
             ("outputnode.mean_img", "inputnode.dce_reference"),
         ]),
-        (dce_dsc_resampling_wf, pk_wf, [
-            ("outputnode.dsc_ncbv_file", "inputnode.dsc_ncbv_file"),
-        ]),
-        (inputnode, pk_wf, [
-            ("dsc_registration_qc", "inputnode.dsc_registration_qc"),
-            ("nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
-        ]),
-        (dce_registration_wf, pk_wf, [
-            ("outputnode.qc_metrics", "inputnode.dce_registration_qc"),
-        ]),
     ])
+    if config.uses_dsc_prior:
+        workflow.connect([
+            (dce_dsc_resampling_wf, pk_wf, [
+                ("outputnode.dsc_ncbv_file", "inputnode.dsc_ncbv_file"),
+            ]),
+            (inputnode, pk_wf, [
+                ("dsc_registration_qc", "inputnode.dsc_registration_qc"),
+                ("nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
+            ]),
+            (dce_registration_wf, pk_wf, [
+                ("outputnode.qc_metrics", "inputnode.dce_registration_qc"),
+            ]),
+        ])
 
     # ==========================================================================
     # Node 8: Transform NAWM mask to DCE space (for normalization)

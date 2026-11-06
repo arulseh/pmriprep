@@ -607,12 +607,6 @@
       "registration_qc"
     ],
     [
-      "dce_registration",
-      "qc_metrics",
-      "pk_modeling",
-      "dce_registration_qc"
-    ],
-    [
       "dce_reorient",
       "out_file",
       "dce_early_mean",
@@ -770,12 +764,6 @@
     ],
     [
       "inputnode",
-      "dsc_registration_qc",
-      "pk_modeling",
-      "dsc_registration_qc"
-    ],
-    [
-      "inputnode",
       "dsc_to_t1w_xfm",
       "resample_dsc_cbv",
       "dsc_to_t1w_xfm"
@@ -832,12 +820,6 @@
       "inputnode",
       "nawm_exclusion_reason",
       "dsc_dce_validation",
-      "nawm_exclusion_reason"
-    ],
-    [
-      "inputnode",
-      "nawm_exclusion_reason",
-      "pk_modeling",
       "nawm_exclusion_reason"
     ],
     [
@@ -1588,12 +1570,6 @@
       "resample_dsc_ncbv",
       "cbv_in_dce",
       "dsc_dce_xval_plot",
-      "dsc_ncbv_file"
-    ],
-    [
-      "resample_dsc_ncbv",
-      "cbv_in_dce",
-      "pk_modeling",
       "dsc_ncbv_file"
     ],
     [

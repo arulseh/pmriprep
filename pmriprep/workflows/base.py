@@ -2130,8 +2130,9 @@ def _connect_master_dsc_to_dce(
     subject_id: str,
     session_id: Optional[str],
 ) -> None:
-    """Route live or cached DSC CBV and QC state into DCE modeling."""
+    """Route DSC maps to concordance and, when requested, the fitting prior."""
     _log = logging.getLogger("pmriprep.workflows")
+    prior_requested = dce_config.uses_dsc_prior
 
     def _assign_dsc_dose() -> None:
         """Route DSC dose metadata only when DSC data are available."""
@@ -2143,7 +2144,7 @@ def _connect_master_dsc_to_dce(
     # Route DSC maps and QC to DCE prior preparation and concordance assessment.
     if dsc_wf is not None:
         _assign_dsc_dose()
-        # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
+        # Concordance uses DSC maps even when the fitting prior is disabled.
         if dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
             workflow.connect([
                 (dsc_wf, dce_wf, [
@@ -2153,6 +2154,11 @@ def _connect_master_dsc_to_dce(
                     ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                     ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                     ("outputnode.registration_qc", "inputnode.dsc_registration_qc"),
+                ]),
+            ])
+        if prior_requested:
+            workflow.connect([
+                (dsc_wf, dce_wf, [
                     # QC dictionaries accompany the spatial map inputs.
                     ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
                     ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
@@ -2169,10 +2175,6 @@ def _connect_master_dsc_to_dce(
 
     elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
         # DSC skipped but DCE needs CBV: look for previous DSC outputs
-        prior_requested = (
-            dce_config.inference != "nlls"
-            and dce_config.cbv_constraint_mode != "skip"
-        )
         prev_dsc = _find_previous_dsc_outputs(
             Path(output_dir), subject_id, session_id,
             work_dir=Path(work_dir) if work_dir else None,
@@ -2200,17 +2202,18 @@ def _connect_master_dsc_to_dce(
                 )
             if prev_dsc.get("registration_qc"):
                 dce_wf.inputs.inputnode.dsc_registration_qc = prev_dsc["registration_qc"]
-            if prev_dsc["aif_qc"]:
+            if prior_requested and prev_dsc["aif_qc"]:
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
             if prev_dsc.get("preload_qc"):
-                dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
+                if prior_requested:
+                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
                 preload_qc = prev_dsc["preload_qc"]
                 if isinstance(preload_qc, dict):
                     dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured = {
                         "user_specified": True,
                         "unknown": False,
                     }.get(preload_qc.get("preload_source", ""))
-            if prev_dsc.get("preprocessing_stats"):
+            if prior_requested and prev_dsc.get("preprocessing_stats"):
                 dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
         elif prior_requested:
             _log.warning(

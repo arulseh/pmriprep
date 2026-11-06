@@ -151,6 +151,8 @@ def _build_master(
     create_subtraction: bool = False,
     dsc_underlays: list[str] | None = None,
     dce_underlays: list[str] | None = None,
+    dce_inference: str = "nlls",
+    cbv_constraint_mode: str = "auto",
 ) -> Any:
     bids = _write_case(root, modalities, session_id)
     if external_t1:
@@ -163,6 +165,7 @@ def _build_master(
     else:
         dce_config = DCEConfig(
             no_t1=True, b1_method="none", underlays=dce_underlays or [],
+            inference=dce_inference, cbv_constraint_mode=cbv_constraint_mode,
         )
     return init_pmriprep_wf(
         bids_dir=bids,
@@ -327,6 +330,34 @@ def test_requested_subtraction_underlay_builds_anatomical_node(
     )
     node_names = {node.fullname for node in workflow._get_all_nodes()}
     assert any(name.endswith("create_subtraction") for name in node_names)
+
+
+@pytest.mark.parametrize(
+    ("inference", "mode", "needs_dsc"),
+    [("nlls", "auto", False), ("vi", "skip", False), ("vi", "auto", True)],
+)
+def test_dce_fitting_waits_for_dsc_only_when_prior_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    inference: str, mode: str, needs_dsc: bool,
+) -> None:
+    """Executed graph dependencies separate fitting from vascular concordance."""
+    import networkx as nx
+    from .test_workflow_graph_regression import flatten_collapsed_graph
+
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    workflow = _build_master(
+        tmp_path, modalities={"t1w_pre", "dsc", "dce"},
+        dce_inference=inference, cbv_constraint_mode=mode,
+    )
+    graph = flatten_collapsed_graph(workflow)
+    pk = next(node for node in graph if node.name == "pk_modeling")
+    dsc_fit = next(node for node in graph if node.name == "compute_maps")
+    assert nx.has_path(graph, dsc_fit, pk) is needs_dsc
+    validation = next(node for node in graph if node.name == "dsc_dce_validation")
+    assert nx.has_path(graph, dsc_fit, validation)
+    assert nx.has_path(graph, pk, validation)
+    if not needs_dsc:
+        assert not any(".dsc_wf." in node.fullname for node in nx.ancestors(graph, pk))
 
 
 def test_master_external_t1_drives_conversion_without_public_map(
@@ -775,7 +806,7 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes(model: str) 
         dsc_wf=dsc_wf,
         dce_wf=dce_wf,
         dsc_config=DSCConfig(dose=0.5, agent_standard_dose=0.1, preload=0.0),
-        dce_config=DCEConfig(model=model),
+        dce_config=DCEConfig(model=model, inference="vi"),
         output_dir=Path("out"),
         work_dir=Path("work"),
         subject_id="0001",
@@ -788,6 +819,8 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes(model: str) 
             ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
             ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
             ("outputnode.registration_qc", "inputnode.dsc_registration_qc"),
+        ]),
+        (dsc_wf, dce_wf, [
             ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
             ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
             (

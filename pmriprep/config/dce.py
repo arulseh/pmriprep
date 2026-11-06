@@ -155,6 +155,15 @@ class DCEConfig:
         """Whether this configuration requires VFA-derived T1 mapping."""
         return not self.no_t1 and self.t1_map_file is None
 
+    @property
+    def uses_dsc_prior(self) -> bool:
+        """Whether fitting can consume a DSC-derived vp prior."""
+        return (
+            self.inference == "vi"
+            and self.cbv_constraint_mode != "skip"
+            and self.model in ("extended_tofts", "2cxm", "auto", "patlak")
+        )
+
     def __post_init__(self) -> None:
         """Ensure numeric fields have correct types after initialization.
 

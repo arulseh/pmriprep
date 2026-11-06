@@ -1889,12 +1889,7 @@ class ComputeDCEMaps(BaseInterface):
                 candidate_names,
             )
 
-        if (
-            prepared.inference == "nlls"
-            and needs_vp_constraint
-            and dsc_inputs_present
-            and ncbv_available
-        ):
+        if prepared.inference == "nlls":
             return _DCEVPConstraint(
                 None,
                 ConstraintMode.SKIP,
