@@ -802,6 +802,7 @@ def _build_model_selection_meta(
     base: dict,
     qc_metrics: dict | None = None,
 ) -> dict:
+    """Describe automatic selection and the recorded run-level candidate pool."""
     from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
     out = dict(base)
@@ -809,9 +810,8 @@ def _build_model_selection_meta(
         "Per-voxel BIC model selection with a conservative complexity guard"
     )
     out["SelectionRule"] = (
-        "Choose the lowest-BIC candidate only when it improves on the "
-        "simplest converged candidate by at least 6 BIC units; otherwise "
-        "select the simplest candidate"
+        "Among eligible models, choose the lowest BIC. Retain a valid Patlak "
+        "fit unless another model has BIC at least 6 lower"
     )
     out["LabelEncoding"] = {
         "0": "unfitted",
@@ -834,6 +834,9 @@ def _build_model_selection_meta(
     if isinstance(qc_metrics, dict):
         pk_modeling = qc_metrics.get("pk_modeling")
         if isinstance(pk_modeling, dict):
+            candidates = pk_modeling.get("candidate_models")
+            if isinstance(candidates, list):
+                out["CandidateModels"] = list(candidates)
             regions = pk_modeling.get("model_selection_regions")
             if regions:
                 out["ModelDistribution"] = regions

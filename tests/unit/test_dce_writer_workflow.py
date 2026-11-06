@@ -38,7 +38,7 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="auto", inference="vi",
-        present_inputs={"delay_map", "fp_map", "ps_map"},
+        present_inputs={"delay_map", "fp_map", "ps_map", "model_selection_map"},
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
@@ -46,7 +46,9 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     inp.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
     inp.fp_map = inp.ps_map = inp.ktrans_map
     inp.delay_map = _write_nii(tmp_path / "delay.nii.gz", 2.5)
+    inp.model_selection_map = _write_nii(tmp_path / "model.nii.gz", 1.0)
     inp.qc_metrics = {"pk_modeling": {
+        "candidate_models": ["patlak", "extended_tofts"],
         "timing_diagnostics": {"frame_interval_seconds": 7.4, "sensitivity_refits_performed": False},
         "delay_correction": {"counts": {"selected": 64}},
     }}
@@ -76,6 +78,10 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert "boundary-selected model offset" in meta["BoundaryInterpretation"]
     assert "does not establish" in meta["BoundaryInterpretation"]
     assert not list(perf_out.glob("*Timing*.nii.gz"))
+    selection = json.loads(
+        (perf_out / "sub-01_ses-0001_desc-dceModelSelection_dseg.json").read_text()
+    )
+    assert selection["CandidateModels"] == ["patlak", "extended_tofts"]
     for name in ("Fp", "PS"):
         meta = json.loads((perf_out / f"sub-01_ses-0001_desc-dce{name}_stat.json").read_text())
         assert meta["TimingLimited"] is True and meta["FrameIntervalSeconds"] == 7.4

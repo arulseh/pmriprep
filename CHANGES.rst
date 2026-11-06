@@ -1,3 +1,9 @@
+1.0.0rc6.dev25 (2026-11-06)
+===========================
+
+* FIX: Correct the Patlak-relative BIC guard description and record the actual
+  candidate pool in model-selection sidecars.
+
 1.0.0rc6.dev24 (2026-11-06)
 ===========================
 
