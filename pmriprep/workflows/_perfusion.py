@@ -157,12 +157,12 @@ def validate_native_mask(
     reference_file: str | None = None,
     mask_label: str = "mask",
 ) -> str:
-    """Validate that a mask matches its native perfusion image grid.
+    """Validate a 3-D mask against its native perfusion image grid.
 
     Parameters
     ----------
     mask_file : str or None
-        Path to the mask NIfTI.
+        Path to a three-dimensional mask NIfTI.
     reference_file : str or None
         Path to the perfusion reference image.
     mask_label : str
@@ -176,7 +176,8 @@ def validate_native_mask(
     Raises
     ------
     ValueError
-        If the mask shape or affine does not match the reference grid.
+        If the mask is not 3-D, or its shape or affine does not match the
+        reference grid.
     """
     from nipype.interfaces.base import isdefined
 
@@ -185,7 +186,9 @@ def validate_native_mask(
 
     import nibabel as nib
     import numpy as np
+    from pmriprep.utils.lesion_stats import validate_mask_ndim
 
+    validate_mask_ndim(str(mask_file), source_name=mask_label)
     mask_img = nib.load(str(mask_file))
     ref_img = nib.load(str(reference_file))
     if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]

@@ -1,3 +1,9 @@
+1.0.0rc6.dev28 (2026-11-06)
+===========================
+
+* MNT: Repeat the 3-D mask check inside native mask validation for workflows
+  built outside the master pipeline.
+
 1.0.0rc6.dev27 (2026-11-06)
 ===========================
 
