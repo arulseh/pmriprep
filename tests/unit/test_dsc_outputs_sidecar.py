@@ -2,7 +2,7 @@
 
 Exercises the full DSC datasinks factory write path with a controlled
 ``qc_metrics`` dict and asserts the resulting JSON sidecars carry the
-expected ``PerfusionProcessing.AIF`` block plus the per-map ``AIFDependent`` flag.
+applicable ``PerfusionProcessing`` blocks plus the per-map ``AIFDependent`` flag.
 
 Also verifies the drift-guard coverage check: every map emitted by the
 factory must have a corresponding entry in ``DSC_AIF_MAP_KEYS``.
@@ -10,6 +10,7 @@ factory must have a corresponding entry in ``DSC_AIF_MAP_KEYS``.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import nibabel as nib
@@ -186,7 +187,8 @@ def test_partial_dsc_writer_publishes_independent_maps_and_geometry(
         assert meta["VoxelSize"] == [2., 3., 4.]
         assert meta["Sources"] == ["bids:raw:sub-test01/ses-01/perf/sub-test01_ses-01_dsc.nii.gz"]
         assert meta["AIFDependent"] is False
-        assert _aif_block(meta)["FailureDetail"] == "empty_user_mask"
+        assert "AIF" not in meta["PerfusionProcessing"]
+        assert "Deconvolution" not in meta["PerfusionProcessing"]
     brain_meta = _load_sidecar(derivatives, "desc-brain_mask")
     assert brain_meta["VoxelSize"] == [2., 3., 4.]
     for desc in ("dscMtt", "dscTmax", "dscRelCbf", "dscRelCbv", "dscRelAUCCbv", "dscNawmNormCbf"):
@@ -282,6 +284,48 @@ def test_svd_mtt_label_and_aif_source(method: str, detection: str, source: str) 
     )
     assert sidecar["MTTMethod"] == "full_bolus_auc_cbv_over_deconvolution_cbf"
     assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == source
+
+
+@pytest.mark.parametrize("method", ["oSVD", "cpi"])
+def test_dsc_processing_scoped_without_mutating_shared_base(method: str) -> None:
+    """Sibling maps retain their own dependencies and the run record is unchanged."""
+    from pmriprep.utils.provenance import enrich_provenance_from_qc
+
+    integration = {
+        "ncbv_integration_rule": "post_baseline_trapezoid",
+        "cbv_auc_bat_frame": 12,
+        "cbv_auc_end_frame": 120,
+    }
+    qc = {
+        "deconvolution": {"method": method, "deconvolution_performed": True, **integration},
+        "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8},
+        "preload": {"preload_correction_applied": True, "preload_source": "metadata"},
+    }
+    base = enrich_provenance_from_qc(
+        {"PerfusionProcessing": {"Deconvolution": {"method": method}}}, qc, "DSC",
+    )
+    original = deepcopy(base)
+    # Expected dependency groups follow the emitted estimators, including smoothing.
+    for key in DSC_AIF_MAP_KEYS:
+        sidecar = build_dsc_map_sidecar(
+            base=base, description=key, map_key=key, qc_metrics=qc,
+        )
+        perfusion = sidecar["PerfusionProcessing"]
+        assert ("AIF" in perfusion) == (key not in AIF_INDEPENDENT_MAPS)
+        assert ("Deconvolution" in perfusion) == (key in {
+            "cbf", "rel_cbf", "ncbf", "cbf_std", "cbv", "mtt", "tmax",
+            "arrival_delay", "parametric_r2", "fallback",
+        })
+        uses_auc = key in {"cbv_auc", "ncbv", "rel_cbv"} or (
+            key == "mtt" and method == "oSVD"
+        )
+        assert ("CBVIntegration" in perfusion) == uses_auc
+        if uses_auc:
+            assert perfusion["CBVIntegration"] == integration
+        assert not integration.keys() & perfusion.get("Deconvolution", {}).keys()
+        for field in ("LeakageCorrection", "PreloadDetection"):
+            assert (field in perfusion) == (key not in {"psr", "cnr", "tsnr", "ttp", "auc"})
+        assert base == original
 
 
 def test_cpi_mtt_sidecar_reports_residue_integral() -> None:
@@ -435,7 +479,7 @@ def test_cpi_timing_and_uncertainty_derivatives(
 
 
 @pytest.mark.parametrize("map_key,nested", [
-    ("cbv", True), ("ncbv", True), ("rel_cbv", True), ("mtt", True),
+    ("cbv", True), ("mtt", True),
     ("cbv", False),
 ])
 def test_cpi_volume_and_transit_sidecars_report_spacing_bound_occupancy(
@@ -467,7 +511,7 @@ def test_cpi_volume_and_transit_sidecars_report_spacing_bound_occupancy(
     )
 
 
-@pytest.mark.parametrize("map_key", ["cbf", "cbv_auc", "tmax"])
+@pytest.mark.parametrize("map_key", ["cbf", "cbv_auc", "ncbv", "rel_cbv", "tmax"])
 def test_cpi_spacing_bound_occupancy_omits_unrelated_sidecars(
     map_key: str,
 ) -> None:
@@ -698,10 +742,8 @@ class TestAifMapRegistryCoverage:
 # =============================================================================
 
 
-class TestWriterAifBlockPresentOnAllMaps:
-    """Running the full factory with a measured-AIF qc_metrics dict stamps
-    PerfusionProcessing.AIF and AIFDependent on every
-    emitted sidecar."""
+class TestWriterMapProcessing:
+    """The factory records AIF dependence and applicable processing per map."""
 
     def test_measured_maps_and_quantitative_metadata(
         self, minimal_inputs: dict, tmp_path: Path,
@@ -742,8 +784,11 @@ class TestWriterAifBlockPresentOnAllMaps:
         }
         for desc, (value, units, aif_dependent) in outputs.items():
             sidecar = _load_sidecar(derivatives, f"{desc}_stat")
-            assert _aif_block(sidecar)["Source"] == "measured", desc
-            assert _aif_block(sidecar)["QualityFlag"] == "pass", desc
+            if aif_dependent:
+                assert _aif_block(sidecar)["Source"] == "measured", desc
+                assert _aif_block(sidecar)["QualityFlag"] == "pass", desc
+            else:
+                assert "AIF" not in sidecar["PerfusionProcessing"], desc
             assert sidecar["AIFDependent"] is aif_dependent, desc
             assert sidecar["Units"] == units, desc
             image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
@@ -852,7 +897,11 @@ class TestWriterAifBlockPresentOnAllMaps:
         assert cbv["SignedEstimator"]["NegativeInBrainVoxelFraction"] == pytest.approx(0.07)
         for desc, value in (("dscRelAUCSm3Cbv", 2.5), ("dscNawmNormSm3Cbv", 1.25)):
             sidecar = _load_sidecar(derivatives, f"{desc}_stat")
-            assert _aif_block(sidecar)["Source"] == "external"
+            if desc == "dscRelAUCSm3Cbv":
+                assert _aif_block(sidecar)["Source"] == "external"
+            else:
+                assert "AIF" not in sidecar["PerfusionProcessing"]
+            assert "Deconvolution" not in sidecar["PerfusionProcessing"]
             assert sidecar["SmoothingSupport"] == "finite source voxels within the brain mask"
             assert sidecar["InvalidSupportPreserved"] is True
             signed = sidecar["SignedEstimator"]

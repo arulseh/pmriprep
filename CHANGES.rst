@@ -1,3 +1,10 @@
+1.0.0rc6.dev30 (2026-11-06)
+===========================
+
+* FIX: Limit DSC map sidecars to processing used by each estimator. Preserve
+  AUC-CBV integration windows separately from deconvolution, retain method-specific
+  MTT provenance, and omit unrelated AIF and leakage metadata.
+
 1.0.0rc6.dev29 (2026-11-06)
 ===========================
 

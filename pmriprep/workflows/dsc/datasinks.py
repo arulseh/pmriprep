@@ -6,9 +6,8 @@ figure filmstrips. QC summary fields live on
 ``desc-dscPreproc_dsc.json`` as flat ``QC*`` keys; per-map lesion stats
 live on the per-PK-map sidecars as ``LesionStats`` fragments.
 
-Per-output sidecar enrichment uses ``apply_aif_sidecar`` from
-``pmriprep.utils.aif_provenance`` to stamp every map with the
-detection-method block and the ``AIFDependent`` field.
+Per-output sidecar enrichment records ``AIFDependent`` and limits processing
+provenance to the operations used by each map.
 """
 from __future__ import annotations
 

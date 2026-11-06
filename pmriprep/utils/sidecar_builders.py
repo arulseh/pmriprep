@@ -1156,6 +1156,50 @@ def build_dsc_base_sidecar(
     return sidecar
 
 
+def _scope_dsc_processing(sidecar: Dict[str, Any], map_key: str) -> None:
+    """Keep only processing used by this DSC map, without changing its base.
+
+    Parameters
+    ----------
+    sidecar : dict
+        Map metadata to update in place.
+    map_key : str
+        Registered DSC map key; ``rel_cbv`` denotes smoothed AUC-CBV.
+    """
+    perfusion = sidecar.get("PerfusionProcessing")
+    if not isinstance(perfusion, dict):
+        return
+    perfusion = dict(perfusion)
+    deconvolution = perfusion.get("Deconvolution")
+    if isinstance(deconvolution, dict):
+        deconvolution = dict(deconvolution)
+        integration = {
+            key: deconvolution.pop(key)
+            for key in (
+                "ncbv_integration_rule", "cbv_auc_bat_frame", "cbv_auc_end_frame",
+            )
+            if key in deconvolution
+        }
+        uses_auc_cbv = map_key in {"cbv_auc", "ncbv", "rel_cbv"} or (
+            map_key == "mtt"
+            and sidecar.get("MTTMethod") == "full_bolus_auc_cbv_over_deconvolution_cbf"
+        )
+        if uses_auc_cbv and integration:
+            perfusion["CBVIntegration"] = integration
+        perfusion["Deconvolution"] = deconvolution
+    if map_key in {
+        "psr", "cnr", "tsnr", "ttp", "k2", "auc", "auc_corr",
+        "cbv_auc", "ncbv", "rel_cbv",
+    }:
+        perfusion.pop("Deconvolution", None)
+    if sidecar.get("AIFDependent") is False:
+        perfusion.pop("AIF", None)
+    if map_key in {"psr", "cnr", "tsnr", "ttp", "auc"}:
+        perfusion.pop("LeakageCorrection", None)
+        perfusion.pop("PreloadDetection", None)
+    sidecar["PerfusionProcessing"] = perfusion
+
+
 def build_dsc_map_sidecar(
     *,
     base: Dict[str, Any],
@@ -1165,7 +1209,7 @@ def build_dsc_map_sidecar(
     units: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Per-output DSC sidecar with description + units + AIF stamp + extras."""
+    """Build DSC map metadata with provenance limited to its calculation."""
     from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
     sidecar: Dict[str, Any] = {**base, "Description": description}
@@ -1255,7 +1299,7 @@ def build_dsc_map_sidecar(
             sidecar["FittedDelayAtBoundFractionDenominator"] = (
                 "accepted fitted-delay parametric fits"
             )
-    if map_key in {"cbv", "ncbv", "rel_cbv", "mtt"} and isinstance(
+    if map_key in {"cbv", "mtt"} and isinstance(
         qc_metrics, dict
     ):
         deconvolution = qc_metrics.get("deconvolution")
@@ -1275,6 +1319,7 @@ def build_dsc_map_sidecar(
                 "accepted CPI fits with inferred control-point positions"
             )
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
+    _scope_dsc_processing(sidecar, map_key)
     return sidecar
 
 
