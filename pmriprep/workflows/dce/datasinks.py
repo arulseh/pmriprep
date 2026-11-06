@@ -419,11 +419,21 @@ def _build_t1_map_meta(
     return out
 
 
+def _build_dce_qc_extra(qc_metrics: dict | None = None) -> dict:
+    """Attach the recorded acceptance definition to the binary QC mask."""
+    out: dict = {"Type": "ROI"}
+    policy = (qc_metrics or {}).get("pk_modeling", {}).get("qc_acceptance_policy")
+    if isinstance(policy, dict):
+        out["QCAcceptancePolicy"] = dict(policy)
+    return out
+
+
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
 ) -> dict:
     """Build inference-specific provenance for parameter-uncertainty maps."""
+    from pmriprep.utils.sidecar_builders import build_dce_delay_metadata
     from pmriprep.utils.uncertainty_provenance import (
         build_uncertainty_provenance,
     )
@@ -434,6 +444,7 @@ def _build_uncertainty_extra(
     extra = build_uncertainty_provenance(
         inference=str(estimation), modality="DCE"
     )
+    extra.update(build_dce_delay_metadata(qc_metrics))
     pk_qc = (qc_metrics or {}).get("pk_modeling") or {}
     if isinstance(pk_qc, dict):
         uncertainty_qc = pk_qc.get("parameter_uncertainty")
@@ -567,7 +578,10 @@ def _build_dce_pk_map_meta(
     ``CBVNegativeFraction`` land only on the map they apply to.
     """
     from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
-    from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar
+    from pmriprep.utils.sidecar_builders import (
+        build_dce_delay_metadata,
+        enrich_dce_pk_map_sidecar,
+    )
 
     out = dict(base)
     out["Description"] = description
@@ -588,17 +602,14 @@ def _build_dce_pk_map_meta(
             DelayConvention="Positive delay evaluates the plasma AIF at t-delay",
             MissingValue="NaN for background or unavailable selection; zero is a selected or fixed zero delay",
             BoundaryInterpretation=(
-                "With delay correction enabled, a value at maximum_seconds in DelayCorrection "
+                "With delay correction enabled, a value at MaximumDelaySeconds "
                 "is a boundary-selected model offset, often inherited from the neighbourhood "
                 "reference. It may reflect limited timing information or model mismatch and "
                 "does not establish a physiological delay or a lower bound on the true delay. "
                 "Individual free-optimum edge counts do not classify pooled references."
             ),
         )
-        if isinstance(qc_metrics, dict):
-            pk = qc_metrics.get("pk_modeling", {})
-            out["DelayCorrection"] = pk.get("delay_correction", {})
-            out["TimingDiagnostics"] = pk.get("timing_diagnostics", {})
+        out.update(build_dce_delay_metadata(qc_metrics, include_grid=True))
     if map_key in {"fp", "ps"} and isinstance(qc_metrics, dict):
         timing = qc_metrics.get("pk_modeling", {}).get("timing_diagnostics", {})
         interval = timing.get("acquisition_frame_interval_seconds", timing.get("frame_interval_seconds"))
@@ -630,8 +641,10 @@ def _build_dce_smoothed_meta(
     map_key: str = "",
     inference: str = "vi",
     config_dict: dict | None = None,
+    qc_metrics: dict | None = None,
 ) -> dict:
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
+    from pmriprep.utils.sidecar_builders import build_dce_delay_metadata
 
     out = dict(base)
     out["Description"] = description
@@ -646,7 +659,7 @@ def _build_dce_smoothed_meta(
     out["Note"] = "Use non-smoothed maps for quantitative ROI analysis"
     if units is not None:
         out["Units"] = units
-    if map_key not in {
+    if map_key.removesuffix("_sm") not in {
         "ktrans",
         "ve",
         "kep",
@@ -661,6 +674,8 @@ def _build_dce_smoothed_meta(
         "ps_uncertainty",
     }:
         out.pop("InputFunctionCompartment", None)
+    else:
+        out.update(build_dce_delay_metadata(qc_metrics))
     if map_key:
         stamp_aif_dependency(out, map_key, modality="DCE")
     if map_key == "ser":
@@ -1755,6 +1770,14 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
     if "qc_mask" in present:
+        qc_extra = pe.Node(
+            niu.Function(
+                input_names=["qc_metrics"], output_names=["extra"],
+                function=_build_dce_qc_extra,
+            ),
+            name="qc_mask_extra",
+        )
+        workflow.connect(inputnode, "qc_metrics", qc_extra, "qc_metrics")
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
             name="qc_mask", in_attr="qc_mask",
@@ -1768,7 +1791,7 @@ def init_dce_datasinks_wf(
                 "derivatives remain uncensored; regional summaries include "
                 "labelled passing-voxel companions."
             ),
-            units=None, extra={"Type": "ROI"},
+            units=None, extra=None, extra_node=qc_extra,
             bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
@@ -2180,7 +2203,7 @@ def init_dce_datasinks_wf(
         sm_meta = pe.MapNode(
             niu.Function(
                 input_names=["base", "description", "fwhm_mm", "units",
-                             "map_key", "inference", "config_dict"],
+                             "map_key", "inference", "config_dict", "qc_metrics"],
                 output_names=["meta_dict"],
                 function=_build_dce_smoothed_meta,
             ),
@@ -2190,7 +2213,8 @@ def init_dce_datasinks_wf(
         sm_meta.inputs.inference = inference
         workflow.connect([
             (base_perf, sm_meta, [("meta_dict", "base")]),
-            (inputnode, sm_meta, [("config_dict", "config_dict")]),
+            (inputnode, sm_meta, [("config_dict", "config_dict"),
+                                 ("qc_metrics", "qc_metrics")]),
             (splitter, sm_meta, [
                 ("descs", "description"),
                 ("fwhms", "fwhm_mm"),

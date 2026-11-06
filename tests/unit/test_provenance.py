@@ -114,7 +114,7 @@ class TestEnrichDCE:
         assert "AIF" in perf
         assert perf["AIF"]["DetectionLevel"] == "atlas"
         assert perf["AIF"]["NumberOfVoxelsSelected"] == 8
-        assert perf["AIF"]["ArterialCascadeTier"] == 1
+        assert "ArterialCascadeTier" not in perf["AIF"]
         assert perf["AIF"]["PeakScaling"]["RawPeak"] == pytest.approx(4.0)
         assert perf["AIF"]["PeakScaling"]["EmittedPeak"] == pytest.approx(8.0)
         assert (
@@ -125,43 +125,31 @@ class TestEnrichDCE:
         assert "PKModeling" in perf
         assert perf["PKModeling"]["model"] == "extended_tofts"
         assert perf["PKModeling"]["inference"] == "vi"
-        assert perf["PKModeling"]["IdentificationQC"] == qc["pk_modeling"]["identification_qc"]
-        assert perf["PKModeling"]["TimingDiagnostics"] == qc["pk_modeling"]["timing_diagnostics"]
-        assert (
-            perf["PKModeling"]["VoxelAccounting"]["optimizer_converged"][
-                "fraction_of_attempted"
-            ]
-            == pytest.approx(0.98)
-        )
-        assert (
-            perf["PKModeling"]["QCAcceptancePolicy"]["fit"][
-                "minimum_r_squared_exclusive"
-            ]
-            == 0.0
-        )
-        assert (
-            perf["PKModeling"]["QCComponentFailures"]["r_squared"] == 12
-        )
+        for key in ("IdentificationQC", "TimingDiagnostics", "VoxelAccounting",
+                    "QCAcceptancePolicy", "QCComponentFailures"):
+            assert key not in perf["PKModeling"]
+        assert qc["pk_modeling"]["identification_qc"]
         assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
-        assert perf["ModelSuitability"]["2CXM"]["status"] == "WARN"
+        assert "ModelSuitability" not in perf
 
     def test_signal_conversion_qc(self) -> None:
-        """Signal-conversion diagnostics are retained in map provenance."""
+        """Maps retain applied conversion settings without run-wide counters."""
         sidecar = _make_dce_sidecar()
         conversion_qc = {
             "t1_invalid_voxels": 12,
             "b1_missing_voxels": 34,
             "e1_bounded_fraction": 0.00125,
+            "t1_source": "assumed", "assumed_t1_ms": 1400.0,
         }
         result = enrich_provenance_from_qc(
             sidecar,
             {"signal_conversion": conversion_qc},
             "DCE",
         )
-        assert (
-            result["PerfusionProcessing"]["SignalConversionQC"]
-            == conversion_qc
-        )
+        assert result["PerfusionProcessing"]["SignalConversion"] == {
+            "t1_source": "assumed", "assumed_t1_ms": 1400.0,
+        }
+        assert "SignalConversionQC" not in result["PerfusionProcessing"]
 
     def test_population_aif(self) -> None:
         """Population AIF includes model name and dose factor."""
@@ -336,8 +324,7 @@ class TestEnrichDSC:
         assert "administered_dose_fraction" not in perf["PreloadDetection"]
 
         assert perf["AIF"]["DetectionLevel"] == "atlas_strict"
-        assert perf["AIF"]["FWHM"] == pytest.approx(4.0)
-        assert perf["AIF"]["FWHMUnits"] == "s"
+        assert "FWHM" not in perf["AIF"]
         assert perf["AIF"]["Source"] == "measured"
 
         assert perf["QuantificationMode"] == "relative"

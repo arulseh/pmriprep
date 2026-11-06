@@ -154,16 +154,14 @@ class TestPKMapKeyDriftGuard:
 
 
 class TestDelayCorrectionProvenance:
-    """DelayCorrection is read from either top-level or nested PK QC metrics."""
+    """The compact delay setting accepts top-level or nested PK QC metrics."""
 
     def test_surfaces_from_merged_pipeline_qc(self, base_sidecar, pk_qc_metrics):
         out = enrich_dce_pk_map_sidecar(
             dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
         )
-        bat = out["PerfusionProcessing"]["DelayCorrection"]
-        assert bat["enabled"] is True
-        assert bat["method"] == "local_profile"
-        assert bat["grid_step_seconds"] == 0.1
+        assert out["DelayCorrectionApplied"] is True
+        assert "DelayCorrection" not in out.get("PerfusionProcessing", {})
 
     def test_surfaces_from_flat_node_qc(self, base_sidecar):
         # Direct node-output shape: delay_correction at the top level.
@@ -171,7 +169,7 @@ class TestDelayCorrectionProvenance:
         out = enrich_dce_pk_map_sidecar(
             dict(base_sidecar), qc_metrics=flat, map_key="vp",
         )
-        assert out["PerfusionProcessing"]["DelayCorrection"]["enabled"] is False
+        assert out["DelayCorrectionApplied"] is False
 
     def test_absent_when_no_delay_correction(self, base_sidecar):
         out = enrich_dce_pk_map_sidecar(
@@ -179,7 +177,7 @@ class TestDelayCorrectionProvenance:
             qc_metrics={"pk_modeling": {"model": "auto"}},
             map_key="ktrans",
         )
-        assert "DelayCorrection" not in out.get("PerfusionProcessing", {})
+        assert "DelayCorrectionApplied" not in out
 
 
 class TestInferenceFallbackProvenance:

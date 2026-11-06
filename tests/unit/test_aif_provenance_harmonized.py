@@ -418,7 +418,7 @@ class TestPublicArtifactSchema:
         assert mask["SpatialSupportAvailable"] is False
         assert "No spatial AIF voxels" in mask["EmptyMaskMeaning"]
 
-    def test_curve_mask_and_map_use_identical_dsc_block(self, tmp_path) -> None:
+    def test_curve_and_mask_keep_detail_with_compact_dsc_map(self, tmp_path) -> None:
         from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
         from pmriprep.workflows.dsc.datasinks import _build_aif_mask_meta
 
@@ -447,7 +447,11 @@ class TestPublicArtifactSchema:
 
         expected = curve["PerfusionProcessing"]["AIF"]
         assert mask["PerfusionProcessing"]["AIF"] == expected
-        assert quantitative_map["PerfusionProcessing"]["AIF"] == expected
+        compact = quantitative_map["PerfusionProcessing"]["AIF"]
+        assert compact.items() <= expected.items()
+        assert compact["Source"] == expected["Source"]
+        assert compact["UsedAsCBVDenominator"] == expected["UsedAsCBVDenominator"]
+        assert "GammaFitRSquared" in expected and "GammaFitRSquared" not in compact
         assert mask["SpatialSupportAvailable"] is True
 
     @pytest.mark.parametrize("source", ["unavailable", "external"])

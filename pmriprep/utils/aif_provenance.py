@@ -1,8 +1,8 @@
 """AIF provenance stamping for derivative sidecars.
 
-The AIF timeseries, AIF mask, preprocessing, and quantitative-map sidecars
-share one ``PerfusionProcessing.AIF`` block. Quantitative maps additionally
-carry the per-map ``AIFDependent`` flag.
+The AIF timeseries and mask carry detailed ``PerfusionProcessing.AIF``
+provenance. Other derivatives carry a compact source/scaling summary;
+quantitative maps additionally carry the per-map ``AIFDependent`` flag.
 
 Supports both DSC and DCE modalities via a ``modality`` parameter.
 """
@@ -172,6 +172,8 @@ def build_peak_scaling_provenance(aif_qc: dict[str, Any]) -> dict[str, Any]:
 def build_aif_provenance_block(
     qc_metrics: dict[str, Any] | None,
     modality: Modality = "DSC",
+    *,
+    compact: bool = False,
 ) -> dict[str, Any]:
     """Assemble the ``PerfusionProcessing.AIF`` sub-block from AIF QC.
 
@@ -179,6 +181,7 @@ def build_aif_provenance_block(
     (``{"aif_detection": {...}, ...}``) or the flat interface
     ``qc_metrics`` output (``{"detection_method": ..., ...}``).
     Returns an empty dict when AIF QC is absent.
+    With ``compact=True``, omit search diagnostics and curve-shape summaries.
 
     For DSC, ``UsedAsCBVDenominator`` indicates whether the selected curve
     supplies the AUC-CBV denominator.
@@ -364,6 +367,16 @@ def build_aif_provenance_block(
     if source == "external":
         block["ExternalAIFVerified"] = False
 
+    if compact:
+        retained = {
+            "Source", "DetectionLevel", "QualityFlag", "Confidence",
+            "ConfidenceReason", "SupportVoxels", "NumberOfVoxelsSelected",
+            "Hematocrit", "PeakScaling", "UncertaintyInflationFactor",
+            "PopulationModel", "PopulationFallbackReason", "ExternalAIFVerified",
+            "UsedAsCBVDenominator", "DoseFactor", "DetectionStatus",
+            "FailureReason", "FailureDetail",
+        }
+        block = {key: value for key, value in block.items() if key in retained}
     return block
 
 
@@ -385,7 +398,7 @@ def apply_aif_sidecar(
     qc_metrics: dict[str, Any] | None,
     modality: Modality = "DSC",
 ) -> None:
-    """Stamp AIF dependence and merge the provenance block.
+    """Stamp AIF dependence and merge compact source/scaling provenance.
 
     Stamps ``AIFDependent`` on ``sidecar`` and
     merges the ``PerfusionProcessing.AIF`` provenance block.
@@ -410,7 +423,11 @@ def apply_aif_sidecar(
             f"{module_name}."
         )
     sidecar["AIFDependent"] = map_key not in independent_maps
-    apply_aif_provenance_block(sidecar, qc_metrics, modality)
+    block = build_aif_provenance_block(qc_metrics, modality, compact=True)
+    if block:
+        perf = dict(sidecar.get("PerfusionProcessing", {}))
+        perf["AIF"] = block
+        sidecar["PerfusionProcessing"] = perf
 
 
 def stamp_aif_dependency(

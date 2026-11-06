@@ -1002,6 +1002,41 @@ def _dce_spatial_reference(
     )
 
 
+def build_dce_delay_metadata(
+    qc_metrics: Optional[Dict[str, Any]], *, include_grid: bool = False,
+) -> Dict[str, Any]:
+    """Extract compact delay metadata from recorded DCE QC.
+
+    Parameters
+    ----------
+    qc_metrics : dict or None
+        Node QC or merged pipeline QC containing the executed delay settings.
+    include_grid : bool, optional
+        Include search limits and spacing for the selected-delay sidecar.
+
+    Returns
+    -------
+    dict
+        Recorded settings only; run-level diagnostics remain in PipelineQC.
+    """
+    qc = qc_metrics or {}
+    delay = qc.get("delay_correction") or qc.get("pk_modeling", {}).get("delay_correction")
+    if not isinstance(delay, dict):
+        return {}
+    metadata: Dict[str, Any] = {}
+    if isinstance(delay.get("enabled"), bool):
+        metadata["DelayCorrectionApplied"] = delay["enabled"]
+    if include_grid:
+        for source, target in (
+            ("maximum_seconds", "MaximumDelaySeconds"),
+            ("grid_step_seconds", "DelayStepSeconds"),
+        ):
+            if delay.get(source) is not None:
+                metadata[target] = delay[source]
+        metadata["MinimumDelaySeconds"] = 0.0
+    return metadata
+
+
 def build_dce_base_sidecar(
     *,
     source_paths: Sequence[PathLike],
@@ -1398,8 +1433,8 @@ def build_aif_timeseries_sidecar(
 
     Per BIDS-Common-Derivatives, every data file should carry its own
     sidecar describing how it was derived. This builder emits AIF
-    detection metadata in the canonical ``PerfusionProcessing.AIF`` block
-    shared by AIF masks and quantitative-map sidecars.
+    detection metadata in the full ``PerfusionProcessing.AIF`` block,
+    also used by AIF masks. Quantitative maps carry a compact summary.
 
     Parameters
     ----------
@@ -1943,10 +1978,7 @@ def enrich_dce_pk_map_sidecar(
         from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
         apply_aif_sidecar(sidecar, map_key, qc_metrics, modality="DCE")
-    # Accept direct node QC or the same record nested in pipeline QC.
-    delay = qc_metrics.get("delay_correction") or qc_metrics.get("pk_modeling", {}).get("delay_correction")
-    if isinstance(delay, dict):
-        sidecar.setdefault("PerfusionProcessing", {})["DelayCorrection"] = dict(delay)
+    sidecar.update(build_dce_delay_metadata(qc_metrics))
     pk_modeling = qc_metrics.get("pk_modeling")
     fallback = qc_metrics.get("inference_fallback")
     if fallback is None and isinstance(pk_modeling, dict):

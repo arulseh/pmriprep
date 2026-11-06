@@ -1,3 +1,10 @@
+1.0.0rc6.dev26 (2026-11-06)
+===========================
+
+* CHG: Centralize DCE run diagnostics in preprocessed-series QC, keep the QC
+  definition with its mask and delay limits with the delay map, and use compact
+  AIF provenance on DSC/DCE maps.
+
 1.0.0rc6.dev25 (2026-11-06)
 ===========================
 

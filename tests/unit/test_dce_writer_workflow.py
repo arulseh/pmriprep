@@ -28,7 +28,7 @@ def minimal_bids(tmp_path: Path) -> tuple[Path, str]:
 
 
 def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> None:
-    """The selected delay reaches a native derivative with its NLLS basis."""
+    """Delay metadata stays scoped to the run anchor and relevant PK maps."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -38,7 +38,11 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
         pk_model="auto", inference="vi",
-        present_inputs={"delay_map", "fp_map", "ps_map", "model_selection_map"},
+        present_inputs={
+            "delay_map", "fp_map", "ps_map", "model_selection_map",
+            "dce_moco", "ser_map", "ktrans_uncertainty", "qc_mask", "aif_mask",
+        },
+        has_smoothing=True,
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
@@ -47,11 +51,32 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     inp.fp_map = inp.ps_map = inp.ktrans_map
     inp.delay_map = _write_nii(tmp_path / "delay.nii.gz", 2.5)
     inp.model_selection_map = _write_nii(tmp_path / "model.nii.gz", 1.0)
+    inp.dce_moco = inp.ser_map = inp.ktrans_map
+    inp.ktrans_uncertainty = inp.ktrans_map
+    inp.qc_mask = inp.aif_mask = inp.ktrans_map
+    inp.smooth_pk_maps = {"ktrans": inp.ktrans_map}
+    inp.smooth_model_free_maps = {"ser": inp.ser_map}
+    inp.provenance_dict = {"PerfusionProcessing": {"Modality": "DCE"}}
     inp.qc_metrics = {"pk_modeling": {
         "candidate_models": ["patlak", "extended_tofts"],
+        "qc_acceptance_policy": {"fit": {"minimum_r_squared_exclusive": 0.0}},
+        "identification_qc": {"by_model": {"patlak": {"evaluated": 64}}},
+        "voxel_accounting": {"attempted": {"count": 64}},
+        "qc_component_failures": {"r_squared": 2},
         "timing_diagnostics": {"frame_interval_seconds": 7.4, "sensitivity_refits_performed": False},
-        "delay_correction": {"counts": {"selected": 64}},
+        "delay_correction": {
+            "enabled": True, "maximum_seconds": 12.0, "grid_step_seconds": 0.1,
+            "counts": {"selected": 64},
+        },
     }}
+    inp.qc_metrics = {**inp.qc_metrics,
+        "aif_detection": {
+            "detection_method": "atlas", "atlas_search_support_voxels": 45,
+            "aif_confidence": "standard", "hematocrit": 0.42,
+        },
+        "signal_conversion": {"t1_invalid_voxels": 3, "t1_source": "assumed"},
+        "model_suitability": {"2cxm": {"status": "WARN"}},
+    }
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
@@ -66,18 +91,41 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert "Resolution" not in sidecar
     assert isinstance(sidecar["VoxelSize"], list)
     assert sidecar["InputFunctionCompartment"] == "plasma"
+    assert sidecar["DelayCorrectionApplied"] is True
     path = perf_out / "sub-01_ses-0001_desc-dceDelay_stat.nii.gz"
     np.testing.assert_array_equal(nib.load(path).get_fdata(), 2.5)
     meta = json.loads(path.with_suffix("").with_suffix(".json").read_text())
     assert meta["Units"] == "s" and not meta["SpatialSmoothingApplied"]
     assert meta["EstimationBasis"] == "selected_nlls"
     assert meta["AIFDependent"] is True
-    assert meta["TimingDiagnostics"]["sensitivity_refits_performed"] is False
-    assert meta["DelayCorrection"]["counts"]["selected"] == 64
+    assert meta["DelayCorrectionApplied"] is True
+    assert meta["MinimumDelaySeconds"] == 0.0
+    assert meta["MaximumDelaySeconds"] == 12.0
+    assert meta["DelayStepSeconds"] == 0.1
     assert "NaN" in meta["MissingValue"]
     assert "boundary-selected model offset" in meta["BoundaryInterpretation"]
     assert "does not establish" in meta["BoundaryInterpretation"]
     assert not list(perf_out.glob("*Timing*.nii.gz"))
+    anchor = json.loads((perf_out / "sub-01_ses-0001_desc-dcePreproc_dce.json").read_text())
+    assert anchor["PipelineQC"] == inp.qc_metrics
+    qc_meta = json.loads((perf_out / "sub-01_ses-0001_desc-dceQc_mask.json").read_text())
+    assert qc_meta["QCAcceptancePolicy"] == inp.qc_metrics["pk_modeling"]["qc_acceptance_policy"]
+    aif_meta = json.loads((perf_out / "sub-01_ses-0001_desc-dceAif_mask.json").read_text())
+    assert aif_meta["PerfusionProcessing"]["AIF"]["AtlasSearchSupportVoxels"] == 45
+    for path in perf_out.glob("*.json"):
+        metadata = json.loads(path.read_text())
+        assert "TimingDiagnostics" not in json.dumps(metadata)
+        assert '"DelayCorrection"' not in json.dumps(metadata)
+        perf = metadata.get("PerfusionProcessing", {})
+        for key in ("VoxelAccounting", "IdentificationQC", "QCComponentFailures", "QCAcceptancePolicy"):
+            assert key not in perf.get("PKModeling", {})
+        assert "SignalConversionQC" not in perf and "ModelSuitability" not in perf
+        if "SER" in path.name:
+            assert "DelayCorrectionApplied" not in metadata
+        if "Ktrans" in path.name:
+            assert metadata["DelayCorrectionApplied"] is True
+            assert perf["AIF"]["Source"] == "measured"
+            assert "AtlasSearchSupportVoxels" not in perf["AIF"]
     selection = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dceModelSelection_dseg.json").read_text()
     )
@@ -86,6 +134,18 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
         meta = json.loads((perf_out / f"sub-01_ses-0001_desc-dce{name}_stat.json").read_text())
         assert meta["TimingLimited"] is True and meta["FrameIntervalSeconds"] == 7.4
     from pmriprep.workflows.dce.datasinks import _build_dce_pk_map_meta
+    for enabled, step, maximum in ((False, None, 0.0), (True, 1.0, 12.0)):
+        meta = _build_dce_pk_map_meta({}, "Delay", map_key="delay", qc_metrics={
+            "pk_modeling": {"delay_correction": {
+                "enabled": enabled, "grid_step_seconds": step, "maximum_seconds": maximum,
+            }},
+        })
+        assert meta["DelayCorrectionApplied"] is enabled
+        assert meta["MaximumDelaySeconds"] == maximum
+        if step is None:
+            assert "DelayStepSeconds" not in meta
+        else:
+            assert meta["DelayStepSeconds"] == step
     for interval in (2.0, 2.000001):
         meta = _build_dce_pk_map_meta({}, "Flow", map_key="fp", qc_metrics={
             "pk_modeling": {"timing_diagnostics": {
@@ -350,8 +410,8 @@ def test_uncertainty_sidecar_records_collected_qc(
     qc_sidecar = next((out / "pmriprep").rglob("*desc-dceQc_mask.json"))
     qc_meta = json.loads(qc_sidecar.read_text())
     assert identification_policy()["description"] in qc_meta["Description"]
-    assert qc_meta["PerfusionProcessing"]["PKModeling"]["QCAcceptancePolicy"] == fit_qc["qc_acceptance_policy"]
-    assert qc_meta["PerfusionProcessing"]["PKModeling"]["IdentificationQC"] == fit_qc["identification_qc"]
+    assert qc_meta["QCAcceptancePolicy"] == fit_qc["qc_acceptance_policy"]
+    assert "IdentificationQC" not in qc_meta.get("PerfusionProcessing", {}).get("PKModeling", {})
 
     desc = "dceStandardErrorKtrans" if inference == "nlls" else "dcePosteriorSDKtrans"
     sidecar = next(

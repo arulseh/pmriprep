@@ -308,8 +308,15 @@ def _enrich_dce(
             perf["T1Mapping"] = t1_block
 
     conversion = qc.get("signal_conversion")
-    if conversion and isinstance(conversion, dict):
-        perf["SignalConversionQC"] = dict(conversion)
+    if isinstance(conversion, dict):
+        settings = {
+            key: conversion[key] for key in (
+                "t1_source", "assumed_t1_ms", "assumed_t1_field_strength_t",
+                "assumed_t1_policy", "b1_correction_applied",
+            ) if key in conversion
+        }
+        if settings:
+            perf["SignalConversion"] = settings
 
     # AIF detection
     aif = qc.get("aif_detection")
@@ -328,6 +335,7 @@ def _enrich_dce(
         aif_block = build_aif_provenance_block(
             canonical_aif,
             modality="DCE",
+            compact=True,
         )
         if aif_block:
             perf["AIF"] = aif_block
@@ -400,27 +408,12 @@ def _enrich_dce(
                 if dist:
                     selection["ModelDistribution"] = dist
             pk_block["model_selection"] = selection
-        if isinstance(pk.get("voxel_accounting"), dict):
-            pk_block["VoxelAccounting"] = dict(pk["voxel_accounting"])
-        if isinstance(pk.get("qc_acceptance_policy"), dict):
-            pk_block["QCAcceptancePolicy"] = dict(pk["qc_acceptance_policy"])
-        if isinstance(pk.get("qc_component_failures"), dict):
-            pk_block["QCComponentFailures"] = dict(pk["qc_component_failures"])
-        if isinstance(pk.get("identification_qc"), dict):
-            pk_block["IdentificationQC"] = dict(pk["identification_qc"])
-        if isinstance(pk.get("timing_diagnostics"), dict):
-            pk_block["TimingDiagnostics"] = dict(pk["timing_diagnostics"])
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
         if "qc_voxel_rsquared" in pk:
             pk_block["voxel_rsquared"] = _safe_float(pk["qc_voxel_rsquared"])
         if pk_block:
             perf["PKModeling"] = pk_block
-    suitability = qc.get("model_suitability")
-    if isinstance(suitability, dict):
-        two_cxm = suitability.get("2cxm")
-        if isinstance(two_cxm, dict):
-            perf["ModelSuitability"] = {"2CXM": dict(two_cxm)}
 
 
 def _enrich_dsc(
@@ -527,7 +520,7 @@ def _enrich_dsc(
     if aif and isinstance(aif, dict):
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
-        aif_block = build_aif_provenance_block(aif, modality="DSC")
+        aif_block = build_aif_provenance_block(aif, modality="DSC", compact=True)
         if aif_block:
             perf["AIF"] = aif_block
 
