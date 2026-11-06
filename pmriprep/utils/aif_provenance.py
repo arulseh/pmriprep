@@ -43,7 +43,7 @@ DSC_AIF_MAP_KEYS: Final[frozenset[str]] = frozenset({
 #: DCE keys whose computation does not consume the AIF.
 DCE_AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "iauc60", "iauc90", "iauc120",
-    "peak_enhancement", "ttp", "ser",
+    "peak_enhancement", "ttp", "ser", "tsnr", "mean",
 })
 
 
@@ -57,11 +57,11 @@ DCE_AIF_MAP_KEYS: Final[frozenset[str]] = frozenset({
     # IAUC (tissue concentration integral, AIF-independent)
     "iauc60", "iauc90", "iauc120",
     # Model-free (AIF-independent)
-    "peak_enhancement", "ttp", "ser",
+    "peak_enhancement", "ttp", "ser", "tsnr", "mean",
     # Smoothed PK maps
     "ktrans_sm", "ve_sm", "kep_sm", "vp_sm", "fp_sm", "ps_sm",
-    # Model selection diagnostics (AIF shapes forward-model residuals)
-    "model_selection", "delta_bic",
+    # Fit/model selection diagnostics (AIF shapes forward-model residuals)
+    "model_selection", "delta_bic", "r2",
 })
 
 

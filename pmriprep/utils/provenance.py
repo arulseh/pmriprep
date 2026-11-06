@@ -409,8 +409,6 @@ def _enrich_dce(
             pk_block["model_selection"] = selection
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
-        if "qc_voxel_rsquared" in pk:
-            pk_block["voxel_rsquared"] = _safe_float(pk["qc_voxel_rsquared"])
         if pk_block:
             perf["PKModeling"] = pk_block
 

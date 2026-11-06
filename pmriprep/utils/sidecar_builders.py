@@ -1960,6 +1960,38 @@ def enrich_dce_preproc_sidecar(
     return sidecar
 
 
+def scope_dce_map_processing(sidecar: Dict[str, Any], map_key: str) -> None:
+    """Restrict a DCE map's processing metadata to its inputs.
+
+    Parameters
+    ----------
+    sidecar : dict
+        Map sidecar to update without mutating its shared processing base.
+    map_key : str
+        Registered DCE map key, optionally carrying the smoothing suffix.
+    """
+    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+
+    key = map_key.removesuffix("_sm")
+    stamp_aif_dependency(sidecar, key, modality="DCE")
+    if sidecar.get("AIFDependent") is not False:
+        return
+    sidecar.pop("InputFunctionCompartment", None)
+    perfusion = sidecar.get("PerfusionProcessing")
+    if not isinstance(perfusion, dict):
+        return
+    perfusion = dict(perfusion)
+    for field in (
+        "AIF", "Hematocrit", "AIFUnits", "BloodT1Reference", "PKModeling",
+        "InferenceFallback",
+    ):
+        perfusion.pop(field, None)
+    if key in {"peak_enhancement", "ser", "tsnr", "mean"}:
+        for field in ("T1Mapping", "SignalConversion", "Relaxivity"):
+            perfusion.pop(field, None)
+    sidecar["PerfusionProcessing"] = perfusion
+
+
 def enrich_dce_pk_map_sidecar(
     sidecar: Dict[str, Any],
     *,

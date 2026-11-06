@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "1.0.0rc6.dev30"
+version = "1.0.0rc6.dev31"
 description = "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
 readme = "README.md"
 license = "Apache-2.0 AND CC0-1.0 AND BSD-3-Clause"

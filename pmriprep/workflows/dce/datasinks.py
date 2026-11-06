@@ -254,7 +254,7 @@ def _build_dce_meta(
     Used for model-free maps and NAWM-normalized maps that aren't routed
     through ``_build_dce_pk_map_meta``.
     """
-    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+    from pmriprep.utils.sidecar_builders import scope_dce_map_processing
     from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
 
     out = dict(base)
@@ -264,7 +264,7 @@ def _build_dce_meta(
     if extra:
         out.update(extra)
     if map_key:
-        stamp_aif_dependency(out, map_key, modality="DCE")
+        scope_dce_map_processing(out, map_key)
         fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)
         if fragment:
             out["LesionStats"] = fragment
@@ -538,6 +538,8 @@ def _build_dce_mean_meta(
     motion_correct: bool = True,
 ) -> dict:
     """Build metadata for the temporal mean across all acquired DCE volumes."""
+    from pmriprep.utils.sidecar_builders import scope_dce_map_processing
+
     out = dict(base)
     out.update({
         "Description": "Temporal mean across all acquired DCE volumes",
@@ -556,6 +558,7 @@ def _build_dce_mean_meta(
         )
         if baseline_frames is not None:
             out["BaselineFrames"] = int(baseline_frames)
+    scope_dce_map_processing(out, "mean")
     return out
 
 
@@ -643,7 +646,7 @@ def _build_dce_smoothed_meta(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
 ) -> dict:
-    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+    from pmriprep.utils.sidecar_builders import scope_dce_map_processing
     from pmriprep.utils.sidecar_builders import build_dce_delay_metadata
 
     out = dict(base)
@@ -677,7 +680,7 @@ def _build_dce_smoothed_meta(
     else:
         out.update(build_dce_delay_metadata(qc_metrics))
     if map_key:
-        stamp_aif_dependency(out, map_key, modality="DCE")
+        scope_dce_map_processing(out, map_key)
     if map_key == "ser":
         dce = config_dict or {}
         out.update({
@@ -718,6 +721,7 @@ def _build_dce_underlay_meta(
     )
 
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if units is not None:
         out["Units"] = units
@@ -738,6 +742,37 @@ def _build_dce_underlay_meta(
     return out
 
 
+def _build_dce_image_mask_meta(
+    base: dict,
+    description: str,
+    units: str | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """Build metadata for a mask derived directly from the DCE image.
+
+    Parameters
+    ----------
+    base : dict
+        Shared spatial and source metadata.
+    description : str
+        Mask description.
+    units : str, optional
+        Units, when applicable.
+    extra : dict, optional
+        Mask-specific metadata.
+
+    Returns
+    -------
+    dict
+        Mask metadata without perfusion-model processing claims.
+    """
+    from pmriprep.workflows.dce.datasinks import _build_dce_meta
+
+    out = _build_dce_meta(base, description, units, extra)
+    out.pop("PerfusionProcessing", None)
+    return out
+
+
 def _build_dce_native_mask_meta(
     base: dict,
     description: str,
@@ -751,6 +786,7 @@ def _build_dce_native_mask_meta(
     from pmriprep.utils.sidecar_builders import build_sources_list
 
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if units is not None:
         out["Units"] = units
@@ -783,6 +819,7 @@ def _build_dce_transformed_mask_meta(
     from pmriprep.utils.sidecar_builders import build_sources_list
 
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if units is not None:
         out["Units"] = units
@@ -1448,7 +1485,7 @@ def _add_anat_mask_sink(
                 if is_structural
                 else _build_dce_native_mask_meta
                 if is_native_user_mask
-                else _build_dce_meta
+                else _build_dce_image_mask_meta
             ),
         ),
         name=f"{name}_meta",
@@ -1756,7 +1793,7 @@ def init_dce_datasinks_wf(
     if "tsnr_map" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
-            name="tsnr_map", in_attr="tsnr_map",
+            name="tsnr_map", in_attr="tsnr_map", map_key="tsnr",
             desc_value="dce", suffix="tsnr",
             description="Baseline temporal signal-to-noise ratio", units="1",
             extra={
@@ -1798,7 +1835,7 @@ def init_dce_datasinks_wf(
     if "r2_map" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
-            name="r2_map", in_attr="r2_map",
+            name="r2_map", in_attr="r2_map", map_key="r2",
             desc_value="dce", suffix="Rsquared",
             description=(
                 "Coefficient of determination for the per-voxel PK fit"

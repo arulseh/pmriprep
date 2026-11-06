@@ -135,7 +135,6 @@ class TestEnrichDCE:
                     "QCAcceptancePolicy", "QCComponentFailures"):
             assert key not in perf["PKModeling"]
         assert qc["pk_modeling"]["identification_qc"]
-        assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
         assert "ModelSuitability" not in perf
 
     def test_signal_conversion_qc(self) -> None:

@@ -216,3 +216,64 @@ class TestEmptyInputs:
             lesion_fragment=fragment,
         )
         assert out["LesionStats"] == fragment
+
+
+def test_model_free_processing_preserves_conversion_and_shared_base() -> None:
+    """Model-free estimators keep their own inputs in native and smoothed outputs."""
+    from copy import deepcopy
+
+    from pmriprep.workflows.dce.datasinks import (
+        _build_dce_mean_meta, _build_dce_meta, _build_dce_smoothed_meta,
+    )
+
+    base = {
+        "InputFunctionCompartment": "plasma",
+        "PerfusionProcessing": {name: {"source": "recorded"} for name in (
+            "AIF", "Hematocrit", "AIFUnits", "BloodT1Reference", "PKModeling",
+            "T1Mapping", "SignalConversion", "Relaxivity", "ScannerMetadata",
+        )},
+    }
+    original = deepcopy(base)
+    for key in ("iauc60", "ttp", "peak_enhancement", "ser", "tsnr", "r2"):
+        for builder in (
+            lambda: _build_dce_meta(base, key, map_key=key),
+            lambda: _build_dce_smoothed_meta(base, key, 3, map_key=key),
+        ):
+            result = builder()
+            perf = result["PerfusionProcessing"]
+            assert result["AIFDependent"] is (key == "r2")
+            assert ("PKModeling" in perf) == (key == "r2")
+            assert ("AIF" in perf) == (key == "r2")
+            assert ("SignalConversion" in perf) == (key in {"iauc60", "ttp", "r2"})
+            assert ("Hematocrit" in perf) == (key == "r2")
+            assert base == original
+    mean = _build_dce_mean_meta(base)
+    assert mean["AIFDependent"] is False
+    assert mean["PerfusionProcessing"] == {"ScannerMetadata": {"source": "recorded"}}
+    assert base == original
+
+
+def test_dce_image_mask_metadata_route(tmp_path) -> None:
+    """The actual brain-mask metadata node preserves geometry, not PK settings."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    workflow = init_dce_datasinks_wf(
+        output_dir=str(tmp_path / 'out'), bids_dir=str(tmp_path),
+        subject_id='test', session_id='01', present_inputs={'brain_mask'},
+        pk_model='auto', inference='nlls',
+    )
+    node = workflow.get_node('brain_mask_dce_meta')
+    node.base_dir = str(tmp_path / 'work')
+    base = {
+        'Sources': ['bids:raw:sub-test/perf/sub-test_dce.nii.gz'],
+        'VoxelSize': [1.0, 1.0, 3.0],
+        'PerfusionProcessing': {'ContrastDose': {'dose_multiplier': 1.0}},
+    }
+    node.inputs.base = base
+    result = node.run().outputs.meta_dict
+    assert result['Type'] == 'Brain'
+    assert result['SkullStripped'] is True
+    assert result['Sources'] == base['Sources']
+    assert result['VoxelSize'] == base['VoxelSize']
+    assert 'PerfusionProcessing' not in result
+    assert base['PerfusionProcessing']

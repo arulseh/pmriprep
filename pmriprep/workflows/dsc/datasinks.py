@@ -380,6 +380,7 @@ def _build_minimal_meta(
     segmentation_labels: dict[str, str] | None = None,
 ) -> dict:
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if skull_stripped:
         out["SkullStripped"] = True
@@ -404,6 +405,7 @@ def _build_native_mask_meta(
     from pmriprep.utils.sidecar_builders import build_sources_list
 
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if skull_stripped:
         out["SkullStripped"] = True
@@ -469,6 +471,7 @@ def _build_underlay_meta(
     )
 
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if skull_stripped:
         out["SkullStripped"] = True
@@ -507,6 +510,7 @@ def _build_transformed_mask_meta(
     from pmriprep.utils.sidecar_builders import build_sources_list
 
     out = dict(base)
+    out.pop("PerfusionProcessing", None)
     out["Description"] = description
     if skull_stripped:
         out["SkullStripped"] = True

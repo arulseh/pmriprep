@@ -1,3 +1,10 @@
+1.0.0rc6.dev31 (2026-11-06)
+===========================
+
+* FIX: Scope DCE map provenance to its estimator, omit representative-voxel
+  R-squared from map summaries, and remove perfusion-processing claims from
+  registered anatomical images and masks.
+
 1.0.0rc6.dev30 (2026-11-06)
 ===========================
 
