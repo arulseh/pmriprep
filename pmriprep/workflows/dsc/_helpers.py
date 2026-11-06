@@ -891,6 +891,7 @@ def _normalize_cbv(
     subject_id: str,
     session_id: str,
     nawm_mask_file: str | None = None,
+    brain_mask_file: str | None = None,
 ) -> tuple[str, float | None]:
     """Normalize CBV to NAWM median.
 
@@ -909,6 +910,8 @@ def _normalize_cbv(
         Session ID for auto-detection.
     nawm_mask_file : str, optional
         Path to NAWM mask NIfTI (required for normalization).
+    brain_mask_file : str, optional
+        DSC analysis support used to restrict NAWM, without whole-brain fallback.
 
     Returns
     -------
@@ -951,6 +954,7 @@ def _normalize_cbv(
         subject=subject_id,
         session=session_id,
         brain_mask_file=None,
+        analysis_mask_file=brain_mask_file,
     )
 
     if not math.isfinite(norm_factor) or norm_factor <= 0.0:
@@ -965,6 +969,7 @@ def _normalize_cbf(
     subject_id: str = "",
     session_id: str = "",
     nawm_mask_file: str | None = None,
+    brain_mask_file: str | None = None,
 ) -> tuple[str, float | None]:
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
@@ -982,6 +987,8 @@ def _normalize_cbf(
         Session ID for auto-detection.
     nawm_mask_file : str, optional
         Path to NAWM mask NIfTI (required for normalization).
+    brain_mask_file : str, optional
+        DSC analysis support used to restrict NAWM, without whole-brain fallback.
 
     Returns
     -------
@@ -1023,6 +1030,7 @@ def _normalize_cbf(
         subject=subject_id,
         session=session_id,
         brain_mask_file=None,
+        analysis_mask_file=brain_mask_file,
     )
 
     if not math.isfinite(norm_factor) or norm_factor <= 0.0:

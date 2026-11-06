@@ -610,6 +610,7 @@ def normalize_cbv(
     session: Optional[str] = None,
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     return_normalization_factor: bool = False,
+    analysis_mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> Union[
     npt.NDArray[np.floating],
     Tuple[npt.NDArray[np.floating], float],
@@ -647,6 +648,9 @@ def normalize_cbv(
         shape to be used. Uses the median of finite values within the mask.
     return_normalization_factor : bool, optional
         If True, returns tuple of (nCBV, factor).
+    analysis_mask : np.ndarray, optional
+        Restrict the NAWM reference to measured perfusion support. This does
+        not enable whole-brain fallback normalization.
 
     Returns
     -------
@@ -662,7 +666,8 @@ def normalize_cbv(
     ------
     ValueError
         If the CBV map is not 3D or a supplied or loaded NAWM mask has a
-        different shape. A brain mask with a different shape does not raise;
+        different shape, or the analysis mask shape differs. A fallback brain
+        mask with a different shape does not raise;
         it provides no factor, so the map is all NaN when NAWM also gives none.
 
     Notes
@@ -676,6 +681,8 @@ def normalize_cbv(
     # Validate CBV map
     if cbv_map.ndim != 3:
         raise ValueError(f"CBV map must be 3D, got {cbv_map.ndim}D")
+    if analysis_mask is not None and analysis_mask.shape != cbv_map.shape:
+        raise ValueError("Analysis mask shape does not match perfusion map shape")
 
     # Track if we have a valid NAWM mask
     effective_mask: Optional[npt.NDArray[np.bool_]] = None
@@ -736,6 +743,8 @@ def normalize_cbv(
     if effective_mask is not None:
         # Ensure mask is boolean
         mask_bool = effective_mask.astype(bool)
+        if analysis_mask is not None:
+            mask_bool = mask_bool & analysis_mask.astype(bool)
 
         # Count voxels in NAWM region
         n_voxels = int(np.sum(mask_bool))
@@ -795,6 +804,7 @@ def normalize_cbv_from_files(
     subject: Optional[str] = None,
     session: Optional[str] = None,
     brain_mask_file: Optional[Union[str, Path]] = None,
+    analysis_mask_file: Optional[Union[str, Path]] = None,
 ) -> Tuple[Path, float]:
     """Normalize a CBV NIfTI file and save the result.
 
@@ -817,6 +827,8 @@ def normalize_cbv_from_files(
         Session ID for auto-detection.
     brain_mask_file : str or Path, optional
         Path to brain mask for fallback normalization.
+    analysis_mask_file : str or Path, optional
+        Perfusion support mask intersected with NAWM, without enabling fallback.
 
     Returns
     -------
@@ -829,7 +841,8 @@ def normalize_cbv_from_files(
         If the CBV file does not exist.
     ValueError
         If an existing explicit NAWM mask has a different affine, the CBV map
-        is not 3D, or a supplied or discovered NAWM mask has a different shape.
+        is not 3D, a supplied or discovered NAWM mask has a different shape,
+        or the analysis mask has a different shape or affine.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 
@@ -856,6 +869,15 @@ def normalize_cbv_from_files(
             brain_img = nib.load(brain_path)
             brain_mask = brain_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
+    analysis_mask = None
+    if analysis_mask_file is not None:
+        analysis_img = nib.load(analysis_mask_file)
+        if analysis_img.shape != cbv_data.shape or not np.allclose(  # type: ignore[attr-defined]
+            analysis_img.affine, cbv_img.affine,  # type: ignore[attr-defined]
+        ):
+            raise ValueError("Analysis mask must match the perfusion map grid")
+        analysis_mask = analysis_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
     # Normalize
     ncbv_data, norm_factor = normalize_cbv(
         cbv_map=cbv_data,
@@ -866,6 +888,7 @@ def normalize_cbv_from_files(
         session=session,
         brain_mask=brain_mask,
         return_normalization_factor=True,
+        analysis_mask=analysis_mask,
     )
 
     # Save output

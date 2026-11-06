@@ -846,6 +846,8 @@ def init_dsc_normalization_wf(
         Relative CBF map to normalize.
     nawm_mask_file
         NAWM normalization mask.
+    brain_mask_file
+        DSC analysis support, intersected with the NAWM reference.
 
     Outputs
     -------
@@ -859,7 +861,7 @@ def init_dsc_normalization_wf(
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["cbv_file", "cbf_file", "nawm_mask_file"]
+            fields=["cbv_file", "cbf_file", "nawm_mask_file", "brain_mask_file"]
         ),
         name="inputnode",
     )
@@ -886,6 +888,7 @@ def init_dsc_normalization_wf(
                 "subject_id",
                 "session_id",
                 "nawm_mask_file",
+                "brain_mask_file",
             ],
             output_names=["ncbv_file", "normalization_factor"],
             function=_normalize_cbv,
@@ -907,6 +910,7 @@ def init_dsc_normalization_wf(
                 "subject_id",
                 "session_id",
                 "nawm_mask_file",
+                "brain_mask_file",
             ],
             output_names=["ncbf_file", "normalization_factor"],
             function=_normalize_cbf,
@@ -921,10 +925,12 @@ def init_dsc_normalization_wf(
         (inputnode, normalize, [
             ("cbv_file", "cbv_file"),
             ("nawm_mask_file", "nawm_mask_file"),
+            ("brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, normalize_cbf, [
             ("cbf_file", "cbf_file"),
             ("nawm_mask_file", "nawm_mask_file"),
+            ("brain_mask_file", "brain_mask_file"),
         ]),
         (normalize, outputnode, [
             ("ncbv_file", "ncbv_file"),
@@ -2392,6 +2398,9 @@ def init_dsc_preproc_wf(
 
     # Feed relative perfusion maps and the NAWM reference to normalization.
     workflow.connect([
+        (hdbet_dsc, normalization_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
+        ]),
         (deconvolution_wf, normalization_wf, [
             ("outputnode.out_tissue_auc", "inputnode.cbv_file"),
             ("outputnode.out_rel_cbf", "inputnode.cbf_file"),

@@ -1,3 +1,9 @@
+1.0.0rc6.dev33 (2026-11-06)
+===========================
+
+* FIX: Restrict DSC NAWM normalization to the perfusion brain mask, preserving
+  measured zeros and omitting normalized maps when that reference is unusable.
+
 1.0.0rc6.dev32 (2026-11-06)
 ===========================
 

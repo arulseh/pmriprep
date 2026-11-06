@@ -426,3 +426,32 @@ class TestFindBolusArrival:
 
         with pytest.raises(ValueError, match="1D"):
             find_bolus_arrival(signal, baseline_frames=5)
+
+
+@pytest.mark.parametrize('parameter', ['cbv', 'cbf'])
+def test_normalization_uses_only_nawm_inside_analysis_support(tmp_path, monkeypatch, parameter) -> None:
+    """Production wrappers exclude storage zeros without dropping measured zeros or using brain fallback."""
+    import nibabel as nib
+    from pmriprep.workflows.dsc._helpers import _normalize_cbv, _normalize_cbf
+
+    monkeypatch.chdir(tmp_path)
+    def save(name, values, affine=None):
+        path = tmp_path / (name + '.nii.gz')
+        nib.Nifti1Image(np.asarray(values, dtype=np.float32).reshape(7, 1, 1),
+                       np.eye(4) if affine is None else affine).to_filename(path)
+        return str(path)
+
+    source = save(parameter, [0, 2, 4, 8, 0, 0, 0])
+    nawm = save('nawm', [1, 1, 1, 1, 1, 1, 1])
+    brain = save('brain', [1, 1, 1, 1, 0, 0, 0])
+    normalize = _normalize_cbv if parameter == 'cbv' else _normalize_cbf
+    output, factor = normalize(source, '', 'test', '', nawm, brain)
+    assert factor == pytest.approx(3.0)
+    np.testing.assert_allclose(nib.load(output).get_fdata().ravel(), np.array([0, 2, 4, 8, 0, 0, 0]) / 3)
+    outside = save('outside_nawm', [0, 0, 0, 0, 1, 1, 1])
+    assert normalize(source, '', 'test', '', outside, brain) == ('', None)
+    shifted = np.eye(4)
+    shifted[0, 3] = 1
+    wrong_grid = save('wrong_grid', [1, 1, 1, 1, 0, 0, 0], shifted)
+    with pytest.raises(ValueError, match='Analysis mask must match'):
+        normalize(source, '', 'test', '', nawm, wrong_grid)

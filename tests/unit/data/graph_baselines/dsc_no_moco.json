@@ -663,6 +663,18 @@
     [
       "hdbet_dsc",
       "dsc_brain_mask_file",
+      "normalize",
+      "brain_mask_file"
+    ],
+    [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
+      "normalize_cbf",
+      "brain_mask_file"
+    ],
+    [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
       "outputnode",
       "brain_mask_dsc"
     ],
@@ -1561,6 +1573,7 @@
     },
     "normalize": {
       "input_names": [
+        "brain_mask_file",
         "cbv_file",
         "derivatives_dir",
         "nawm_mask_file",
@@ -1574,6 +1587,7 @@
     },
     "normalize_cbf": {
       "input_names": [
+        "brain_mask_file",
         "cbf_file",
         "derivatives_dir",
         "nawm_mask_file",
@@ -1711,8 +1725,8 @@
     "leakage_correct": "bbcee6f1a192033f94fd0b345327f0a410919cea4feeb26cc19b40cff9a36896",
     "merge_qc": "6f45ad2fe8cc0229d2fb75aebfcc55c4ac87468404f761f0955114dc010d6932",
     "motion_qc_plot": "222b93d38eddff22466791186fb89cf83d69e1c5ad93f3a1ccdfda99fdf92dca",
-    "normalize": "37aaf8725edc82929bfa3f86ce667aa6f29352b6a4c3702a2623509854a63000",
-    "normalize_cbf": "320623856353fd27c744a885b680708b08301d1bca56c87a78c872eeb1f80682",
+    "normalize": "7c812d3f0ad5052b71e744a6ff3a392796342dadfcdaf5e4b7f9dc22a3560c77",
+    "normalize_cbf": "699f32ead717d3fbda03775922604826874b1f97661c0371a49c8a8add55bdf2",
     "prebolus_mean": "5cf8d89d997b7f6b4efa12f8c06771eb1cb06d0fb85c251ab7de067dbb49f560",
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "reorient_mean": "facb424f30beaa2af16e5390e5c0b8ef46f1b1f7fcdd2f1d895cd63317c817eb",
