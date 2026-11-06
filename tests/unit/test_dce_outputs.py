@@ -109,3 +109,24 @@ def test_dce_diagnostic_sidecars_carry_canonical_aif_provenance() -> None:
     ):
         assert sidecar["AIFDependent"] is True
         assert sidecar["PerfusionProcessing"]["AIF"] == expected
+
+
+def test_selection_distributions_share_fraction_units() -> None:
+    """Map-specific and general PK provenance use the same model fractions."""
+    from pmriprep.utils.provenance import enrich_provenance_from_qc
+
+    qc = {"pk_modeling": {
+        "model": "auto", "candidate_models": ["patlak", "extended_tofts"],
+        "patlak_fraction": 0.8, "extended_tofts_fraction": 0.2,
+        "model_selection_regions": {"Enhancing": {"Patlak": 30., "Ext. Tofts": 70.}},
+    }}
+    base = enrich_provenance_from_qc({"PerfusionProcessing": {"ContrastAgent": {"GenericName": "gadobutrol"}}}, qc, "DCE")
+    selection = base["PerfusionProcessing"]["PKModeling"]["model_selection"]
+    sidecar = _build_model_selection_meta(base, qc)
+    assert sidecar["ModelDistribution"] == selection["ModelDistribution"] == {
+        "patlak": 0.8, "extended_tofts": 0.2,
+    }
+    assert sidecar["RegionalModelDistribution"] == {
+        "Enhancing": {"patlak": 0.3, "extended_tofts": 0.7},
+    }
+    assert sidecar["ModelDistributionUnits"] == selection["ModelDistributionUnits"] == "fraction"

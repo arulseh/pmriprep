@@ -270,6 +270,13 @@ def build_aif_provenance_block(
             if modality == "DSC" and detection_level == "external"
             else "s"
         )
+    if modality == "DCE":
+        for source_key, output_key in (
+            ("final_peak_time_seconds", "PeakTimeSeconds"),
+            ("baseline_reference_time_seconds", "BaselineReferenceTimeSeconds"),
+        ):
+            if aif_qc.get(source_key) is not None:
+                block[output_key] = float(aif_qc[source_key])
     ttp = metrics.get("ttp")
     if ttp is not None:
         block["TimeToPeak"] = float(ttp)

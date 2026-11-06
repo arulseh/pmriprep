@@ -184,7 +184,7 @@ class TestRunEntityHandling:
         (anat / f"{self.PREFIX}_run-1_space-T1w_desc-brain_mask.json").write_text(
             _json.dumps({
                 "BrainExtractionTool": "HD-BET",
-                "BrainExtractionVolume": 1234.94,
+                "BrainExtractionVolumeMl": 1234.94,
                 "BrainExtractionVolumeMm3": 1234940.0,
             })
         )
@@ -252,7 +252,7 @@ class TestRunEntityHandling:
         (anat / f"{self.PREFIX}_run-1_space-T1w_desc-brain_mask.json").write_text(
             _json.dumps({
                 "BrainExtractionTool": "HD-BET",
-                "BrainExtractionVolume": 1234.94,
+                "BrainExtractionVolumeMl": 1234.94,
             })
         )
         out = _load_pipeline_sidecars(tmp_path, self.PREFIX, "anat")

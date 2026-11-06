@@ -151,6 +151,8 @@ class TestBuildProvenanceBlockDCE:
             {"aif_detection": {
                 "detection_method": "atlas",
                 "quality_score": 0.75,
+                "final_peak_time_seconds": 42.0,
+                "baseline_reference_time_seconds": 28.0,
                 "aif_confidence": "standard",
                 "aif_uncertainty_inflation_factor": 1.0,
                 "hematocrit": hematocrit,
@@ -170,6 +172,8 @@ class TestBuildProvenanceBlockDCE:
             }},
             modality="DCE",
         )
+        assert block["PeakTimeSeconds"] == 42.0
+        assert block["BaselineReferenceTimeSeconds"] == 28.0
         assert block["Source"] == "measured"
         assert block["QualityFlag"] == "pass"
         assert block["Confidence"] == "standard"

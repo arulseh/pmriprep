@@ -1321,14 +1321,14 @@ def _anat_nested_from_sidecars(
         # expects (e.g. "HD-BET" → "hdbet").
         raw_tool = str(mask_sidecar["BrainExtractionTool"])
         brain_ex["tool"] = raw_tool.lower().replace("-", "")
-    if "BrainExtractionVolume" in mask_sidecar:
-        brain_ex["brain_volume_ml"] = float(mask_sidecar["BrainExtractionVolume"])
+    if "BrainExtractionVolumeMl" in mask_sidecar:
+        brain_ex["brain_volume_ml"] = float(mask_sidecar["BrainExtractionVolumeMl"])
     if "BrainExtractionVolumeMm3" in mask_sidecar:
         brain_ex["brain_volume_mm3"] = float(mask_sidecar["BrainExtractionVolumeMm3"])
-    elif "BrainExtractionVolume" in mask_sidecar:
+    elif "BrainExtractionVolumeMl" in mask_sidecar:
         # Fallback when only the mL value was written.
         brain_ex["brain_volume_mm3"] = (
-            float(mask_sidecar["BrainExtractionVolume"]) * 1000.0
+            float(mask_sidecar["BrainExtractionVolumeMl"]) * 1000.0
         )
     if brain_ex:
         out["brain_extraction"] = brain_ex

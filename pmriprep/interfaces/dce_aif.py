@@ -4237,6 +4237,7 @@ class AIFDetection(BaseInterface):
 
         # Compute final AIF metrics
         final_peak = compute_dce_aif_peak_concentration(aif_curve)
+        final_peak_time_s = float(np.argmax(aif_curve)) * tr
         final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
         final_auc = compute_dce_aif_auc(aif_curve, tr)
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
@@ -4259,6 +4260,8 @@ class AIFDetection(BaseInterface):
             "external_aif_file": str(ext_path),
             "aif_source": "external",  # For boilerplate text generation
             "final_peak_mm": final_peak,
+            "final_peak_time_seconds": final_peak_time_s,
+            "baseline_reference_time_seconds": baseline_frames * tr,
             "final_fwhm_seconds": final_fwhm,
             "final_auc": final_auc,
             "final_washout": final_washout,
@@ -5125,6 +5128,7 @@ class AIFDetection(BaseInterface):
 
         # Compute final AIF metrics
         final_peak = compute_dce_aif_peak_concentration(aif_curve)
+        final_peak_time_s = float(np.argmax(aif_curve)) * tr
         final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
         final_auc = compute_dce_aif_auc(aif_curve, tr)
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
@@ -5190,6 +5194,8 @@ class AIFDetection(BaseInterface):
         qc_metrics.update(
             {
                 "final_peak_mm": final_peak,
+                "final_peak_time_seconds": final_peak_time_s,
+                "baseline_reference_time_seconds": baseline_frames * tr,
                 "final_fwhm_seconds": final_fwhm,
                 "final_auc": final_auc,
                 "final_washout": final_washout,

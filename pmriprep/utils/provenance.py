@@ -260,6 +260,22 @@ def enrich_provenance_from_qc(
     return result
 
 
+def build_model_selection_provenance(pk: Dict[str, Any]) -> Dict[str, Any]:
+    """Describe automatic candidates and fractions among selected model labels."""
+    selection: Dict[str, Any] = {"Method": "per-voxel BIC comparison"}
+    candidates = pk.get("candidate_models", [])
+    if candidates:
+        selection["CandidateModels"] = list(candidates)
+        distribution = {
+            name: float(pk[f"{name}_fraction"])
+            for name in candidates if pk.get(f"{name}_fraction") is not None
+        }
+        if distribution:
+            selection["ModelDistribution"] = distribution
+            selection["ModelDistributionUnits"] = "fraction"
+    return selection
+
+
 def _enrich_dce(
     perf: Dict[str, Any],
     qc: Dict[str, Any],
@@ -395,18 +411,7 @@ def _enrich_dce(
         if "inference" in pk:
             pk_block["inference"] = str(pk["inference"])
         if pk.get("model") == "auto":
-            selection: Dict[str, Any] = {"Method": "per-voxel BIC comparison"}
-            candidates = pk.get("candidate_models", [])
-            if candidates:
-                selection["CandidateModels"] = candidates
-                dist = {}
-                for mn in candidates:
-                    frac = pk.get(f"{mn}_fraction")
-                    if frac is not None:
-                        dist[mn] = round(float(frac), 4)
-                if dist:
-                    selection["ModelDistribution"] = dist
-            pk_block["model_selection"] = selection
+            pk_block["model_selection"] = build_model_selection_provenance(pk)
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
         if pk_block:
@@ -489,7 +494,7 @@ def _enrich_dsc(
                 preload["leakage_correction_disabled"]
             )
         if "k2_median" in preload:
-            leak_block["K2_median"] = _safe_float(preload["k2_median"])
+            leak_block["K2_median"] = float(preload["k2_median"])
         for key in ("nawm_auc_raw_median", "nawm_auc_corrected_median"):
             if key not in preload:
                 continue

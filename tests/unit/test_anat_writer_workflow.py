@@ -118,7 +118,7 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     assert "SkullStripped" not in mask_sidecar
     assert mask_sidecar["ProcessingSteps"][-1] == "Brain-mask estimation"
     assert mask_sidecar["BrainExtractionTool"] == "hdbet"
-    assert mask_sidecar["BrainExtractionVolume"] == 42.0
+    assert mask_sidecar["BrainExtractionVolumeMl"] == 42.0
 
     # dataset_description.json written
     dd = out_root / "pmriprep" / "dataset_description.json"

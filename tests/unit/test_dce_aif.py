@@ -3102,6 +3102,10 @@ def test_population_fallback_retains_rejected_curve_and_matching_voxels(tmp_path
             hematocrit=0.42, aif_method=mode,
         ).run(cwd=str(cwd)).outputs)
     failed, configured = results
+    for result in results:
+        curve_out = np.loadtxt(result.out_aif_curve)
+        assert result.qc_metrics["final_peak_time_seconds"] == int(np.argmax(curve_out)) * 4.0
+        assert result.qc_metrics["baseline_reference_time_seconds"] == result.qc_metrics["baseline_frames"] * 4.0
     np.testing.assert_array_equal(np.loadtxt(failed.out_aif_curve), np.loadtxt(configured.out_aif_curve))
     assert failed.qc_metrics["detection_status"] == "failed"
     assert configured.qc_metrics["detection_status"] == "not_attempted"

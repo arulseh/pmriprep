@@ -191,7 +191,7 @@ def generate_xval_plot(
             ax.text(
                 0.96,
                 0.08,
-                f"ρ = {float(metrics.get('correlation', 0)):.3f}",
+                f"ρ = {float(metrics.get('spearman_correlation', 0)):.3f}",
                 transform=ax.transAxes,
                 fontsize=9,
                 ha="right",

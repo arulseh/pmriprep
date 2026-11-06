@@ -856,6 +856,7 @@ def _build_model_selection_meta(
 ) -> dict:
     """Describe automatic selection and the recorded run-level candidate pool."""
     from pmriprep.utils.aif_provenance import apply_aif_sidecar
+    from pmriprep.utils.provenance import build_model_selection_provenance
 
     out = dict(base)
     out["Description"] = (
@@ -886,12 +887,18 @@ def _build_model_selection_meta(
     if isinstance(qc_metrics, dict):
         pk_modeling = qc_metrics.get("pk_modeling")
         if isinstance(pk_modeling, dict):
-            candidates = pk_modeling.get("candidate_models")
-            if isinstance(candidates, list):
-                out["CandidateModels"] = list(candidates)
+            selection = build_model_selection_provenance(pk_modeling)
+            out.update({k: v for k, v in selection.items() if k != "Method"})
             regions = pk_modeling.get("model_selection_regions")
-            if regions:
-                out["ModelDistribution"] = regions
+            if isinstance(regions, dict):
+                names = {"Patlak": "patlak", "Tofts": "tofts",
+                         "Ext. Tofts": "extended_tofts", "2CXM": "2cxm"}
+                out["RegionalModelDistribution"] = {
+                    region: {names.get(model, model): float(percent) / 100.0
+                             for model, percent in values.items()}
+                    for region, values in regions.items()
+                }
+                out["ModelDistributionUnits"] = "fraction"
     return out
 
 

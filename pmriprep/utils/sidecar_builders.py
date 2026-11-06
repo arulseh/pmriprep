@@ -279,17 +279,10 @@ def compute_original_resolution(source_nifti: PathLike) -> Dict[str, Any]:
     voxel_dims = voxel_sizes_from_nifti(source_nifti)
     geo_mean = round(float(math.prod(voxel_dims) ** (1.0 / 3.0)), 3)
     iso_ratio = round(max(voxel_dims) / max(min(voxel_dims), 1e-9), 2)
-    if geo_mean <= 1.5:
-        tier = "excellent"
-    elif geo_mean <= 3.0:
-        tier = "good"
-    else:
-        tier = "moderate"
     return {
         "VoxelDimensions": voxel_dims,
         "GeometricMean": geo_mean,
         "IsotropyRatio": iso_ratio,
-        "ResolutionTier": tier,
     }
 
 
@@ -330,7 +323,7 @@ def get_ants_version() -> str:
         )
         for line in (result.stdout + result.stderr).splitlines():
             if "ANTs" in line:
-                return line.strip()
+                return line.strip().removeprefix("ANTs Version:").strip()
     except Exception:
         pass
     return "unknown"
@@ -1377,8 +1370,7 @@ def enrich_brain_mask_sidecar(
     """Add flat ``BrainExtraction*`` keys to a brain-mask sidecar.
 
     Reads measured fields from ``qc_metrics["brain_extraction"]``.
-    Volume in ``BrainExtractionVolume`` is in mL (documented in sidecar
-    Description; no unit suffix in key per BIDS convention).
+    Volume keys explicitly identify mL or mm³.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
@@ -1390,7 +1382,7 @@ def enrich_brain_mask_sidecar(
     # Accept both fully qualified and short volume keys.
     vol_ml = be.get("brain_volume_ml", be.get("volume_ml"))
     if vol_ml is not None:
-        sidecar["BrainExtractionVolume"] = float(vol_ml)
+        sidecar["BrainExtractionVolumeMl"] = float(vol_ml)
     vol_mm3 = be.get("brain_volume_mm3", be.get("volume_mm3"))
     if vol_mm3 is not None:
         sidecar["BrainExtractionVolumeMm3"] = float(vol_mm3)

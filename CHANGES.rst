@@ -1,3 +1,10 @@
+1.0.0rc6.dev37 (2026-11-06)
+===========================
+
+* FIX: Clarify correlation, mask-volume units and model-distribution metadata;
+  retain K2 precision and report sampled DCE AIF peak/baseline-reference times.
+* MNT: Omit the descriptive resolution tier and normalize ANTs version text.
+
 1.0.0rc6.dev36 (2026-11-06)
 ===========================
 

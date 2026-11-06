@@ -56,7 +56,8 @@ def test_independent_concordance_uses_measured_nawm_normalization() -> None:
         region_mask=tumor,
     )
     assert result.status == "INDEPENDENT"
-    assert result.metrics.correlation > 0.8
+    assert result.metrics.spearman_correlation > 0.8
+    assert result.to_dict()["metrics"]["spearman_correlation"] == result.metrics.spearman_correlation
     assert result.metrics.pearson_correlation > 0.8
     assert result.normalization["method"] == "within_subject_nawm_median"
     assert result.normalization["dce_vp_nawm_median"] == pytest.approx(
@@ -79,8 +80,8 @@ def test_prior_use_changes_label_not_measurement() -> None:
         prior_informed_fraction=0.75,
     )
     assert informed.status == "PRIOR_INFORMED"
-    assert informed.metrics.correlation == pytest.approx(
-        independent.metrics.correlation
+    assert informed.metrics.spearman_correlation == pytest.approx(
+        independent.metrics.spearman_correlation
     )
     assert "not independent" in informed.interpretation
 

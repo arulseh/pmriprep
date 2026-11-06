@@ -411,7 +411,7 @@ def test_summarize_dce_model_selection_counts_models() -> None:
         model_selection,
         {"patlak": 1, "extended_tofts": 3},
     )
-    assert summary["model_selection"] == "auto"
+    assert summary["selection_mode"] == "auto"
     assert summary["n_patlak_selected"] == 1
     assert summary["patlak_fraction"] == pytest.approx(1 / 3)
     assert summary["n_extended_tofts_selected"] == 2
@@ -426,7 +426,7 @@ def test_summarize_dce_model_selection_fixed_mode_omits_candidates() -> None:
         np.zeros((1, 1, 1), dtype=np.int8),
         {},
     )
-    assert summary["model_selection"] == "fixed"
+    assert summary["selection_mode"] == "fixed"
     assert "candidate_models" not in summary
 
 

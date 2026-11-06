@@ -39,12 +39,10 @@ class TestBrainMaskFlatKeys:
         assert out["BrainExtractionTool"] == "hdbet"
         # Tool versions belong in dataset-level GeneratedBy.
         assert "BrainExtractionVersion" not in out
-        assert out["BrainExtractionVolume"] == pytest.approx(1500.0)
+        assert out["BrainExtractionVolumeMl"] == pytest.approx(1500.0)
         assert out["BrainExtractionVolumeMm3"] == pytest.approx(1_500_000.0)
         # No nested block (regression guard)
         assert "BrainExtraction" not in out
-        # Units are separate from metric keys.
-        assert "BrainExtractionVolume_mL" not in out
         # Base fields preserved
         assert out["SkullStripped"] is True
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
@@ -55,7 +53,7 @@ class TestBrainMaskFlatKeys:
         assert out["BrainExtractionTool"] == "hdbet"
         # Optional fields omitted when not in source
         assert "BrainExtractionVersion" not in out
-        assert "BrainExtractionVolume" not in out
+        assert "BrainExtractionVolumeMl" not in out
 
 
 class TestPreprocAnatFlatKeys:

@@ -32,7 +32,7 @@ class ValidationMetrics:
     n_valid_voxels: int = 0
     n_total_voxels: int = 0
     fraction_valid: float = 0.0
-    correlation: float = 0.0
+    spearman_correlation: float = 0.0
     pearson_correlation: float = 0.0
     mean_vp: float = 0.0
     mean_cbv: float = 0.0
@@ -43,7 +43,7 @@ class ValidationMetrics:
             "n_valid_voxels": self.n_valid_voxels,
             "n_total_voxels": self.n_total_voxels,
             "fraction_valid": self.fraction_valid,
-            "correlation": self.correlation,
+            "spearman_correlation": self.spearman_correlation,
             "pearson_correlation": self.pearson_correlation,
             "mean_vp": self.mean_vp,
             "mean_cbv": self.mean_cbv,
@@ -146,7 +146,7 @@ def _domain_metrics(
     metrics.mean_cbv = float(np.mean(cbv))
     rho = spearmanr(vp, cbv).statistic
     pearson = np.corrcoef(vp, cbv)[0, 1]
-    metrics.correlation = float(rho) if np.isfinite(rho) else 0.0
+    metrics.spearman_correlation = float(rho) if np.isfinite(rho) else 0.0
     metrics.pearson_correlation = float(pearson) if np.isfinite(pearson) else 0.0
     return metrics
 

@@ -179,7 +179,7 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
         {
             "BrainExtractionTool": "hdbet",
             "BrainExtractionVersion": "1.0",
-            "BrainExtractionVolume": 1.234,
+            "BrainExtractionVolumeMl": 1.234,
         },
     )
     for tissue in ("WM", "GM", "CSF"):

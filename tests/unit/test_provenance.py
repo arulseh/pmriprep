@@ -312,7 +312,7 @@ class TestEnrichDSC:
             },
             "preload": {
                 "preload_correction_applied": True,
-                "k2_median": 0.008,
+                "k2_median": 0.00076123,
                 "nawm_auc_raw_median": 1.2,
                 "nawm_auc_corrected_median": 1.1,
                 "preload_source": "unknown",
@@ -338,7 +338,7 @@ class TestEnrichDSC:
         assert perf["Deconvolution"]["oscillation_index_mean"] == pytest.approx(0.08, abs=0.001)
 
         assert perf["LeakageCorrection"]["applied"] is True
-        assert perf["LeakageCorrection"]["K2_median"] == pytest.approx(0.008, abs=0.001)
+        assert perf["LeakageCorrection"]["K2_median"] == pytest.approx(0.00076123, abs=1e-12)
         assert perf["LeakageCorrection"]["method"] == "bsw"
         assert "Method" not in perf["LeakageCorrection"]
         assert perf["LeakageCorrection"]["nawm_auc_raw_median"] == pytest.approx(1.2)

@@ -318,7 +318,7 @@ def _summarize_dce_model_selection(
 ) -> dict[str, Any]:
     """Summarize the model-selection categorical map."""
     summary: dict[str, Any] = {
-        "model_selection": "auto" if is_auto else "fixed",
+        "selection_mode": "auto" if is_auto else "fixed",
     }
     if is_auto:
         summary["candidate_models"] = candidate_names

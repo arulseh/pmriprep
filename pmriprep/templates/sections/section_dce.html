@@ -844,16 +844,16 @@
                 <div class="metric-value">{{ "%.0f"|format(xval.metrics.fraction_valid * 100) }}%</div>
             </div>
             {% endif %}
-            {% if not xval.prior_informed|default(false) and xval.metrics.correlation is defined %}
+            {% if not xval.prior_informed|default(false) and xval.metrics.spearman_correlation is defined %}
             <div class="metric">
                 <div class="metric-label">Whole-brain {{ xval.smoothing_sigma_mm }} mm-smoothed ρ / r</div>
-                <div class="metric-value">{{ "%.3f"|format(xval.metrics.correlation) }} / {{ "%.3f"|format(xval.metrics.pearson_correlation) }}</div>
+                <div class="metric-value">{{ "%.3f"|format(xval.metrics.spearman_correlation) }} / {{ "%.3f"|format(xval.metrics.pearson_correlation) }}</div>
             </div>
             {% endif %}
             {% if not xval.prior_informed|default(false) and xval.region_metrics is defined %}
             <div class="metric">
                 <div class="metric-label">{{ xval.region_label|default("Lesion region") }} {{ xval.smoothing_sigma_mm }} mm-smoothed ρ / r</div>
-                <div class="metric-value">{{ "%.3f"|format(xval.region_metrics.correlation) }} / {{ "%.3f"|format(xval.region_metrics.pearson_correlation) }}</div>
+                <div class="metric-value">{{ "%.3f"|format(xval.region_metrics.spearman_correlation) }} / {{ "%.3f"|format(xval.region_metrics.pearson_correlation) }}</div>
             </div>
             {% endif %}
             {% if (xval.interpretation is defined and xval.interpretation) or xval.prior_informed|default(false) %}
