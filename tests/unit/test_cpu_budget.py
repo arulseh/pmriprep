@@ -130,6 +130,7 @@ def test_neural_device_reservations_match_launcher_and_gpu_slots(
 ) -> None:
     """GPU extraction/segmentation leave CPU capacity free and stay serialized."""
     import nipype.pipeline.engine as pe
+    from nipype.pipeline.plugins.multiproc import MultiProcPlugin
 
     from pmriprep.cli.run import _automatic_gpu_slots, _configure_preprocessing_threads
     from pmriprep.interfaces.anat import BrainExtraction
@@ -152,9 +153,21 @@ def test_neural_device_reservations_match_launcher_and_gpu_slots(
         monkeypatch.setenv("OMP_NUM_THREADS", str(limit))
         _configure_preprocessing_threads(workflow, limit, limit)
         command = build_hdbet_command("in.nii.gz", "out.nii.gz", resolved, True)
-        expected = min(limit, 2) if resolved != "cpu" else limit
+        expected = 1 if resolved != "cpu" else limit
         assert int(command[command.index("--threads") + 1]) == expected
         assert all(node.n_procs == expected for node in nodes)
         assert all(node.inputs.use_gpu == (resolved != "cpu") for node in nodes)
         assert "--disable_tta" not in command
-        assert _automatic_gpu_slots(workflow) == (None if resolved == "cpu" else 1)
+        slots = _automatic_gpu_slots(workflow)
+        assert slots == (None if resolved == "cpu" else 1)
+        # Exercise Nipype's resource accounting without starting a worker pool.
+        scheduler = MultiProcPlugin.__new__(MultiProcPlugin)
+        scheduler.memory_gb = 128
+        scheduler.processors = limit
+        scheduler.n_gpu_procs = slots or 0
+        scheduler.raise_insufficient = True
+        scheduler._prerun_check(workflow._graph)
+        scheduler.procs = nodes
+        _, free_cpus, free_gpu = scheduler._check_resources([(0, 0)])
+        assert free_cpus == limit - expected
+        assert free_gpu == 0

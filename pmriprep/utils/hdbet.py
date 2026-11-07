@@ -38,9 +38,9 @@ def hdbet_thread_budget(device: str, limit: int) -> int:
     Returns
     -------
     int
-        Full limit for CPU inference, or at most two CPUs for GPU inference.
+        Full limit for CPU inference, or one CPU for GPU inference.
     """
-    return min(limit, 2) if device in {"cuda", "mps"} else limit
+    return 1 if device in {"cuda", "mps"} else limit
 
 
 def build_hdbet_command(

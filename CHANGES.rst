@@ -1,3 +1,10 @@
+1.0.0rc6.dev40 (2026-11-07)
+===========================
+
+* FIX: Reserve one process for GPU HD-BET and HD-GLIO to match Nipype's shared
+  CPU/GPU-slot accounting, preventing startup failure with one GPU slot.
+  GPU HD-BET uses one CPU thread; CPU-mode thread budgets are unchanged.
+
 1.0.0rc6.dev39 (2026-11-07)
 ===========================
 

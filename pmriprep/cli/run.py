@@ -1508,8 +1508,9 @@ def _configure_preprocessing_threads(
     Notes
     -----
     N4/denoising, ANTs extraction and CPU neural-network extraction/segmentation
-    inherit the process thread limits. GPU HD-BET and HD-GLIO reserve at most
-    two CPUs for their single-case preprocessing and export. Function nodes that wrap these tools
+    inherit the process thread limits. GPU HD-BET and HD-GLIO reserve one
+    process because Nipype also counts their n_procs against GPU slots.
+    Function nodes that wrap these tools
     declare ``_pmriprep_threaded`` explicitly. FLIRT, file operations and
     independently budgeted fitting pools keep their own reservations.
     """
@@ -1539,12 +1540,12 @@ def _configure_preprocessing_threads(
                 node.inputs.use_gpu = resolved in {"cuda", "mps"}
                 gpu_neural_count += int(node.inputs.use_gpu)
             elif isinstance(node.interface, HDGLIOSegment) and node.inputs.use_gpu:
-                node.n_procs = min(threads, 2)
+                node.n_procs = 1
                 gpu_neural_count += 1
             count += 1
     logger.info(
         "Threaded preprocessing: %d nodes, up to %d CPU(s) each; "
-        "%d GPU HD-BET/HD-GLIO nodes reserve at most 2 CPU(s) each",
+        "%d GPU HD-BET/HD-GLIO nodes reserve 1 process/GPU slot each",
         count, threads, gpu_neural_count,
     )
 
