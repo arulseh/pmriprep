@@ -1,3 +1,11 @@
+1.0.0rc6.dev43 (2026-11-07)
+===========================
+
+* CHG: Separate AIF status from detection outcome in HTML reports, identify
+  measured search routes and unassessed external AIFs, and highlight limited
+  support or scaling without metric notes. Report empty AIF search masks in
+  the QC recommendation. Place AIF and motion status first in their sections.
+
 1.0.0rc6.dev42 (2026-11-07)
 ===========================
 

@@ -75,6 +75,7 @@ def test_motion_correction_card_uses_execution_flag(env, modality: str, applied:
     preprocessing = {"tr_ms": 1500.0}
     if applied is not None:
         preprocessing["motion_applied"] = applied
+        preprocessing["motion_status"] = "PASS"
     rendered = env.get_template(f"sections/section_{modality}.html").render(**{
         modality: {"qc_metrics": {"preprocessing": preprocessing},
                    "images": {}, "display_status": {}},
@@ -84,7 +85,7 @@ def test_motion_correction_card_uses_execution_flag(env, modality: str, applied:
     if applied is None:
         assert '<div class="metric-label">Correction</div>' not in rendered
     else:
-        assert '<div class="metric-label">Correction</div>' in rendered
+        _assert_in_order(rendered, "Motion Status", '<div class="metric-label">Correction</div>')
         assert f'<div class="metric-value">{"applied" if applied else "skipped"}</div>' in rendered
 
 
@@ -390,7 +391,7 @@ def test_dce_aif_cards_follow_qc_hierarchy(env):
     template = env.get_template("sections/section_dce.html")
     aif = {
         "aif_status": "PASS",
-        "detection_method": "measured",
+        "detection_method": "atlas",
         "n_aif_voxels_selected": 5,
         "n_aif_voxels_filtered_out": 2,
         "quality_score": 0.8,
@@ -413,8 +414,10 @@ def test_dce_aif_cards_follow_qc_hierarchy(env):
     rendered = template.render(dce=dce)
     _assert_in_order(
         rendered,
-        '>AIF Detection</div>',
+        '>AIF Status</div>',
+        '>Detection</div>',
         "AIF Used",
+        ">Search</div>",
         "AIF Voxels",
         "Quality Score",
         "CNR",
@@ -431,7 +434,9 @@ def test_dce_aif_cards_follow_qc_hierarchy(env):
     aif.update(n_aif_voxels_selected=1, aif_status="WARN",
                aif_confidence_reason="single_voxel_support")
     rendered = template.render(dce=dce)
-    assert "Reduced confidence: single-voxel AIF" in rendered
+    assert 'class="metric-value warn">1 / 3</div>' in rendered
+    assert 'class="metric-value warn">WARN</div>' in rendered
+    assert ">Accepted</div>" in rendered
 
 
 def test_dce_vfa_motion_warning_renders(env):
@@ -1062,7 +1067,9 @@ def test_disabled_leakage_correction_has_explicit_note(env):
     assert "K2 reference unavailable" not in rendered
 
 
-@pytest.mark.parametrize('detection_method', ['atlas_strict', 'atlas_strict+atlas_relaxed'])
+@pytest.mark.parametrize('detection_method', [
+    'atlas_strict', 'atlas_strict+atlas_relaxed', 'atlas_relaxed+brain_relaxed',
+])
 def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_method):
     """DSC shared preprocessing and AIF fields follow the DCE hierarchy."""
     template = env.get_template("sections/section_dsc.html")
@@ -1102,6 +1109,11 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
     rendered = template.render(dsc=dsc)
     assert 'class="metric-value pass">PASS' in rendered
     assert rendered.count(">60</div>") == 1
+    if "brain" in detection_method:
+        assert 'class="metric-value warn">WARN</div>' in rendered
+        assert ">Atlas + whole brain</div>" in rendered
+    else:
+        assert ">Atlas</div>" in rendered
     assert ">95.4%</div>" in rendered
     assert ">6.5%</div>" in rendered
     _assert_in_order(
@@ -1116,8 +1128,10 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
         "Mean tSNR",
         "Mean CNR",
         "Arterial Input Function",
-        '>AIF Detection</div>',
+        '>AIF Status</div>',
+        '>Detection</div>',
         "AIF Used",
+        ">Search</div>",
         "AIF Voxels",
         "Baseline Frames",
         "Arrival Time",
@@ -1179,6 +1193,8 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
     ("dce", "population", "failed", "Population", True),
     ("dce", "population", "not_attempted", "Population", False),
     ("dsc", "external", "not_attempted", "Supplied", False),
+    ("dce", "external", "not_attempted", "Supplied", False),
+    ("dce", "whole_brain", "accepted", "Measured", False),
     ("dsc", "user_mask_strict", "accepted", "Measured", True),
     ("dce", "atlas", "accepted", "Measured", True),
 ])
@@ -1186,7 +1202,10 @@ def test_aif_detection_outcome_is_separate_from_used_source(env, modality, sourc
     context = {
         "qc_metrics": {
             "aif_detection": {"detection_method": source, "detection_status": outcome,
-                              "failure_reason": "quality_checks_failed"},
+                              "failure_reason": "quality_checks_failed",
+                              "aif_source": source, "aif_confidence": "standard",
+                              "aif_status": "WARN" if source in ("population", "whole_brain") else "PASS",
+                              "n_aif_voxels_selected": 0},
             "deconvolution": {"processing_status": "partial", "n_voxels": 1234} if source == "unavailable" else {},
         },
         "images": {"aif_curve": "curve.png", "aif_location": "voxels.png", "dsc_fit_qc": "fit.png"},
@@ -1199,33 +1218,80 @@ def test_aif_detection_outcome_is_separate_from_used_source(env, modality, sourc
         if outcome == "failed":
             context["qc_metrics"]["aif_detection"].update(
                 failure_reason="user_mask_exhausted", failure_detail="empty_user_mask",
-                aif_status="FAIL",
+                aif_status="WARN",
             )
     if modality == "dce":
         context["qc_metrics"]["aif_detection"]["quality_score"] = (
             0.5 if source == "population" else 0.8
         )
+    from pmriprep.utils.sidecar_builders import enrich_recommendation_keys
+
+    sidecar = {}
+    enrich_recommendation_keys(sidecar, modality=modality.upper(), qc_metrics=context["qc_metrics"])
+    context["qc_metrics"]["recommendation"] = {
+        "action": sidecar["QCRecommendationAction"],
+        "reason": sidecar["QCRecommendationReason"],
+    }
     rendered = env.get_template(f"sections/section_{modality}.html").render(**{modality: context})
-    assert "AIF Detection" in rendered
-    assert "AIF Used" in rendered
+    assert ">Detection</div>" in rendered
     assert f">{label}</div>" in rendered
+    if source != "unavailable":
+        _assert_in_order(rendered, ">AIF Status</div>", ">Detection</div>", ">AIF Used</div>")
+    else:
+        assert ">AIF Status</div>" not in rendered
     if modality == "dce":
-        assert "Quality Score" in rendered
         if source == "population":
-            assert 'class="metric-value na">Not applicable</div>' in rendered
+            assert "Quality Score" not in rendered
+            assert "AIF Voxels" not in rendered
         else:
             assert ">0.80</div>" in rendered
     if outcome == "failed":
-        assert 'class="metric-value poor">FAILED' in rendered
-        assert "Empty search mask" in rendered
+        assert 'class="metric-value poor">Failed</div>' in rendered
+        reason = ("AIF search mask was empty; population AIF used" if modality == "dce"
+                  else "AIF search mask was empty; only AIF-independent maps are available")
+        assert reason in context["qc_metrics"]["recommendation"]["reason"]
+        assert reason in rendered
     elif outcome == "accepted":
-        assert 'class="metric-value pass">PASS' in rendered
+        assert ">Accepted</div>" in rendered
+        if source == "whole_brain":
+            # Standard confidence with a curve warning must still show WARN.
+            assert 'class="metric-value warn">WARN</div>' in rendered
+            assert ">Whole brain</div>" in rendered
+        else:
+            assert 'class="metric-value pass">PASS</div>' in rendered
     else:
-        assert "Not attempted" in rendered
-    if supplied_mask:
-        assert "Search: supplied mask" in rendered
+        assert ">Not attempted</div>" in rendered
+    if source == "external":
+        assert 'class="metric-value na">Not assessed</div>' in rendered
+    if supplied_mask and outcome == "accepted":
+        assert ">Search</div>" in rendered and ">Supplied mask</div>" in rendered
+    elif outcome != "accepted":
+        assert ">Search</div>" not in rendered
     assert 'src="curve.png"' in rendered and 'src="voxels.png"' in rendered
     if source == "unavailable":
         assert "Not performed" in rendered and "Partial" in rendered
         assert "Brain Mask Voxels" in rendered and ">1,234<" in rendered
         assert 'src="fit.png"' not in rendered
+
+
+@pytest.mark.parametrize("scaling_applied", [True, False])
+def test_dce_g6_highlights_applied_scale_or_raw_peak(env, scaling_applied):
+    """G6 highlights the measured cause when no scaling was applied."""
+    aif = {
+        "detection_method": "atlas", "aif_status": "WARN",
+        "aif_confidence": "reduced", "aif_g6_admitted": True,
+        "peak_scaling_applied": scaling_applied,
+        "peak_scaling_factor": 4.0 if scaling_applied else 1.0,
+        "raw_peak_mm": 2.0,
+    }
+    rendered = env.get_template("sections/section_dce.html").render(
+        dce={"qc_metrics": {"aif_detection": aif}, "images": {}, "display_status": {}},
+    )
+    assert 'class="metric-value warn">WARN</div>' in rendered
+    assert ">Accepted</div>" in rendered
+    if scaling_applied:
+        assert 'class="metric-value warn">4.00x</div>' in rendered
+        assert 'class="metric-value">2.00 mM</div>' in rendered
+    else:
+        assert 'class="metric-value">1.00x</div>' in rendered
+        assert 'class="metric-value warn">2.00 mM</div>' in rendered

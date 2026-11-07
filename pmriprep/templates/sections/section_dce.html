@@ -4,7 +4,6 @@
     {% set b1_method_labels = {'auto': 'Automatic', 'afi': 'AFI', 'precomputed': 'Precomputed', 'none': 'None'} %}
     {% set t1_method_labels = {'hybrid': 'Hybrid', 'wlls': 'WLLS', 'nlls': 'NLLS'} %}
     {% set pk_model_labels = {'tofts': 'Tofts', 'extended_tofts': 'Extended Tofts', 'patlak': 'Patlak', '2cxm': '2CXM', 'auto': 'Automatic'} %}
-    {% set aif_method_labels = {'atlas': 'Atlas', 'whole_brain': 'Whole Brain', 'external': 'External', 'population': 'Population'} %}
     {% set peak_policy_labels = {'one_sided_lower_bound': 'One-Sided Lower Bound', 'disabled': 'Disabled'} %}
 
     <!-- Per-pipeline recommendation -->
@@ -267,16 +266,16 @@
         <h3>Motion Quality Control</h3>
         {% if dce.qc_metrics.preprocessing %}
         <div class="metrics">
-            {% if dce.qc_metrics.preprocessing.motion_applied is defined %}
-            <div class="metric">
-                <div class="metric-label">Correction</div>
-                <div class="metric-value">{{ 'applied' if dce.qc_metrics.preprocessing.motion_applied else 'skipped' }}</div>
-            </div>
-            {% endif %}
             {% if dce.qc_metrics.preprocessing.motion_status is defined %}
             <div class="metric">
                 <div class="metric-label">Motion Status</div>
                 <div class="metric-value {{ dce.qc_metrics.preprocessing.motion_status | lower }}">{{ dce.qc_metrics.preprocessing.motion_status }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.motion_applied is defined %}
+            <div class="metric">
+                <div class="metric-label">Correction</div>
+                <div class="metric-value">{{ 'applied' if dce.qc_metrics.preprocessing.motion_applied else 'skipped' }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.fd_mean is defined %}
@@ -402,28 +401,35 @@
             {% set aif = dce.qc_metrics.aif_detection %}
             {% set detection_status = aif.detection_status | default('accepted') %}
             <div class="metric">
-                <div class="metric-label">AIF Detection</div>
-                <div class="metric-value {{ 'poor' if detection_status == 'failed' else ('na' if detection_status == 'not_attempted' else aif.aif_status | default('warn') | lower) }}">{{ 'FAILED' if detection_status == 'failed' else ('Not attempted' if detection_status == 'not_attempted' else aif.aif_status | default('WARN')) }}</div>
-                {% if detection_status == 'failed' %}<div class="metric-note">{{ 'Empty search mask' if aif.failure_detail == 'empty_user_mask' else ('Quality checks failed' if aif.rejected_candidate else 'No acceptable candidates') }}</div>{% endif %}
+                <div class="metric-label">AIF Status</div>
+                <div class="metric-value {{ 'na' if aif.detection_method == 'external' else aif.aif_status | default('WARN') | lower }}">{{ 'Not assessed' if aif.detection_method == 'external' else aif.aif_status | default('WARN') }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Detection</div>
+                <div class="metric-value {{ 'poor' if detection_status == 'failed' else ('na' if detection_status == 'not_attempted' else '') }}">{{ 'Failed' if detection_status == 'failed' else ('Not attempted' if detection_status == 'not_attempted' else 'Accepted') }}</div>
             </div>
             <div class="metric">
                 <div class="metric-label">AIF Used</div>
                 <div class="metric-value">{{ 'Population' if aif.detection_method == 'population' else ('Supplied' if aif.detection_method == 'external' else 'Measured') }}</div>
-                {% if aif.search_region == 'user_mask' %}<div class="metric-note">Search: supplied mask</div>{% endif %}
-                {% if aif.aif_confidence_reason == 'single_voxel_support' %}<div class="metric-note">Reduced confidence: single-voxel AIF</div>{% endif %}
             </div>
-            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
-               if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
-            {% if used is defined %}
+            {% if detection_status == 'accepted' and aif.detection_method in ['atlas', 'whole_brain'] %}
             <div class="metric">
-                <div class="metric-label">AIF Voxels (used / available)</div>
-                <div class="metric-value">{{ used }} / {{ used + (dce.qc_metrics.aif_detection.n_aif_voxels_filtered_out | default(0)) }}</div>
+                <div class="metric-label">Search</div>
+                <div class="metric-value">{{ 'Supplied mask' if aif.search_region == 'user_mask' else ('Atlas' if aif.detection_method == 'atlas' else 'Whole brain') }}</div>
             </div>
             {% endif %}
-            {% if aif.detection_method == 'population' or aif.quality_score is defined %}
+            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
+               if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
+            {% if used is defined and aif.detection_method != 'population' %}
+            <div class="metric">
+                <div class="metric-label">AIF Voxels (used / available)</div>
+                <div class="metric-value{% if aif.aif_support_voxels == 1 or aif.aif_confidence_reason == 'single_voxel_support' %} warn{% endif %}">{{ used }} / {{ used + (dce.qc_metrics.aif_detection.n_aif_voxels_filtered_out | default(0)) }}</div>
+            </div>
+            {% endif %}
+            {% if aif.detection_method != 'population' and aif.quality_score is defined %}
             <div class="metric">
                 <div class="metric-label">Quality Score</div>
-                <div class="metric-value{% if aif.detection_method == 'population' %} na{% endif %}">{% if aif.detection_method == 'population' %}Not applicable{% else %}{{ "%.2f"|format(aif.quality_score) }}{% endif %}</div>
+                <div class="metric-value">{{ "%.2f"|format(aif.quality_score) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.cnr_mean is defined %}
@@ -446,7 +452,7 @@
             {% if dce.qc_metrics.aif_detection.raw_peak_mm is defined and dce.qc_metrics.aif_detection.raw_peak_mm is not none %}
             <div class="metric">
                 <div class="metric-label">Raw Peak</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.raw_peak_mm) }} mM</div>
+                <div class="metric-value{% if aif.aif_g6_admitted and not aif.peak_scaling_applied %} warn{% endif %}">{{ "%.2f"|format(aif.raw_peak_mm) }} mM</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.peak_scaling_policy is defined %}
@@ -458,7 +464,7 @@
             {% if dce.qc_metrics.aif_detection.peak_scaling_factor is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Scale Factor</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.peak_scaling_factor) }}x</div>
+                <div class="metric-value{% if aif.aif_g6_admitted and aif.peak_scaling_applied %} warn{% endif %}">{{ "%.2f"|format(aif.peak_scaling_factor) }}x</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.final_fwhm_seconds is defined %}

@@ -562,7 +562,9 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     if parts_set == {"unavailable"}:
         aif_rec = QCRecommendation(
             QCAction.REVIEW,
-            "No acceptable AIF; only AIF-independent maps are available",
+            ("AIF search mask was empty; only AIF-independent maps are available"
+             if aif_qc.get("failure_detail") == "empty_user_mask"
+             else "No acceptable AIF; only AIF-independent maps are available"),
             2,
         )
     elif parts_set & {"none", "unknown"} or _unknown_parts:
@@ -691,7 +693,9 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     if aif_source == "population":
         recommendations.append(QCRecommendation(
             QCAction.REVIEW,
-            "Population AIF used; subject-specific arterial input was not measured",
+            ("AIF search mask was empty; population AIF used"
+             if aif_qc.get("failure_detail") == "empty_user_mask"
+             else "Population AIF used; subject-specific arterial input was not measured"),
             1,
         ))
     elif confidence == "standard":

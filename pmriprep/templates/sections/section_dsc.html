@@ -40,16 +40,16 @@
         <h3>Motion Quality Control</h3>
         {% if dsc.qc_metrics.preprocessing.motion_status or dsc.qc_metrics.preprocessing.motion_applied is defined %}
         <div class="metrics">
-            {% if dsc.qc_metrics.preprocessing.motion_applied is defined %}
-            <div class="metric">
-                <div class="metric-label">Correction</div>
-                <div class="metric-value">{{ 'applied' if dsc.qc_metrics.preprocessing.motion_applied else 'skipped' }}</div>
-            </div>
-            {% endif %}
             {% if dsc.qc_metrics.preprocessing.motion_status is defined %}
             <div class="metric">
                 <div class="metric-label">Motion Status</div>
                 <div class="metric-value {{ dsc.qc_metrics.preprocessing.motion_status | lower }}">{{ dsc.qc_metrics.preprocessing.motion_status }}</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preprocessing.motion_applied is defined %}
+            <div class="metric">
+                <div class="metric-label">Correction</div>
+                <div class="metric-value">{{ 'applied' if dsc.qc_metrics.preprocessing.motion_applied else 'skipped' }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preprocessing.fd_mean is defined %}
@@ -160,19 +160,28 @@
             {% set detection_status = dsc.qc_metrics.aif_detection.detection_status | default('accepted') %}
             {% set atlas_accepted = aif_level and (aif_level.split('+') | reject('in', ['atlas_strict', 'atlas_relaxed', 'user_mask_strict', 'user_mask_relaxed']) | list | length == 0) %}
             {% set aif_flag = 'poor' if detection_status == 'failed' else ('na' if detection_status == 'not_attempted' else ('pass' if atlas_accepted else 'warn')) %}
+            {% if detection_status != 'failed' %}
             <div class="metric">
-                <div class="metric-label">AIF Detection</div>
-                <div class="metric-value {{ aif_flag }}">{{ 'FAILED' if detection_status == 'failed' else ('Not attempted' if detection_status == 'not_attempted' else aif_flag | upper) }}</div>
-                {% if detection_status == 'failed' %}
-                {% set failure = dsc.qc_metrics.aif_detection.failure_detail | default(dsc.qc_metrics.aif_detection.failure_reason) %}
-                <div class="metric-note">{{ 'Empty search mask' if failure == 'empty_user_mask' else ('No candidates' if failure == 'no_candidates' else 'Quality checks failed') }}</div>
-                {% endif %}
+                <div class="metric-label">AIF Status</div>
+                <div class="metric-value {{ 'na' if aif_level == 'external' else aif_flag }}">{{ 'Not assessed' if aif_level == 'external' else aif_flag | upper }}</div>
+            </div>
+            {% endif %}
+            <div class="metric">
+                <div class="metric-label">Detection</div>
+                <div class="metric-value {{ 'poor' if detection_status == 'failed' else ('na' if detection_status == 'not_attempted' else '') }}">{{ 'Failed' if detection_status == 'failed' else ('Not attempted' if detection_status == 'not_attempted' else 'Accepted') }}</div>
             </div>
             <div class="metric">
                 <div class="metric-label">AIF Used</div>
                 <div class="metric-value">{{ 'None' if detection_status == 'failed' else ('Supplied' if aif_level == 'external' else 'Measured') }}</div>
-                {% if dsc.qc_metrics.aif_detection.search_region == 'user_mask' %}<div class="metric-note">Search: supplied mask</div>{% endif %}
             </div>
+            {% if detection_status == 'accepted' and aif_level != 'external' %}
+            {% set has_atlas = 'atlas' in aif_level %}
+            {% set has_brain = 'brain' in aif_level %}
+            <div class="metric">
+                <div class="metric-label">Search</div>
+                <div class="metric-value">{{ 'Supplied mask' if dsc.qc_metrics.aif_detection.search_region == 'user_mask' or 'user_mask' in aif_level else ('Atlas + whole brain' if has_atlas and has_brain else ('Atlas' if has_atlas else 'Whole brain')) }}</div>
+            </div>
+            {% endif %}
             {% endif %}
             {% set dsc_used = dsc.qc_metrics.aif_detection.n_aif_voxels_selected
                if dsc.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
