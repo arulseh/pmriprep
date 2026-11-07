@@ -50,6 +50,8 @@ def test_nlls_statistics_are_frequentist() -> None:
         "nlls", modality="DCE"
     )
     assert standard_error["UncertaintyStatistic"] == "parameter_standard_error"
+    assert standard_error["ConditionalOnAppliedDelay"] is True
+    assert "applied_delay" in standard_error["ExcludedUncertaintySources"]
 
 def test_svb_spatial_prior_is_described() -> None:
     """SVB sidecars identify the spatial prior and neighborhood."""

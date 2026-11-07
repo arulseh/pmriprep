@@ -349,7 +349,7 @@ def test_dce_preprocessing_cards_align_with_dsc_order(env):
     preprocessing = {
         "motion_status": "PASS",
         "baseline_frames": 5,
-        "tr_ms": 3.0,
+        "excitation_tr_ms": 3.0,
         "volume_tr_s": 4.0,
         "te_ms": 1.0,
         "n_volumes": 60,
@@ -1088,11 +1088,11 @@ def test_dsc_preprocessing_and_aif_cards_follow_common_order(env, detection_meth
                 "arrival_time_seconds": 12.0,
                 "aif_metrics": {
                     "peak_conc": 3.0,
-                    "ph": 40.0,
+                    "peak_height_percent": 40.0,
                     "fwhm": 6.0,
                     "ttp": 14.0,
-                    "psr": 95.4,
-                    "brr": 6.5,
+                    "signal_recovery_percent": 95.4,
+                    "baseline_return_ratio_percent": 6.5,
                 },
             },
         },

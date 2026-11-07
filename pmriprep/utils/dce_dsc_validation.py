@@ -45,8 +45,8 @@ class ValidationMetrics:
             "fraction_valid": self.fraction_valid,
             "spearman_correlation": self.spearman_correlation,
             "pearson_correlation": self.pearson_correlation,
-            "mean_vp": self.mean_vp,
-            "mean_cbv": self.mean_cbv,
+            "mean_normalized_vp": self.mean_vp,
+            "mean_normalized_cbv": self.mean_cbv,
         }
 
 

@@ -118,7 +118,7 @@ class TestPKMapKeyDriftGuard:
         assert "identifiable reporting range" in out["UndefinedValue"]
         assert "EES term is non-identifiable" in out["UndefinedValue"]
 
-    @pytest.mark.parametrize("map_key", ["ve", "vp"])
+    @pytest.mark.parametrize("map_key", ["ktrans", "ve", "vp"])
     def test_volume_fraction_sidecars_record_boundary_handling(
         self, map_key: str,
     ) -> None:
@@ -126,6 +126,19 @@ class TestPKMapKeyDriftGuard:
 
         assert "BoundaryHandling" in out
         assert "NaN" in out["ValueDomain"]
+        assert "QC mask" in out["BoundaryHandling"]
+        from pmriprep.models.dce.retention import is_degenerate_fit
+
+        if map_key == "ktrans":
+            assert not is_degenerate_fit("patlak", {"Ktrans": 0.0, "vp": 0.1})
+            assert is_degenerate_fit("extended_tofts", {"Ktrans": 0.0, "vp": 0.1, "ve": 0.2})
+            assert "Zero Ktrans" in out["BoundaryHandling"]
+        elif map_key == "vp":
+            assert not is_degenerate_fit("patlak", {"Ktrans": 0.01, "vp": 0.0})
+            assert not is_degenerate_fit("patlak", {"Ktrans": 0.01, "vp": 1.0})
+        else:
+            assert not is_degenerate_fit("tofts", {"Ktrans": 0.01, "ve": 1.0})
+            assert is_degenerate_fit("tofts", {"Ktrans": 0.01, "ve": 0.0})
 
     def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
         """Every PK-family sink key must survive strict AIF stamping."""

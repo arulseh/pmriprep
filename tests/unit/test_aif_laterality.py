@@ -1,6 +1,7 @@
 """Tests for shared descriptive AIF candidate laterality."""
 
 import numpy as np
+import pytest
 
 from pmriprep.utils.aif_laterality import describe_tumor_relative_aif_candidates
 
@@ -58,3 +59,27 @@ def test_missing_or_empty_mask_emits_no_laterality_claim() -> None:
     empty = np.zeros((5, 5, 5), dtype=np.uint8)
     assert describe_tumor_relative_aif_candidates([], np.eye(4), None) == {}
     assert describe_tumor_relative_aif_candidates([], np.eye(4), empty) == {}
+
+
+@pytest.mark.parametrize("x_direction", [1, -1])
+def test_brain_midline_counts_ignore_scanner_translation(x_direction: int) -> None:
+    """Off-centre and reversed-axis images keep coherent anatomical counts."""
+    x, y, z = np.indices((25, 31, 5))
+    brain = ((x - 12) / 9) ** 2 + ((y - 15) / 13) ** 2 + ((z - 2) / 3) ** 2 < 1
+    lesion = np.zeros(brain.shape, dtype=np.uint8)
+    lesion[6:9, 13:17, 1:4] = 1
+    affine = np.diag([2.0 * x_direction, 2.0, 2.0, 1.0])
+    candidates = [(7, 15, 2), (16, 15, 2), (18, 15, 2)]
+    first = describe_tumor_relative_aif_candidates(
+        candidates, affine, lesion, brain_mask=brain,
+    )
+    affine[:3, 3] = [100, -37, 12]
+    shifted = describe_tumor_relative_aif_candidates(
+        candidates, affine, lesion, brain_mask=brain,
+    )
+    assert shifted == first
+    assert shifted["laterality_midline_method"] == "brain_symmetry"
+    assert shifted["n_left_candidates"] == (1 if x_direction > 0 else 2)
+    assert shifted["n_right_candidates"] == (2 if x_direction > 0 else 1)
+    assert shifted["n_ipsilateral"] == 1
+    assert shifted["n_contralateral"] == 2

@@ -653,7 +653,7 @@ def _write_dsc_resume_checkpoint(
     if isinstance(motion_qc, dict):
         for k in (
             "fd_mean", "fd_max", "motion_status",
-            "n_outliers", "outlier_frames", "motion_thresh",
+            "n_outliers", "outlier_frames", "fd_threshold",
             "fd_list", "n_volumes", "percent_outliers",
         ):
             if k in motion_qc:

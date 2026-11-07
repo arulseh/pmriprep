@@ -2386,7 +2386,6 @@ class ComputeDCEMaps(BaseInterface):
         }
         qc["timing_diagnostics"] = {
             "basis": "selected_nlls", "report_only": True,
-            "frame_interval_seconds": interval * 60,
             "acquisition_frame_interval_seconds": prepared.selection_tr_seconds,
             "observation_indices": list(range(prepared.n_timepoints)),
             "observation_times_seconds": (fit_times * 60).tolist(),

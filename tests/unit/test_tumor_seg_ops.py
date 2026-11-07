@@ -10,7 +10,7 @@ from pmriprep.utils.tumor_seg import (
     _analyze_tumor_anatomy,
     _create_hemisphere_mask,
     _create_spherical_kernel,
-    _estimate_brain_symmetry_midline,
+    estimate_brain_symmetry_midline,
     create_nawm_roi,
     dilate_mask_from_array,
     erode_mask_from_array,
@@ -244,7 +244,7 @@ class TestCreateHemisphereMask:
         affine = np.eye(4)
         affine[:3, 3] = (100.0, -10.0, -10.0)
         brain = np.ones(shape, dtype=bool)
-        midline = _estimate_brain_symmetry_midline(brain, affine)
+        midline = estimate_brain_symmetry_midline(brain, affine)
         assert midline is not None
         left = _create_hemisphere_mask(shape, affine, "left", midline)
         right = _create_hemisphere_mask(shape, affine, "right", midline)

@@ -315,10 +315,10 @@
         <p>Signal quality, enhancement, tSNR, and temporal variability.</p>
         {% if dce.qc_metrics.preprocessing or dce.qc_metrics.signal_conversion %}
         <div class="metrics">
-            {% if dce.qc_metrics.preprocessing.tr_ms is defined %}
+            {% if dce.qc_metrics.preprocessing.excitation_tr_ms is defined %}
             <div class="metric">
                 <div class="metric-label">TR (pulse)</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.tr_ms) }} ms</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.excitation_tr_ms) }} ms</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.volume_tr_s is defined %}

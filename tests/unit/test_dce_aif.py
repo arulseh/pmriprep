@@ -2744,12 +2744,16 @@ def test_detection_has_no_hemisphere_score_prior(
 
     assert state.candidates == candidates[:2]
     assert state.scores == scores[:2]
-    assert state.tumor_relative_laterality == {
+    expected = {
         "tumor_laterality": "left",
         "laterality_mask_source": "enhancing",
         "n_contralateral": 1,
         "n_ipsilateral": 1,
     }
+    assert {key: state.tumor_relative_laterality[key] for key in expected} == expected
+    assert state.tumor_relative_laterality["n_left_candidates"] == 1
+    assert state.tumor_relative_laterality["n_right_candidates"] == 1
+    assert state.tumor_relative_laterality["laterality_midline_method"] == "brain_symmetry"
 
 
 class TestScoreAndGatePool:
@@ -3027,7 +3031,7 @@ class TestDetectedAIFEmissionInSitu:
         assert res["scaling_factor"] == pytest.approx(expected_factor)
         np.testing.assert_allclose(res["aif_curve"], expected_curve)
         qc = res["qc_metrics"]
-        assert qc["required_scaling_factor"] == pytest.approx(expected_factor)
+        assert qc["peak_scaling_required_factor"] == pytest.approx(expected_factor)
         assert qc["scaling_factor_warning"] is (warning is not None)
         assert qc["required_scaling_factor_warning"] is (warning is not None)
         scale_warnings = [

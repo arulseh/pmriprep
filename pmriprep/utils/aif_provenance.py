@@ -230,7 +230,7 @@ def build_aif_provenance_block(
     raw_metrics = aif_qc.get("aif_metrics")
     metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
     if modality == "DCE":
-        peak = aif_qc.get("final_peak_mm")
+        peak = aif_qc.get("emitted_peak_mm")
         if peak is None:
             peak = aif_qc.get("peak_mm_mean")
         if peak is None:
@@ -296,6 +296,9 @@ def build_aif_provenance_block(
     hemisphere_coverage = aif_qc.get("hemisphere_coverage")
     if hemisphere_coverage is not None:
         block["HemisphereCoverage"] = str(hemisphere_coverage)
+    laterality_midline = aif_qc.get("laterality_midline_method")
+    if laterality_midline is not None:
+        block["LateralityMidlineMethod"] = str(laterality_midline)
     tumor_laterality = aif_qc.get("tumor_laterality")
     if tumor_laterality is not None:
         block["TumorLaterality"] = str(tumor_laterality)

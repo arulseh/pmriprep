@@ -83,10 +83,10 @@ class TestAutoDetectionFullShape:
         assert am["peak_conc"] == pytest.approx(float(np.max(curve)))
         assert am["ttp"] == 22.5
         assert am["fwhm"] == 6.0
-        assert am["psr"] == 78.0
+        assert am["signal_recovery_percent"] == 78.0
         # S0 is 900 over the finalized 20-frame baseline; pooled minimum is 700.
-        assert am["ph"] == pytest.approx(100 * (900 - 700) / 900)
-        assert am["brr"] == pytest.approx(0.0)
+        assert am["peak_height_percent"] == pytest.approx(100 * (900 - 700) / 900)
+        assert am["baseline_return_ratio_percent"] == pytest.approx(0.0)
 
     @pytest.mark.parametrize("ph, other_tail_fraction", [
         (14.0, 0.3), (20.0, 0.3), (30.0, 0.3),
@@ -105,14 +105,14 @@ class TestAutoDetectionFullShape:
             curve, candidates, signal, mask, np.eye(4), 1.5, 6, 3, baseline_frames=10,
         )
         # Costs give weights 1/2, 1/4, 1/4. Quadratic smoothing preserves the signal dip.
-        assert qc["aif_metrics"]["ph"] / 100 == pytest.approx(ph / 100)
-        assert qc["aif_metrics"]["brr"] / 100 == pytest.approx(
+        assert qc["aif_metrics"]["peak_height_percent"] / 100 == pytest.approx(ph / 100)
+        assert qc["aif_metrics"]["baseline_return_ratio_percent"] / 100 == pytest.approx(
             np.mean(curve[54:64]) / np.max(curve[12:36])
         )
-        assert qc["aif_metrics"]["brr"] / 100 != pytest.approx(0.1)
+        assert qc["aif_metrics"]["baseline_return_ratio_percent"] / 100 != pytest.approx(0.1)
 
     @pytest.mark.parametrize("signal_state", ["missing", "nonfinite"])
-    def test_unavailable_pooled_signal_has_no_ph(self, signal_state: str) -> None:
+    def test_unavailable_pooled_signal_has_undefined_ph(self, signal_state: str) -> None:
         """Unavailable pool signal leaves PH unavailable despite candidate metadata."""
 
         concentration, signal, candidates = _measured_pool(30.0)
@@ -125,8 +125,10 @@ class TestAutoDetectionFullShape:
             curve, candidates, None if signal_state == "missing" else signal,
             mask, np.eye(4), 1.5, 6, 3, baseline_frames=10,
         )
-        assert "ph" not in qc["aif_metrics"]
-        assert np.isfinite(qc["aif_metrics"]["brr"])
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        assert sanitize_for_json(qc)["aif_metrics"]["peak_height_percent"] is None
+        assert np.isfinite(qc["aif_metrics"]["baseline_return_ratio_percent"])
 
 
 class TestExternalAifSubsetShape:

@@ -1448,7 +1448,7 @@ class DetectionState:
     whole_brain_symmetry_angle_degrees: float | None
     whole_brain_symmetry_overlap: float | None
     n_filtered_out: int
-    tumor_relative_laterality: dict[str, str | int]
+    tumor_relative_laterality: dict[str, str | int | float]
     rejected: RejectedAIF | None = None
 
     @classmethod
@@ -4259,7 +4259,6 @@ class AIFDetection(BaseInterface):
             "external_aif": True,
             "external_aif_file": str(ext_path),
             "aif_source": "external",  # For boilerplate text generation
-            "final_peak_mm": final_peak,
             "final_peak_time_seconds": final_peak_time_s,
             "baseline_reference_time_seconds": baseline_frames * tr,
             "final_fwhm_seconds": final_fwhm,
@@ -4267,8 +4266,6 @@ class AIFDetection(BaseInterface):
             "final_washout": final_washout,
             "blood_t1_seconds": blood_t1,
             "field_strength_t": field_strength,
-            "scaling_factor": 1.0,
-            "required_scaling_factor": 1.0,
             "aif_amplitude_calibration": "external",
             "detection_method": "external",
             "quality_score": quality_score,
@@ -4703,6 +4700,7 @@ class AIFDetection(BaseInterface):
                 affine,
                 lesion_mask,
                 enhancing_mask=enhancing_mask,
+                brain_mask=brain_mask,
             ),
         )
 
@@ -4837,13 +4835,6 @@ class AIFDetection(BaseInterface):
                 qc_metrics["atlas_tier_used"] = atlas_tier_used
 
         qc_metrics.update(state.tumor_relative_laterality)
-
-        # Hemisphere coverage: classify candidates as left/right via RAS x-coord
-        if candidates:
-            hemi_cov, n_left, n_right = _classify_hemisphere(candidates, affine)
-            qc_metrics["n_left_candidates"] = n_left
-            qc_metrics["n_right_candidates"] = n_right
-            qc_metrics["hemisphere_coverage"] = hemi_cov
 
         # Venous contamination detection and warning
         # Check if any candidates were flagged as likely venous
@@ -5193,7 +5184,6 @@ class AIFDetection(BaseInterface):
         # Add final metrics to QC dict
         qc_metrics.update(
             {
-                "final_peak_mm": final_peak,
                 "final_peak_time_seconds": final_peak_time_s,
                 "baseline_reference_time_seconds": baseline_frames * tr,
                 "final_fwhm_seconds": final_fwhm,
@@ -5201,9 +5191,7 @@ class AIFDetection(BaseInterface):
                 "final_washout": final_washout,
                 "blood_t1_seconds": blood_t1,
                 "field_strength_t": field_strength,
-                "scaling_factor": scaling_factor,
                 "scaling_factor_warning": scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL,
-                "required_scaling_factor": required_scaling_factor,
                 "required_scaling_factor_warning": (
                     required_scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL
                 ),

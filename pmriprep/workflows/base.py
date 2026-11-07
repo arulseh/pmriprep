@@ -1843,9 +1843,9 @@ def _connect_master_dsc_outputs_and_build_provenance(
             "(e.g., 0.05 for Vueway).",
             dsc_config.agent_standard_dose,
         )
-    elif agent_dose_source == ParameterSource.BIDS_SIDECAR:
+    elif agent_dose_source == ParameterSource.AGENT_LOOKUP:
         logger.info(
-            "DSC agent standard dose resolved from BIDS sidecar: %s -> %.3f mmol/kg.",
+            "DSC standard dose looked up for the BIDS contrast agent: %s -> %.3f mmol/kg.",
             dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
             dsc_config.agent_standard_dose,
         )
@@ -2382,7 +2382,7 @@ def _init_master_dce_workflow(
             )
         elif dce_sidecar["r1_relaxivity"] is not None:
             _resolved_r1 = dce_sidecar["r1_relaxivity"]
-            _r1_source = ParameterSource.BIDS_SIDECAR
+            _r1_source = ParameterSource.AGENT_LOOKUP
             dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
             logger.info(
                 f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
@@ -2390,7 +2390,7 @@ def _init_master_dce_workflow(
             )
         elif _agent_name is not None:
             _resolved_r1 = lookup_r1(_agent_name, _resolved_fs)
-            _r1_source = ParameterSource.BIDS_SIDECAR
+            _r1_source = ParameterSource.AGENT_LOOKUP
             dce_wf.inputs.inputnode.r1_relaxivity = _resolved_r1
         else:
             raise ValueError(
@@ -2420,7 +2420,7 @@ def _init_master_dce_workflow(
             dose_source=_dce_dose_source,
             agent_standard_dose=dce_sidecar["agent_standard_dose"],
             agent_standard_dose_source=(
-                ParameterSource.BIDS_SIDECAR if _agent_name is not None
+                ParameterSource.AGENT_LOOKUP if _agent_name is not None
                 else ParameterSource.DEFAULT_FALLBACK
             ),
             bids_agent_string=_bids_agent_string,
@@ -3294,7 +3294,7 @@ def _prepare_master_preflight_state(
             dsc_agent_dose_source = ParameterSource.USER_SPECIFIED
         elif dsc_sidecar.get("contrast_agent") is not None:
             dsc_config.agent_standard_dose = dsc_sidecar["agent_standard_dose"]
-            dsc_agent_dose_source = ParameterSource.BIDS_SIDECAR
+            dsc_agent_dose_source = ParameterSource.AGENT_LOOKUP
         else:
             dsc_agent_dose_source = ParameterSource.DEFAULT_FALLBACK
 

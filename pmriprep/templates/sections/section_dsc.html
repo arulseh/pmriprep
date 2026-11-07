@@ -202,10 +202,10 @@
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.peak_conc) }} s<sup>-1</sup></div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.ph is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.peak_height_percent is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Height</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.ph) }}%</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.peak_height_percent) }}%</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.fwhm is defined %}
@@ -220,16 +220,16 @@
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.ttp) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.psr is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.signal_recovery_percent is defined %}
             <div class="metric">
                 <div class="metric-label">Signal Recovery (PSR)</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.psr) }}%</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.signal_recovery_percent) }}%</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.brr is defined %}
+            {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.baseline_return_ratio_percent is defined %}
             <div class="metric">
                 <div class="metric-label">Baseline Return Ratio</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.brr) }}%</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.baseline_return_ratio_percent) }}%</div>
             </div>
             {% endif %}
         </div>

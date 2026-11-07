@@ -355,7 +355,7 @@ class TestPublicArtifactSchema:
             {
                 "detection_method": "atlas",
                 "peak_mm_mean": 3.0,
-                "final_peak_mm": 6.0,
+                "emitted_peak_mm": 6.0,
                 "fwhm_seconds_mean": 8.0,
                 "final_fwhm_seconds": 11.0,
             },

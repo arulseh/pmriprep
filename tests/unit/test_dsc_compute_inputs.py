@@ -208,7 +208,7 @@ def test_compute_timing_maps_uses_aif_arrival_reference() -> None:
     )
 
     np.testing.assert_allclose(result.ttp[:, 0, 0], [2.0, 6.0])
-    assert result.aif_bat_seconds == pytest.approx(6.0)
+    assert result.baseline_reference_seconds == pytest.approx(6.0)
 
 
 def test_compute_timing_maps_keeps_prearrival_peaks_undefined() -> None:
@@ -283,6 +283,21 @@ def test_compute_auc_maps_near_zero_measured_aif_returns_nan(
 
     assert np.all(np.isnan(result.cbv))
     assert result.qc["cbv_auc_aif_integral"] == 0.0
+    assert np.isfinite(result.tissue).all()
+    qc = ComputeDSCMaps._summarize_dsc_maps(
+        result.cbv, result.cbv, result.cbv, result.cbv, result.cbv,
+        np.ones(result.cbv.shape, dtype=bool), "external", {}, 2.0,
+    )
+    from pmriprep.utils.sidecar_builders import dump_sidecar_json, filter_pipeline_qc
+
+    qc["tissue_auc_finite_voxels"] = int(np.isfinite(result.tissue).sum())
+    qc["tissue_auc_negative_fraction"] = float(np.mean(result.tissue < 0))
+    public = json.loads(dump_sidecar_json(filter_pipeline_qc({"deconvolution": qc})))
+    published = public["deconvolution"]
+    assert published["cbv_auc_finite_voxels"] == 0
+    assert published["tissue_auc_finite_voxels"] == 2
+    assert published["cbv_auc_negative_fraction"] is None
+    assert published["tissue_auc_negative_fraction"] == 0.0
 
 
 def test_compute_auc_maps_does_not_clip_large_finite_values(tmp_path: Path) -> None:
@@ -392,7 +407,7 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
         mask_bool=mask,
         aif_level="atlas",
         baseline_info={"baseline_frames_detected": 4},
-        aif_bat_seconds=6.0,
+        baseline_reference_seconds=6.0,
         cbv_auc_qc_source=np.array([-2.0, 4.0, 999.0]),
     )
 
@@ -407,7 +422,7 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
     assert qc["tmax_median"] == pytest.approx(5.0)
     assert qc["n_voxels"] == 2
     assert qc["baseline_frames_detected"] == 4
-    assert qc["aif_bat_seconds"] == pytest.approx(6.0)
+    assert qc["baseline_reference_seconds"] == pytest.approx(6.0)
     assert qc["cbv_literature_range_applicable"] is True
 
 
@@ -950,7 +965,7 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
         "_compute_timing_maps",
         lambda *args: calls.append("timing") or SimpleNamespace(
             ttp=data * 9.0,
-            aif_bat_seconds=4.5,
+            baseline_reference_seconds=4.5,
         ),
     )
     monkeypatch.setattr(

@@ -119,7 +119,7 @@ def test_dsc_user_mask_bounds_cascade_and_neighborhood_averaging(
     )
     block = build_aif_provenance_block(final.qc_metrics, modality="DSC")
     assert block["Source"] == "measured" and block["SearchRegion"] == "user_mask"
-    assert np.isfinite(final.qc_metrics["aif_metrics"]["ph"])
+    assert np.isfinite(final.qc_metrics["aif_metrics"]["peak_height_percent"])
 
 
 @pytest.mark.parametrize("count,rejected", [(1, False), (2, False), (2, True)])

@@ -359,12 +359,13 @@ def _enrich_dce(
         # External AIFs are supplied in plasma units; internally generated
         # curves undergo blood-to-plasma conversion. Emit unit traceability
         # only when a peak or hematocrit was recorded.
-        final_peak_plasma = aif.get("final_peak_mm")
+        final_peak_plasma = aif.get("emitted_peak_mm")
         hct_used = aif_block.get("Hematocrit")
         if hct_used is not None:
             perf["Hematocrit"] = {
                 "value": hct_used,
-                "Source": "aif_detection",
+                "Source": "configuration",
+                "Units": "1",
             }
         if final_peak_plasma is not None or hct_used is not None:
             units_block: Dict[str, Any] = {
@@ -372,9 +373,7 @@ def _enrich_dce(
                     "External AIF supplied in plasma [Gd] (mM); "
                     "no hematocrit conversion applied."
                     if aif_block.get("Source") == "external"
-                    else "AIF is in true plasma [Gd] (mM) after /(1-Hct) "
-                    "conversion; Parker reference peaks are blood-voxel "
-                    "(pre-Hct)."
+                    else "AIF is in plasma [Gd] (mM) after /(1-Hct) conversion."
                 ),
             }
             if final_peak_plasma is not None:
@@ -528,8 +527,8 @@ def _enrich_dsc(
 
         # Baseline frames (also from aif sub-dict)
         baseline_block: Dict[str, Any] = {}
-        if "baseline_frames_used" in aif:
-            baseline_block["n_frames"] = int(aif["baseline_frames_used"])
+        if "n_baseline_frames" in aif:
+            baseline_block["n_frames"] = int(aif["n_baseline_frames"])
         if "baseline_detection_method" in aif:
             baseline_block["detection_method"] = str(aif["baseline_detection_method"])
         if baseline_block:

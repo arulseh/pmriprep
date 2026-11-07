@@ -151,26 +151,22 @@ class AIFQCPlot(BaseInterface):
         # Build AIF metrics dict for HTML report. Producer (aif_detect)
         # populates the canonical nested ``aif_metrics`` block on its
         # qc_metrics output; this node augments that block with
-        # detection_method + gamma-fit annotations and rounds for
+        # gamma-fit annotations and rounds for
         # display.
         upstream = qc.get("aif_metrics") or {}
-        aif_metrics: dict[str, Any] = {
-            "detection_method": detection_level,
-        }
+        aif_metrics: dict[str, Any] = {}
         if "peak_conc" in upstream:
             aif_metrics["peak_conc"] = round(float(upstream["peak_conc"]), 2)
         if "ttp" in upstream:
             aif_metrics["ttp"] = round(float(upstream["ttp"]), 1)
         if "fwhm" in upstream:
             aif_metrics["fwhm"] = round(float(upstream["fwhm"]), 1)
-        if "arrival" in upstream:
-            aif_metrics["arrival"] = round(float(upstream["arrival"]), 1)
-        if "brr" in upstream:
-            aif_metrics["brr"] = round(float(upstream["brr"]), 1)
-        if "psr" in upstream:
-            aif_metrics["psr"] = round(float(upstream["psr"]), 1)
-        if "ph" in upstream:
-            aif_metrics["ph"] = round(float(upstream["ph"]), 1)
+        if "baseline_return_ratio_percent" in upstream:
+            aif_metrics["baseline_return_ratio_percent"] = round(float(upstream["baseline_return_ratio_percent"]), 1)
+        if "signal_recovery_percent" in upstream:
+            aif_metrics["signal_recovery_percent"] = round(float(upstream["signal_recovery_percent"]), 1)
+        if "peak_height_percent" in upstream:
+            aif_metrics["peak_height_percent"] = round(float(upstream["peak_height_percent"]), 1)
 
         # Generate glass brain candidates plot if transforms are available
         aif_candidates_path: str | None = None
@@ -285,7 +281,7 @@ class AIFQCPlot(BaseInterface):
                 )
 
             # Baseline region shading
-            baseline_frames = qc.get("baseline_frames_used", qc.get("n_baseline_frames", 5))
+            baseline_frames = qc.get("n_baseline_frames", 5)
             baseline_end_t = (baseline_frames - 1) * tr
             ax.axvspan(0, baseline_end_t, alpha=0.08, color="gray", label=f"Baseline ({baseline_frames} fr)")
 

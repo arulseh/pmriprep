@@ -437,11 +437,26 @@ class _MidlineEstimate:
     symmetry_dice: float
 
 
-def _estimate_brain_symmetry_midline(
+def estimate_brain_symmetry_midline(
     brain_mask: npt.NDArray[np.bool_],
     affine: npt.NDArray[np.float64],
 ) -> Optional[_MidlineEstimate]:
-    """Estimate a subject-space midsagittal plane from axial brain symmetry."""
+    """Estimate a subject-space midsagittal plane from axial brain symmetry.
+
+    Parameters
+    ----------
+    brain_mask : ndarray of bool
+        Native-space three-dimensional brain support.
+    affine : ndarray
+        Voxel-to-RAS transform for the brain mask.
+
+    Returns
+    -------
+    _MidlineEstimate or None
+        Signed distances in millimetres, plane angle and symmetry overlap.
+        Positive distances point toward RAS right. Returns None when support
+        or geometry is insufficient for the estimate.
+    """
     from scipy.ndimage import map_coordinates  # type: ignore[import-untyped]
 
     brain = np.asarray(brain_mask, dtype=bool)
@@ -937,7 +952,7 @@ def create_nawm_roi(
         brain_mask = np.ones(tumor_mask.shape, dtype=bool)
 
     midline = (
-        _estimate_brain_symmetry_midline(brain_mask, affine)
+        estimate_brain_symmetry_midline(brain_mask, affine)
         if brain_mask_file is not None
         else None
     )

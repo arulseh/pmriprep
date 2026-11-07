@@ -741,6 +741,7 @@ class ParameterSource:
     DEFAULT_FALLBACK = "default_fallback"
     USER_SPECIFIED = "user_specified"
     AUTO_DETECTED = "auto_detected"
+    AGENT_LOOKUP = "agent_lookup"
 
 
 #: Canonical brand names for each generic agent (deterministic, not
@@ -804,7 +805,8 @@ def build_dce_provenance(
     agent_source : str
         How the agent was determined (ParameterSource constant).
     relaxivity_source : str, optional
-        How r1 was determined. Defaults to agent_source.
+        How r1 was determined. An internally looked-up value is labelled
+        agent_lookup; otherwise an omitted source is unspecified.
     r1_relaxivity : float, optional
         R1 relaxivity in s^-1/mM Gd. Required unless a recognized agent
         and supported field entry are supplied.
@@ -846,6 +848,7 @@ def build_dce_provenance(
         if agent_name == "unspecified":
             raise ValueError("An explicit r1_relaxivity is required for an unspecified agent.")
         r1_relaxivity = lookup_r1(agent_name, field_strength)
+        relaxivity_source = ParameterSource.AGENT_LOOKUP
     brand = get_brand_name(agent_name)
 
     agent_dict: dict[str, Any] = {
@@ -863,7 +866,7 @@ def build_dce_provenance(
             "r1": float(r1_relaxivity),
             "units": "s-1.mM-1",
             "field_strength_T": float(field_strength),
-            "Source": str(relaxivity_source or agent_source),
+            "Source": str(relaxivity_source or "unspecified"),
         },
         "ContrastDose": {
             "standard_dose_mmol_kg": float(agent_standard_dose),

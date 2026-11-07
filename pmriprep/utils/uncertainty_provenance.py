@@ -56,7 +56,8 @@ def build_uncertainty_provenance(
         Inference-engine identifier from the processing configuration.
     modality : str
         Perfusion modality (``"DCE"`` or ``"DSC"``). DCE adds the conditioning
-        assumptions for concentration conversion and the supplied AIF.
+        assumptions for concentration conversion, the supplied AIF and
+        the applied delay (selected or fixed at zero).
 
     Returns
     -------
@@ -80,8 +81,10 @@ def build_uncertainty_provenance(
     if modality.upper() == "DCE":
         metadata["ConditionalOnConvertedConcentration"] = True
         metadata["ConditionalOnSuppliedAIF"] = True
+        metadata["ConditionalOnAppliedDelay"] = True
         metadata["ExcludedUncertaintySources"] = [
             "model_selection",
+            "applied_delay",
             "baseline_estimation",
             "T1_mapping",
             "B1_mapping",

@@ -1,3 +1,19 @@
+1.0.0rc6.dev41 (2026-11-07)
+===========================
+
+* FIX: Distinguish configured hematocrit and looked-up relaxivity/standard dose
+  from measured BIDS metadata in derivative provenance.
+* FIX: Describe retained DCE volume-fraction endpoints separately from QC
+  screening, and identify parameter uncertainty as conditional on applied delay.
+* FIX: Disclose retained Patlak Ktrans zeros, use brain symmetry for descriptive
+  AIF laterality, and clarify QC timing and normalized-concordance labels.
+* CHG: Keep unavailable JSON measurements as null and make QC field names
+  independent of numerical equality. Retain both tissue-AUC and AUC-CBV
+  summaries; use fd_threshold, acquisition_frame_interval_seconds,
+  n_baseline_frames and peak_scaling_* as canonical QC fields.
+* MNT: Remove duplicate QC summaries at their producers and update report
+  consumers to the descriptive metric names.
+
 1.0.0rc6.dev40 (2026-11-07)
 ===========================
 

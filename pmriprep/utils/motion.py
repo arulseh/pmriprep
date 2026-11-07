@@ -110,7 +110,7 @@ def summarize_motion(
     return {
         "fd_list": fd.tolist(), "fd_mean": mean, "fd_max": maximum,
         "n_outliers": len(indices), "outlier_frames": indices,
-        "percent_outliers": percent, "motion_thresh": threshold,
+        "percent_outliers": percent,
         "fd_threshold": threshold, "head_radius_mm": head_radius,
         "n_volumes": len(fd), "motion_qc_available": True,
         "motion_status": get_composite_motion_status(mean, maximum, percent),

@@ -1941,31 +1941,12 @@ class AIFDetection(BaseInterface):
         )
         aif_centroid_mm = (affine @ coord_homog)[:3].tolist()
 
-        # Hemisphere distribution (voxel midline for counting)
-        midline_x = brain_mask.shape[0] // 2
-        n_left = sum(
-            1 for _, coord, _ in top_candidates if coord[0] < midline_x
-        )
-        n_right = len(top_candidates) - n_left
-        is_bilateral = n_left > 0 and n_right > 0
-
-        # Determine AIF hemisphere via world coordinates
-        aif_hemisphere = "left" if aif_centroid_mm[0] < 0 else "right"
-
         # Edge slice warning
         n_slices = brain_mask.shape[2]
         aif_z = best_coord_int[2]
         is_edge = aif_z == 0 or aif_z == n_slices - 1
 
         n_used = len(top_candidates)
-
-        # Hemisphere coverage (harmonized with DCE)
-        if n_left > 0 and n_right > 0:
-            hemisphere_coverage = "bilateral"
-        elif n_left > 0:
-            hemisphere_coverage = "unilateral_left"
-        else:
-            hemisphere_coverage = "unilateral_right"
 
         qc: dict[str, Any] = {
             # Candidate counts
@@ -1980,7 +1961,6 @@ class AIFDetection(BaseInterface):
             # Spatial
             "aif_voxel_coord": list(best_coord_int),
             "aif_centroid_mm": [float(v) for v in aif_centroid_mm],
-            "aif_hemisphere": aif_hemisphere,
             "candidate_coords": [
                 [int(c) for c in coord]
                 for _, coord, _ in top_candidates
@@ -1988,11 +1968,6 @@ class AIFDetection(BaseInterface):
             "candidate_scores": _costs_to_scores(
                 [float(cost) for cost, _, _ in top_candidates]
             ),
-            # Hemisphere distribution
-            "n_left_candidates": n_left,
-            "n_right_candidates": n_right,
-            "hemisphere_coverage": hemisphere_coverage,
-            "is_bilateral": is_bilateral,
             # Edge slice
             "aif_slice": aif_z,
             "n_slices": n_slices,
@@ -2009,15 +1984,16 @@ class AIFDetection(BaseInterface):
                 "peak_conc": float(np.max(aif_curve)),
                 "ttp": float(best_m.get("ttp", 0.0)),
                 "fwhm": float(best_m.get("fwhm", 0.0)),
-                "psr": float(best_m.get("psr", 0.0)),
-                "arrival": float(arrival_time_s),
+                "signal_recovery_percent": float(best_m.get("psr", 0.0)),
             },
         }
 
-        for source, target in (("ph", "ph"), ("baseline_return_ratio", "brr")):
+        for source, target in (
+            ("ph", "peak_height_percent"),
+            ("baseline_return_ratio", "baseline_return_ratio_percent"),
+        ):
             value = pooled_metrics.get(source)
-            if value is not None and np.isfinite(value):
-                qc["aif_metrics"][target] = float(value)
+            qc["aif_metrics"][target] = float(value) if value is not None else float("nan")
 
         return aif_curve, qc
 
@@ -2196,8 +2172,6 @@ class AIFDetection(BaseInterface):
             "n_candidates": 0,
             "baseline_frames": baseline_frames,
             "bootstrap_baseline_frames": bootstrap_baseline,
-            "aif_baseline_frames": baseline_frames,
-            "baseline_frames_used": baseline_frames,
             "n_baseline_frames": baseline_frames,
             "baseline_detection_method": "selected_aif_refined",
             # Detection-time AIF metrics under the canonical nested
@@ -2703,6 +2677,7 @@ class AIFDetection(BaseInterface):
                 context.affine,
                 context.lesion_mask,
                 enhancing_mask=context.enhancing_mask,
+                brain_mask=context.brain_mask,
             )
         )
         if cascade.initial_level is not None:
@@ -2755,7 +2730,6 @@ class AIFDetection(BaseInterface):
         )
         qc_metrics["averaged_aif_spr"] = round(spr, 1)
         qc_metrics["averaged_aif_fp_peak_frame"] = first_pass_frame
-        qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
         return _FinalizedDetectedAIF(
             curve,
             mask,
@@ -2803,7 +2777,7 @@ class AIFDetection(BaseInterface):
 
         logger = logging.getLogger(__name__)
         diagnostics: dict[str, Any] = {
-            "baseline_preliminary_frames": int(preliminary_baseline),
+            "preliminary_baseline_frames": int(preliminary_baseline),
             "baseline_refinement_source": "whole_brain_percentile",
         }
         if len(curve) < 3:
@@ -2818,7 +2792,7 @@ class AIFDetection(BaseInterface):
             )
         except Exception:
             diagnostics["baseline_refinement_method"] = "ensemble_unavailable"
-            diagnostics["baseline_frames_used"] = int(preliminary_baseline)
+            diagnostics["n_baseline_frames"] = int(preliminary_baseline)
             return preliminary_baseline, diagnostics
 
         confidence = str(ensemble.get("confidence", "low"))
@@ -2829,7 +2803,7 @@ class AIFDetection(BaseInterface):
         )
         if refined < 2 or refined > len(curve) // 2:
             diagnostics["baseline_refinement_method"] = "ensemble_out_of_range"
-            diagnostics["baseline_frames_used"] = int(preliminary_baseline)
+            diagnostics["n_baseline_frames"] = int(preliminary_baseline)
             return preliminary_baseline, diagnostics
 
         final = preliminary_baseline
@@ -2855,7 +2829,7 @@ class AIFDetection(BaseInterface):
                 preliminary_baseline,
             )
 
-        diagnostics["baseline_frames_used"] = int(final)
+        diagnostics["n_baseline_frames"] = int(final)
         return int(final), diagnostics
 
     def _prepare_detection_baseline(
@@ -3196,12 +3170,9 @@ class AIFDetection(BaseInterface):
             s0_rejection_available=context.signal is not None,
             tr_used=context.tr,
             bootstrap_baseline_frames=context.baseline_frames,
-            baseline_frames_initial=context.baseline_frames,
             preliminary_baseline_frames=baseline.frames,
             tissue_baseline_confidence=baseline.diagnostics.get("confidence", "unknown"),
             tissue_baseline_diagnostics=baseline.diagnostics,
-            aif_baseline_frames=baseline_frames,
-            baseline_frames_used=baseline_frames,
             n_baseline_frames=baseline_frames,
             baseline_detection_method="selected_aif_refined" if curve is not None else "whole_brain_ensemble",
             brain_edge_exclusion_target_mm=_BRAIN_EDGE_EXCLUSION_MM,

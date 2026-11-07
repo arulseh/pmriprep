@@ -748,7 +748,13 @@ def test_registration_reports_applied_candidate(
     interface._run_interface(SimpleNamespace())
     qc = interface._results["qc_metrics"]
     assert qc["path_selection"]["selected"] == selected
-    assert qc["method"] == ("header" if selected == "header" else "flirt")
+    assert qc["registration_method"] == ("header" if selected == "header" else "flirt")
+    from pmriprep.utils.sidecar_builders import filter_pipeline_qc
+
+    public = filter_pipeline_qc({"registration": qc})["registration"]["path_selection"]
+    displacement_fields = {key for key in qc["path_selection"] if key.startswith("selected_vs_header_")}
+    assert len(displacement_fields) == 3
+    assert all((key in public) == (selected != "header") for key in displacement_fields)
     np.testing.assert_array_equal(
         nib.load(interface._results["out_file"]).get_fdata(),
         {"header": 1.0, "A": 2.0, "B": 3.0}[selected],

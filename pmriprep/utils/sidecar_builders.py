@@ -63,7 +63,7 @@ _CONFIG_STRIP_KEYS = frozenset({
 
 
 def filter_pipeline_qc(qc: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip per-frame arrays and debugging internals from the QC envelope."""
+    """Remove internal QC fields and metadata inapplicable to the processing path."""
     filtered = copy.deepcopy(qc)
 
     def _strip(d: dict) -> None:
@@ -74,25 +74,13 @@ def filter_pipeline_qc(qc: Dict[str, Any]) -> Dict[str, Any]:
                 _strip(d[key])
 
     _strip(filtered)
-    aif = filtered.get("aif_detection")
-    if isinstance(aif, dict):
-        # Drop aliases only when their canonical value agrees. Distinct stages
-        # and any disagreement remain visible.
-        aliases = {
-            "baseline_frames_initial": "bootstrap_baseline_frames",
-            "baseline_preliminary_frames": "preliminary_baseline_frames",
-            "aif_baseline_frames": "n_baseline_frames",
-            "baseline_frames_used": "n_baseline_frames",
-            "averaged_aif_final_roi_size": "cascade_accepted_roi_size",
-            "final_peak_mm": "emitted_peak_mm",
-            "scaling_factor": "peak_scaling_factor",
-            "required_scaling_factor": "peak_scaling_required_factor",
-        }
-        for alias, canonical in aliases.items():
-            if alias in aif and canonical in aif and aif[alias] == aif[canonical]:
-                del aif[alias]
-        if aif.get("detection_method") and filtered.get("config") == {"aif_source": "auto"}:
-            del filtered["config"]
+    registration = filtered.get("registration", {})
+    if isinstance(registration, dict) and registration.get("registration_method") == "header":
+        selection = registration.get("path_selection", {})
+        if isinstance(selection, dict):
+            for key in list(selection):
+                if key.startswith("selected_vs_header_"):
+                    del selection[key]
     return filtered
 
 
@@ -119,8 +107,7 @@ def sanitize_for_json(obj: Any) -> Any:
     1. Non-finite numbers (NaN/Inf) have no JSON representation and are emitted
        as bare ``NaN``/``Infinity`` tokens that strict parsers (e.g. the BIDS
        validator) reject. A non-finite numeric value means "not available", so
-       dict entries are dropped (readers see the key as absent) and non-finite
-       sequence elements become ``null``.
+       values become ``null`` while their keys or sequence positions are retained.
     2. Numpy scalars that are not python-float subclasses (float32/float16/
        int32/...) are not natively serializable, so under a ``default=str``
        encoder they become quoted strings instead of numbers. Finite numpy
@@ -142,8 +129,6 @@ def sanitize_for_json(obj: Any) -> Any:
         out: Dict[str, Any] = {}
         for k, v in obj.items():
             cv = v.item() if isinstance(v, np.generic) else v
-            if _is_nonfinite_number(cv):
-                continue
             out[k] = sanitize_for_json(cv)
         return out
     if isinstance(obj, (list, tuple)):
@@ -157,13 +142,13 @@ def sanitize_for_json(obj: Any) -> Any:
     if isinstance(obj, np.generic):
         native = obj.item()
         return None if _is_nonfinite_number(native) else native
-    return obj
+    return None if _is_nonfinite_number(obj) else obj
 
 
 def dump_sidecar_json(obj: Any) -> str:
     """Serialize a sidecar/QC dict to a JSON string, sanitized for strict validity.
 
-    Runs :func:`sanitize_for_json` first (drops NaN/Inf, coerces numpy scalars to
+    Runs :func:`sanitize_for_json` first (maps NaN/Inf to null, coerces numpy scalars to
     native types) so the output never carries a bare ``NaN``/``Infinity`` token or
     a numpy-scalar-turned-string, then dumps with the pipeline's standard
     ``indent=2`` and a ``default=str`` fallback for any remaining non-serializable.
@@ -1818,8 +1803,8 @@ def enrich_dce_preproc_sidecar(
         sidecar["NumberOfVolumes"] = int(p["n_volumes"])
     if "volume_tr_s" in p:
         sidecar["RepetitionTime"] = float(p["volume_tr_s"])
-        if "tr_ms" in p:
-            sidecar["RepetitionTimeExcitation"] = float(p["tr_ms"]) / 1000.0
+        if "excitation_tr_ms" in p:
+            sidecar["RepetitionTimeExcitation"] = float(p["excitation_tr_ms"]) / 1000.0
     return sidecar
 
 
@@ -1868,6 +1853,15 @@ def enrich_dce_pk_map_sidecar(
     field via the shared AIF provenance module.
     Cross-modality fields land only on the maps they apply to.
     """
+    if map_key == "ktrans":
+        sidecar.update({
+            "ValueDomain": "nonnegative volume transfer constant, or NaN",
+            "BoundaryHandling": (
+                "Zero Ktrans may be retained for Patlak fits; the QC mask "
+                "excludes these lower-bound estimates. Other model families "
+                "require positive Ktrans for retention"
+            ),
+        })
     if map_key == "kep":
         sidecar.update({
             "Estimator": "Ktrans / ve",
@@ -1879,18 +1873,20 @@ def enrich_dce_pk_map_sidecar(
         })
     if map_key == "ve":
         sidecar.update({
-            "ValueDomain": "model-specific interior volume-fraction range, or NaN",
+            "ValueDomain": "positive volume fraction up to 1, or NaN",
             "BoundaryHandling": (
-                "Fits at the applicable optimizer boundary are rejected rather "
-                "than published as ordinary ve estimates"
+                "Zero ve is rejected. The upper endpoint may be retained; "
+                "the QC mask separately screens endpoints, joint volume "
+                "constraints and identification"
             ),
         })
     if map_key == "vp":
         sidecar.update({
-            "ValueDomain": "nonnegative plasma volume fraction, or NaN",
+            "ValueDomain": "plasma volume fraction from 0 to 1 inclusive, or NaN",
             "BoundaryHandling": (
-                "Fits at the optimizer boundary are rejected rather than "
-                "published as ordinary vp estimates"
+                "Zero and upper-endpoint vp values may be retained; the QC "
+                "mask separately screens endpoints, joint volume constraints "
+                "and identification"
             ),
         })
     if map_key in {"fp", "ps"}:

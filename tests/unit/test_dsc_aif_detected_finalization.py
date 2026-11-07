@@ -43,7 +43,7 @@ def test_selected_aif_refinement_preserves_confidence_policy(
 
     assert result == expected
     assert diagnostics["baseline_refinement_source"] == source
-    assert diagnostics["baseline_frames_used"] == expected
+    assert diagnostics["n_baseline_frames"] == expected
 
 
 def test_detected_aif_finalization_builds_mask_and_cascade_qc(

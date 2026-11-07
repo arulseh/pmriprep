@@ -1377,7 +1377,10 @@ def test_dce_r1_policy_reaches_preflight_workflow_and_provenance(
         assert perf["ContrastAgent"]["GenericName"] == normalize_agent_name(agent)
         assert perf["ContrastAgent"]["Source"] == "bids_sidecar"
     assert perf["Relaxivity"]["Source"] == (
-        "user_override" if override is not None else "bids_sidecar"
+        "user_override" if override is not None else "agent_lookup"
+    )
+    assert perf["ContrastDose"]["AgentStandardDoseSource"] == (
+        "default_fallback" if agent is None or agent == "unrecognized" else "agent_lookup"
     )
 
 
@@ -1404,6 +1407,7 @@ def test_dsc_dose_does_not_require_available_r1(
     )
     assert config.agent_standard_dose == dose
     assert state.dsc_agent_source == "bids_sidecar"
+    assert state.dsc_agent_dose_source == "agent_lookup"
     assert state.dsc_sidecar["r1_relaxivity"] is None
 
 
@@ -1465,7 +1469,7 @@ def test_prepare_master_preflight_state_preserves_metadata_policy(
 
     assert dsc_config.agent_standard_dose == 0.04
     assert state.gd_multiplicity == 4
-    assert state.dsc_agent_dose_source == "bids_sidecar"
+    assert state.dsc_agent_dose_source == "agent_lookup"
     assert state.dsc_agent_source == "bids_sidecar"
     assert captured["vfa_flip_angles"] == [2.0, None]
     assert captured["vfa_trs"] == [0.004, 0.005]

@@ -198,6 +198,7 @@
             "warns": []
           }
         ],
+        "aif_hemisphere": "right",
         "aif_source": "auto",
         "aif_status": "PASS",
         "aif_ttp_frame": 7,
@@ -272,9 +273,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.c598d8a9157d0p+3"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.13dcb08d3dcb0p+3"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.c000000000000p+4"
         },
@@ -291,7 +289,12 @@
           "__f__": "0x1.ae147ae147ae1p-2"
         },
         "hemisphere_coverage": "unilateral_right",
+        "is_bilateral": false,
         "is_likely_venous": false,
+        "laterality_midline_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "laterality_midline_method": "brain_symmetry",
         "low_tr_mode": false,
         "multi_bump_tail_count": 0,
         "multi_bump_tail_heights_mm": [],
@@ -323,13 +326,7 @@
         "raw_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
         },
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
           "__f__": "0x1.8000000000000p+3"
@@ -528,6 +525,7 @@
         "aif_confidence": "standard",
         "aif_g6_admitted": false,
         "aif_gate_decisions": [],
+        "aif_hemisphere": "right",
         "aif_source": "auto",
         "aif_status": "PASS",
         "aif_ttp_frame": 8,
@@ -610,9 +608,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.30600f8d231c1p+4"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.8000000000000p+2"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -629,7 +624,12 @@
           "__f__": "0x1.ae147ae147ae1p-2"
         },
         "hemisphere_coverage": "unilateral_right",
+        "is_bilateral": false,
         "is_likely_venous": false,
+        "laterality_midline_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "laterality_midline_method": "brain_symmetry",
         "low_tr_mode": false,
         "multi_bump_tail_count": 0,
         "multi_bump_tail_heights_mm": [],
@@ -661,13 +661,7 @@
         "raw_peak_mm": {
           "__f__": "0x1.0000000000000p+2"
         },
-        "required_scaling_factor": {
-          "__f__": "0x1.8000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.8000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
           "__f__": "0x1.8000000000000p+3"
@@ -866,9 +860,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.30600f8d231c1p+4"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.8000000000000p+2"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -891,12 +882,6 @@
         },
         "raw_peak_mm": {
           "__f__": "0x1.8000000000000p+2"
-        },
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
         }
       },
       "quality_score": {
@@ -1106,6 +1091,7 @@
             "warns": []
           }
         ],
+        "aif_hemisphere": "right",
         "aif_source": "auto",
         "aif_status": "PASS",
         "aif_ttp_frame": 7,
@@ -1180,9 +1166,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.c598d8a9157d0p+3"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.13dcb08d3dcb0p+3"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.c000000000000p+4"
         },
@@ -1199,7 +1182,12 @@
           "__f__": "0x1.ae147ae147ae1p-2"
         },
         "hemisphere_coverage": "unilateral_right",
+        "is_bilateral": false,
         "is_likely_venous": false,
+        "laterality_midline_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "laterality_midline_method": "brain_symmetry",
         "low_tr_mode": false,
         "multi_bump_tail_count": 0,
         "multi_bump_tail_heights_mm": [],
@@ -1231,13 +1219,7 @@
         "raw_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
         },
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
           "__f__": "0x1.8000000000000p+3"
@@ -1436,6 +1418,7 @@
         "aif_confidence": "reduced",
         "aif_g6_admitted": false,
         "aif_gate_decisions": [],
+        "aif_hemisphere": "right",
         "aif_source": "auto",
         "aif_status": "WARN",
         "aif_ttp_frame": 8,
@@ -1518,9 +1501,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.30600f8d231c1p+4"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.8000000000000p+2"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -1537,7 +1517,12 @@
           "__f__": "0x1.ae147ae147ae1p-2"
         },
         "hemisphere_coverage": "unilateral_right",
+        "is_bilateral": false,
         "is_likely_venous": true,
+        "laterality_midline_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "laterality_midline_method": "brain_symmetry",
         "low_tr_mode": false,
         "multi_bump_tail_count": 0,
         "multi_bump_tail_heights_mm": [],
@@ -1569,13 +1554,7 @@
         "raw_peak_mm": {
           "__f__": "0x1.0000000000000p+2"
         },
-        "required_scaling_factor": {
-          "__f__": "0x1.8000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.8000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
           "__f__": "0x1.0000000000000p+3"
@@ -1806,9 +1785,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.3056b800c1544p+3"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.2ccd598d6f219p+3"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -1874,13 +1850,7 @@
           },
           "units": "mM plasma"
         },
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "whole_brain_search_support_voxels": 5866,
         "whole_brain_symmetry_angle_degrees": {
@@ -2117,9 +2087,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.3056b800c1544p+3"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.2ccd598d6f219p+3"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -2150,13 +2117,7 @@
           "__f__": "0x1.0000000000000p-1"
         },
         "raw_peak_mm": null,
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "whole_brain_search_support_voxels": 1310,
         "whole_brain_symmetry_angle_degrees": {
@@ -2362,9 +2323,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.3056b800c1544p+3"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.2ccd598d6f219p+3"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -2395,13 +2353,7 @@
           "__f__": "0x1.0000000000000p-1"
         },
         "raw_peak_mm": null,
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "scaling_factor_warning": false
       },
       "quality_score": {
@@ -2631,9 +2583,6 @@
         "final_fwhm_seconds": {
           "__f__": "0x1.3056b800c1544p+3"
         },
-        "final_peak_mm": {
-          "__f__": "0x1.2ccd598d6f219p+3"
-        },
         "final_peak_time_seconds": {
           "__f__": "0x1.0000000000000p+5"
         },
@@ -2664,13 +2613,7 @@
           "__f__": "0x1.0000000000000p-1"
         },
         "raw_peak_mm": null,
-        "required_scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "required_scaling_factor_warning": false,
-        "scaling_factor": {
-          "__f__": "0x1.0000000000000p+0"
-        },
         "scaling_factor_warning": false,
         "whole_brain_search_support_voxels": 5866,
         "whole_brain_symmetry_angle_degrees": {

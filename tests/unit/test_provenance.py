@@ -108,7 +108,7 @@ class TestEnrichDCE:
 
         assert "Hematocrit" in perf
         assert perf["Hematocrit"] == {
-            "value": hematocrit, "Source": "aif_detection",
+            "value": hematocrit, "Source": "configuration", "Units": "1",
         }
         assert perf["AIF"]["Hematocrit"] == hematocrit
         assert perf["AIFUnits"]["hematocrit_used"] == hematocrit
@@ -239,7 +239,7 @@ class TestEnrichDCE:
         result = enrich_provenance_from_qc(
             _make_dce_sidecar(),
             {"aif_detection": {
-                "aif_source": "external", "final_peak_mm": 6.0,
+                "aif_source": "external", "emitted_peak_mm": 6.0,
             }},
             "DCE",
         )
@@ -326,7 +326,7 @@ class TestEnrichDSC:
                 "quality_score": 0.91,
                 "aif_metrics": {"fwhm": 4.0},
                 "arrival_time_seconds": 3.2,
-                "baseline_frames_used": 10,
+                "n_baseline_frames": 10,
                 "baseline_detection_method": "auto_p99",
             },
             "normalization_factor": 0.023,

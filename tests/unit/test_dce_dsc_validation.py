@@ -59,6 +59,8 @@ def test_independent_concordance_uses_measured_nawm_normalization() -> None:
     assert result.metrics.spearman_correlation > 0.8
     assert result.to_dict()["metrics"]["spearman_correlation"] == result.metrics.spearman_correlation
     assert result.metrics.pearson_correlation > 0.8
+    assert result.to_dict()["metrics"]["mean_normalized_vp"] == result.metrics.mean_vp
+    assert result.to_dict()["metrics"]["mean_normalized_cbv"] == result.metrics.mean_cbv
     assert result.normalization["method"] == "within_subject_nawm_median"
     assert result.normalization["dce_vp_nawm_median"] == pytest.approx(
         np.median(vp[nawm])

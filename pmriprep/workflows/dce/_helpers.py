@@ -2423,7 +2423,7 @@ def _generate_preprocessing_qc(
     )
 
     preproc_display_stats: dict[str, object] = {
-        "tr_ms": tr_ms_val,
+        "excitation_tr_ms": tr_ms_val,
         "volume_tr_s": volume_tr_val,
         "n_volumes": dce_data.shape[3],
         **stats,
@@ -3188,43 +3188,6 @@ def _generate_dce_pk_fit_qc(
             pk_voxel_metrics["frac_fxl_risk_tumor"] = None
             pk_voxel_metrics["p95_tumor_peak_Ct"] = None
             pk_voxel_metrics["fxl_status"] = "PASS"
-
-        # Calculate Patlak fractions separately within each tissue class.
-        _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
-        if is_auto and model_sel_data is not None:
-            ne_bool = (
-                non_enhancing_mask_data > 0.5
-                if non_enhancing_mask_data is not None
-                else None
-            )
-
-            def _patlak_frac(region_mask: "np.ndarray") -> float | None:
-                region_fitted = region_mask & (model_sel_data > 0)
-                n_region = int(region_fitted.sum())
-                if n_region == 0:
-                    return None
-                n_patlak = int(np.sum((model_sel_data == _PATLAK_CODE) & region_fitted))
-                return n_patlak / n_region
-
-            if enhancing_mask_data is not None:
-                pk_voxel_metrics["patlak_fraction_enhancing_tumor"] = _patlak_frac(
-                    enhancing_mask_data > 0.5
-                )
-            else:
-                pk_voxel_metrics["patlak_fraction_enhancing_tumor"] = None
-
-            if ne_bool is not None:
-                pk_voxel_metrics["patlak_fraction_non_enh_tumor"] = _patlak_frac(ne_bool)
-            else:
-                pk_voxel_metrics["patlak_fraction_non_enh_tumor"] = None
-
-            # NAWM/GM proxy = brain minus all tumor
-            non_tumor = mask_bool.copy()
-            if enhancing_mask_data is not None:
-                non_tumor &= ~(enhancing_mask_data > 0.5)
-            if ne_bool is not None:
-                non_tumor &= ~ne_bool
-            pk_voxel_metrics["patlak_fraction_nawm_gm"] = _patlak_frac(non_tumor)
 
         return pk_modeling_qc_path, pk_voxel_metrics
 

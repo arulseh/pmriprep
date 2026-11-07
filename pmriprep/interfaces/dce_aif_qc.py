@@ -5,7 +5,7 @@ detected AIF: a curve time series plot and a 3-pane location overlay.
 
 Adapted from DSC AIF QC with DCE-specific modifications:
 - Concentration in mM (not relative signal change)
-- DCE-specific QC metrics: final_peak_mm, final_fwhm_seconds, washout_mean, cnr_mean
+- DCE-specific QC metrics: emitted_peak_mm, final_fwhm_seconds, washout_mean, cnr_mean
 - Title labels say "DCE" instead of "DSC"
 """
 

@@ -83,7 +83,7 @@ class _DSCTimingMaps(NamedTuple):
     """DSC tissue time to peak relative to the finalized baseline reference."""
 
     ttp: npt.NDArray[Any]
-    aif_bat_seconds: float
+    baseline_reference_seconds: float
 
 
 class _DSCAUCMaps(NamedTuple):
@@ -524,7 +524,7 @@ class ComputeDSCMaps(BaseInterface):
         aif = inputs.aif
         detected_frames = inputs.baseline_frames
         detection_info: dict[str, Any] = {
-            "baseline_detection_method": "aif_detection_finalized",
+            "baseline_source": "aif_detection",
             "baseline_frames_detected": detected_frames,
             "arrival_index": detected_frames,
         }
@@ -674,9 +674,9 @@ class ComputeDSCMaps(BaseInterface):
 
         """
         ttp_raw = compute_ttp(raw_concentration, detected_baseline, dt)
-        aif_bat_frames = detection_info.get("arrival_index", detected_baseline)
-        aif_bat_seconds = float(aif_bat_frames) * dt
-        ttp = ttp_raw - aif_bat_seconds
+        baseline_reference_frame = detection_info.get("arrival_index", detected_baseline)
+        baseline_reference_seconds = float(baseline_reference_frame) * dt
+        ttp = ttp_raw - baseline_reference_seconds
 
         n_negative = int(np.sum(mask_bool & (ttp < 0)))
         n_mask = int(np.sum(mask_bool))
@@ -685,7 +685,7 @@ class ComputeDSCMaps(BaseInterface):
                 "%.1f%% of brain voxels peak before the baseline reference "
                 "at %.1fs. Check baseline timing QC.",
                 100.0 * n_negative / n_mask,
-                aif_bat_seconds,
+                baseline_reference_seconds,
             )
 
         ttp = np.where(
@@ -696,7 +696,7 @@ class ComputeDSCMaps(BaseInterface):
 
         return _DSCTimingMaps(
             ttp=ttp,
-            aif_bat_seconds=aif_bat_seconds,
+            baseline_reference_seconds=baseline_reference_seconds,
         )
 
     def _compute_auc_maps(
@@ -894,7 +894,7 @@ class ComputeDSCMaps(BaseInterface):
         mask_bool: npt.NDArray[np.bool_],
         aif_level: str,
         baseline_info: dict[str, Any],
-        aif_bat_seconds: float,
+        baseline_reference_seconds: float,
         cbv_auc_qc_source: Optional[npt.NDArray[Any]] = None,
         method: str = "oSVD",
     ) -> dict[str, Any]:
@@ -940,7 +940,6 @@ class ComputeDSCMaps(BaseInterface):
             ),
             "mtt_median": _finite_stat(mtt, np.median),
             "n_voxels": n_voxels,
-            "aif_detection_level": aif_level,
         }
         if timing_name == "tmax" or n_finite_timing > 0:
             qc[f"{timing_name}_mean"] = _finite_stat(tmax, np.mean)
@@ -951,7 +950,7 @@ class ComputeDSCMaps(BaseInterface):
                 n_finite_timing / n_voxels if n_voxels > 0 else np.nan
             )
         qc.update(baseline_info)
-        qc["aif_bat_seconds"] = aif_bat_seconds
+        qc["baseline_reference_seconds"] = baseline_reference_seconds
         qc["cbv_literature_range_applicable"] = True
         return qc
 
@@ -1123,7 +1122,7 @@ class ComputeDSCMaps(BaseInterface):
                 mask_bool,
                 aif_level,
                 baseline_info,
-                timing.aif_bat_seconds,
+                timing.baseline_reference_seconds,
                 auc.cbv,
                 method,
             ))

@@ -86,7 +86,7 @@ def test_dce_diagnostic_sidecars_ignore_nonmapping_pk_qc(pk_modeling: object) ->
 
 
 def test_dce_diagnostic_sidecars_carry_canonical_aif_provenance() -> None:
-    """AIF-dependent BIC diagnostics use the shared DCE AIF block."""
+    """AIF-dependent BIC diagnostics use the shared compact DCE AIF block."""
     from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
     qc_metrics = {
@@ -101,7 +101,7 @@ def test_dce_diagnostic_sidecars_carry_canonical_aif_provenance() -> None:
         },
         "pk_modeling": {},
     }
-    expected = build_aif_provenance_block(qc_metrics, modality="DCE")
+    expected = build_aif_provenance_block(qc_metrics, modality="DCE", compact=True)
 
     for sidecar in (
         _build_model_selection_meta({}, qc_metrics),
