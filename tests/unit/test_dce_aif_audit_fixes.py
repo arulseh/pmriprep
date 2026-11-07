@@ -37,7 +37,7 @@ class TestC5AmplitudeGate:
             scale_factor=1.0,
             qc=_make_qc(peak=MIN_MEANINGFUL_ENHANCEMENT_MM / 2),
             atlas_tier="MCA_ACA_dce_strict",
-            n_voxels=10, hemisphere="bilateral", n_slabs_spanned=3,
+            n_voxels=10, n_slabs_spanned=3,
         )
         assert status == "FAIL_G1"
 
@@ -46,7 +46,7 @@ class TestC5AmplitudeGate:
         status, _ = _evaluate_gates(
             scale_factor=1.0, qc=_make_qc(peak=8.0),
             atlas_tier="MCA_ACA_dce_strict",
-            n_voxels=10, hemisphere="bilateral", n_slabs_spanned=3,
+            n_voxels=10, n_slabs_spanned=3,
         )
         assert status in ("PASS", "PASS_WARN")
 

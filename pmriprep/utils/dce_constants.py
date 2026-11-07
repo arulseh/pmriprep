@@ -371,12 +371,10 @@ DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
 DCE_AIF_GATE_RATIO30_HARD: Final[float] = 0.50
 DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
 
-#: G6 (g) — minimum candidate count for the amplitude-floor exception.
-#: Bilateral support uses the first count; unilateral support requires the
-#: second count and the minimum number of distinct z-slabs.
-DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL: Final[int] = 5
-DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL: Final[int] = 10
-DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL: Final[int] = 2
+#: G6 (g) — spatial support required for the amplitude-floor exception.
+#: Both the candidate count and the number of distinct z slices must qualify.
+DCE_AIF_GATE_G6_MIN_VOXELS: Final[int] = 10
+DCE_AIF_GATE_G6_MIN_SLABS: Final[int] = 2
 
 #: Per-parameter uncertainty multipliers for base inflation=2.0. For larger
 #: base inflation, the excess above 1.0 is scaled proportionally; base<=1.0

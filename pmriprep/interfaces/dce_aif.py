@@ -41,9 +41,8 @@ from pmriprep.utils.dce_constants import (
     BRAIN_EROSION_MIN_VOXELS,
     DCE_AIF_EXPECTED_FULL_DOSE,
     DCE_AIF_GATE_FWHM_MAX_SECONDS,
-    DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL,
-    DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL,
-    DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL,
+    DCE_AIF_GATE_G6_MIN_SLABS,
+    DCE_AIF_GATE_G6_MIN_VOXELS,
     DCE_AIF_GATE_LATE_TAIL_RATIO_MAX,
     DCE_AIF_GATE_MULTIBUMP_MAX,
     DCE_AIF_GATE_RATIO30_HARD,
@@ -1085,7 +1084,6 @@ def _evaluate_gates(
     qc: GateQC,
     atlas_tier: str | None,
     n_voxels: int,
-    hemisphere: str,
     n_slabs_spanned: int,
     peak_ceiling_mm: float | None = None,
     *,
@@ -1112,10 +1110,8 @@ def _evaluate_gates(
         ``"..._permissive"``), recorded in the decision trace.
     n_voxels : int
         Pool size (used by G6 (g)).
-    hemisphere : str
-        ``"bilateral"`` / ``"unilateral_left"`` / ``"unilateral_right"``.
     n_slabs_spanned : int
-        Distinct z-slice count in the pool (used by G6 (g) unilateral).
+        Distinct z-slice count in the pool (used by G6 (g)).
     peak_ceiling_mm : float or None, optional
         Dose- and tier-specific upper peak limit for the emitted plasma AIF.
         ``None`` preserves the standalone gate evaluation used by callers
@@ -1192,13 +1188,10 @@ def _evaluate_gates(
     # G1 fails — consult G6 escape clause.
     g6_a = scale_factor <= DCE_AIF_GATE_SCALE_G6_CEILING
     g6_f = g6_atlas_eligible
-    if hemisphere == "bilateral":
-        g6_g = n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL
-    else:
-        g6_g = (
-            n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL
-            and n_slabs_spanned >= DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL
-        )
+    g6_g = (
+        n_voxels >= DCE_AIF_GATE_G6_MIN_VOXELS
+        and n_slabs_spanned >= DCE_AIF_GATE_G6_MIN_SLABS
+    )
 
     if g6_a and g6_f and g6_g:
         warns_with_g6 = list(warns) + ["G1_via_G6"]
@@ -1258,49 +1251,11 @@ def _select_worst_for_trim(
 def _count_slabs_spanned(candidates: list[tuple[int, int, int]]) -> int:
     """Count unique z-slice indices in a candidate ``(i, j, k)`` list.
 
-    Used by G6 (g) unilateral path: ``n>=10 AND n_slabs_spanned>=2``.
+    Used by G6 (g): ``n>=10 AND n_slabs_spanned>=2``.
     """
     if not candidates:
         return 0
     return len({int(k) for (_i, _j, k) in candidates})
-
-
-def _classify_hemisphere(
-    candidates: list[tuple[int, int, int]],
-    affine: npt.NDArray[Any],
-) -> tuple[str, int, int]:
-    """Classify a candidate pool's hemisphere spread via RAS x-coordinate.
-
-    A candidate's world x-coordinate ``< 0`` (RAS convention) is left.
-
-    Parameters
-    ----------
-    candidates : list of (int, int, int)
-        Voxel ``(i, j, k)`` coordinates.
-    affine : np.ndarray
-        4x4 voxel-to-world affine.
-
-    Returns
-    -------
-    (str, int, int)
-        ``(hemisphere, n_left, n_right)`` where hemisphere is
-        ``"bilateral"`` / ``"unilateral_left"`` / ``"unilateral_right"``.
-    """
-    n_left = 0
-    n_right = 0
-    for cx, cy, cz in candidates:
-        world = affine[:3, :3] @ np.array([cx, cy, cz]) + affine[:3, 3]
-        if world[0] < 0:
-            n_left += 1
-        else:
-            n_right += 1
-    if n_left > 0 and n_right > 0:
-        hemisphere = "bilateral"
-    elif n_left > 0:
-        hemisphere = "unilateral_left"
-    else:
-        hemisphere = "unilateral_right"
-    return hemisphere, n_left, n_right
 
 
 @dataclass
@@ -1319,7 +1274,6 @@ class TierResult:
     required_scale_factor: float
     qc: GateQC
     atlas_tier: str
-    hemisphere: str
     n_slabs: int
     status: GateStatus
     gate_decisions: list[GateDecision] = field(default_factory=list)
@@ -1330,7 +1284,7 @@ class PoolGateOutcome:
     """Scored + gated result of averaging a single candidate pool.
 
     Returned by ``_score_and_gate_pool`` (the shared "average ->
-    plasma-convert -> rescale -> QC -> hemisphere/slabs -> gate" body used
+    plasma-convert -> rescale -> QC -> slab span -> gate" body used
     by both the progressive-trim loop and the post-filter gate check). ``curve_scaled``
     is the exact curve the shape gates evaluated, so callers emit it directly.
     ``required_scale_factor`` remains the G1/G6 amplitude-adequacy input even
@@ -1341,7 +1295,6 @@ class PoolGateOutcome:
     scale_factor: float
     required_scale_factor: float
     qc: GateQC
-    hemisphere: str
     n_slabs: int
     status: GateStatus
     decision: GateDecision
@@ -3197,7 +3150,6 @@ class AIFDetection(BaseInterface):
         scores: list[float],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
-        affine: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
         hct: float,
@@ -3207,7 +3159,7 @@ class AIFDetection(BaseInterface):
         """Average a candidate pool and score it against the G1-G6 gates.
 
         Runs the shared sequence: weighted-ROI average -> plasma-convert
-        (``/ (1 - Hct)``) -> amplitude rescale -> QC -> hemisphere / slab
+        (``/ (1 - Hct)``) -> amplitude rescale -> QC -> slab
         span -> gate evaluation. Used by both the progressive-trim loop and
         the post-filter gate check so both paths apply the same operations.
 
@@ -3217,8 +3169,8 @@ class AIFDetection(BaseInterface):
             Candidate voxel coordinates for this pool.
         scores : list of float
             Per-candidate composite scores (averaging weights).
-        conc_data, brain_mask, affine : np.ndarray
-            Concentration series, brain mask, and voxel-to-world affine.
+        conc_data, brain_mask : np.ndarray
+            Concentration series and brain mask.
         tr : float
             Repetition time (s).
         baseline_frames : int
@@ -3233,7 +3185,7 @@ class AIFDetection(BaseInterface):
         Returns
         -------
         PoolGateOutcome
-            The scaled curve, scale factor, QC, hemisphere, slab span,
+            The scaled curve, scale factor, QC, slab span,
             gate status, and gate decision for this pool.
         """
         curve_blood, _ = self._compute_weighted_roi_aif(
@@ -3248,7 +3200,6 @@ class AIFDetection(BaseInterface):
             apply_peak_floor=bool(getattr(self.inputs, "aif_peak_floor", True)),
         )
         qc = _compute_pool_qc(scale.curve, tr, baseline_frames)
-        hemisphere, _n_left, _n_right = _classify_hemisphere(cands, affine)
         n_slabs = _count_slabs_spanned(cands)
         criteria = atlas_tier_label.rsplit("_", maxsplit=1)[-1]
         _, peak_max_blood = self._get_expected_peak_range()
@@ -3258,7 +3209,7 @@ class AIFDetection(BaseInterface):
         )
         status, decision = _evaluate_gates(
             scale.required_factor, qc, atlas_tier_label,
-            len(cands), hemisphere, n_slabs,
+            len(cands), n_slabs,
             peak_ceiling_mm=peak_ceiling_plasma,
             g6_atlas_eligible=(
                 not (isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file)
@@ -3273,7 +3224,6 @@ class AIFDetection(BaseInterface):
             scale_factor=scale.applied_factor,
             required_scale_factor=scale.required_factor,
             qc=qc,
-            hemisphere=hemisphere,
             n_slabs=n_slabs,
             status=status,
             decision=decision,
@@ -3286,7 +3236,6 @@ class AIFDetection(BaseInterface):
         metrics_list: list[dict[str, float]],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
-        affine: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
         hct: float,
@@ -3315,10 +3264,10 @@ class AIFDetection(BaseInterface):
             sub_scores = [scores[i] for i in pool_idx]
             sub_metrics = [metrics_list[i] for i in pool_idx]
 
-            # Average + plasma-convert + rescale + QC + hemisphere/slabs + gate
+            # Average + plasma-convert + rescale + QC + slab span + gate
             # (recomputed each iter because dropping a candidate may change them).
             outcome = self._score_and_gate_pool(
-                sub_cands, sub_scores, conc_data, brain_mask, affine, tr,
+                sub_cands, sub_scores, conc_data, brain_mask, tr,
                 baseline_frames, hct, target_peak, atlas_tier_label,
             )
             gate_decisions.append(outcome.decision)
@@ -3334,7 +3283,6 @@ class AIFDetection(BaseInterface):
                         required_scale_factor=outcome.required_scale_factor,
                         qc=outcome.qc,
                         atlas_tier=atlas_tier_label,
-                        hemisphere=outcome.hemisphere,
                         n_slabs=outcome.n_slabs,
                         status=outcome.status,
                         gate_decisions=gate_decisions,
@@ -3370,7 +3318,6 @@ class AIFDetection(BaseInterface):
         baseline_frames: int,
         tissue_ttp_frame: float | None,
         brain_mask: npt.NDArray[Any] | None = None,
-        affine: npt.NDArray[Any] | None = None,
         hct: float | None = None,
         target_peak: float | None = None,
     ) -> CascadeResult:
@@ -3418,10 +3365,8 @@ class AIFDetection(BaseInterface):
         tissue_ttp_frame : float, optional
             Reference tissue time-to-peak frame (brain-wide).
         brain_mask : ndarray, optional
-            Brain support for per-tier pool QC. All four optional gate inputs
+            Brain support for per-tier pool QC. All three optional gate inputs
             must be supplied to enable pool evaluation and trimming.
-        affine : ndarray, optional
-            Voxel-to-world affine for per-tier spatial QC.
         hct : float, optional
             Arterial hematocrit for conversion of each pool to plasma units.
         target_peak : float, optional
@@ -3482,7 +3427,6 @@ class AIFDetection(BaseInterface):
         # anchor acceptance contract.
         gates_enabled = (
             brain_mask is not None
-            and affine is not None
             and hct is not None
             and target_peak is not None
         )
@@ -3602,7 +3546,7 @@ class AIFDetection(BaseInterface):
                         if gates_enabled:
                             evaluation = self._evaluate_pool_with_gates_and_trim(
                                 cands, scs, mets,
-                                conc_data, brain_mask, affine,  # type: ignore[arg-type]
+                                conc_data, brain_mask,  # type: ignore[arg-type]
                                 tr, baseline_frames,
                                 hct,  # type: ignore[arg-type]
                                 target_peak,  # type: ignore[arg-type]
@@ -3666,7 +3610,7 @@ class AIFDetection(BaseInterface):
                 if gates_enabled:
                     evaluation = self._evaluate_pool_with_gates_and_trim(
                         cands, scs, mets,
-                        conc_data, brain_mask, affine,  # type: ignore[arg-type]
+                        conc_data, brain_mask,  # type: ignore[arg-type]
                         tr, baseline_frames,
                         hct,  # type: ignore[arg-type]
                         target_peak,  # type: ignore[arg-type]
@@ -4540,7 +4484,7 @@ class AIFDetection(BaseInterface):
 
         # ===== Two-pass multi-level detection cascade =====
         # See ``_run_two_pass_cascade`` docstring for contract details.
-        # Brain mask, affine, hct, and target_peak enable per-tier
+        # Brain mask, hct, and target_peak enable per-tier
         # G1-G6 acceptance gates with progressive trim; without them the
         # cascade uses its quorum and anchor acceptance criterion.
         cascade_result = self._run_two_pass_cascade(
@@ -4554,7 +4498,6 @@ class AIFDetection(BaseInterface):
             baseline_frames=baseline_frames,
             tissue_ttp_frame=tissue_ttp_frame,
             brain_mask=brain_mask,
-            affine=affine,
             hct=float(self.inputs.hematocrit),
             target_peak=target_peak,
         )
@@ -4710,7 +4653,6 @@ class AIFDetection(BaseInterface):
         """Average + emit the detected AIF curve."""
         conc_data = loaded.conc_data
         brain_mask = loaded.brain_mask
-        affine = loaded.affine
         tr = params.tr
         baseline_frames = params.baseline_frames
         target_peak = params.target_peak
@@ -4754,7 +4696,7 @@ class AIFDetection(BaseInterface):
                 # recorded (downgrades confidence below) but does NOT trigger a
                 # new population fallback here.
                 outcome = self._score_and_gate_pool(
-                    candidates, scores, conc_data, brain_mask, affine, tr,
+                    candidates, scores, conc_data, brain_mask, tr,
                     baseline_frames, float(self.inputs.hematocrit),
                     target_peak, tier_result.atlas_tier,
                 )
@@ -4770,7 +4712,6 @@ class AIFDetection(BaseInterface):
                     required_scale_factor=required_scaling_factor,
                     qc=outcome.qc,
                     atlas_tier=tier_result.atlas_tier,
-                    hemisphere=outcome.hemisphere,
                     n_slabs=outcome.n_slabs,
                     status=outcome.status,
                     gate_decisions=[outcome.decision],

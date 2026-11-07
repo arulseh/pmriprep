@@ -1,3 +1,10 @@
+1.0.0rc6.dev42 (2026-11-07)
+===========================
+
+* CHG: Require at least ten candidates across two slices for the DCE AIF G6
+  scaling rescue, removing the relaxed bilateral-support exception. Candidate
+  laterality remains descriptive QC and does not determine G6 acceptance.
+
 1.0.0rc6.dev41 (2026-11-07)
 ===========================
 

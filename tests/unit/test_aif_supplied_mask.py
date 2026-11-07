@@ -185,10 +185,8 @@ def test_dce_user_filename_cannot_enable_internal_atlas_gate(
     time = np.arange(40)
     pulse = np.exp(-0.5 * ((time - 7) / .7) ** 2)
     concentration = np.broadcast_to(pulse, (4, 4, 4, 40))
-    coords = [(0, 0, 1), (1, 0, 1), (2, 0, 1), (3, 0, 1), (3, 1, 2)]
-    affine = np.eye(4)
-    affine[0, 3] = -1.5
-    args = (coords, [0.8] * 5, concentration, region, affine, 4., 5, .42, 0., "MCA_ACA_dce_strict")
+    coords = [(i, 0, k) for i in range(4) for k in (1, 2)] + [(0, 1, 1), (0, 1, 2)]
+    args = (coords, [0.8] * len(coords), concentration, region, 4., 5, .42, 0., "MCA_ACA_dce_strict")
     supplied = detector._score_and_gate_pool(*args)
     internal = dce_aif.AIFDetection()._score_and_gate_pool(*args)
     assert observed == [False, True]

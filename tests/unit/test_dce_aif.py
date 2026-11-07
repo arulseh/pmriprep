@@ -11,7 +11,6 @@ from pmriprep.interfaces.dce_aif import (
     AIFDetection,
     _apply_aif_scale,
     _build_peak_scaling_qc,
-    _classify_hemisphere,
     _compute_pool_qc,
     _count_slabs_spanned,
     _dce_aif_peak_ceiling,
@@ -1952,7 +1951,6 @@ def test_disabled_floor_keeps_hypothetical_factor_in_gate_decision() -> None:
         [1.0, 1.0],
         concentration,
         np.ones((4, 4, 4), dtype=np.uint8),
-        np.eye(4),
         tr=2.0,
         baseline_frames=5,
         hct=0.42,
@@ -1985,7 +1983,6 @@ _DEFAULT_GATE_CONTEXT = {
     "atlas_tier": "MCA_ACA_dce_strict",
     "g6_atlas_eligible": True,
     "n_voxels": 10,
-    "hemisphere": "bilateral",
     "n_slabs_spanned": 3,
 }
 
@@ -1998,16 +1995,16 @@ _DEFAULT_GATE_CONTEXT = {
             4.0,
             {},
             {"atlas_tier": "MCA_ACA_dil_dce_strict", "g6_atlas_eligible": False, "n_voxels": 2,
-             "hemisphere": "unilateral_left", "n_slabs_spanned": 1},
+             "n_slabs_spanned": 1},
             "FAIL_G6*",
             None,
             id="g1-fail-no-g6-escape",
         ),
-        pytest.param(1.0, {"late_tail": 0.50}, {}, "FAIL_G2", None, id="g2-hard"),
-        pytest.param(1.0, {"fwhm": 25.0}, {}, "FAIL_G3", None, id="g3-hard"),
-        pytest.param(1.0, {"bumps": 5}, {}, "FAIL_G4", None, id="g4-hard"),
+        pytest.param(4.0, {"late_tail": 0.50}, {}, "FAIL_G2", None, id="g2-hard"),
+        pytest.param(4.0, {"fwhm": 25.0}, {}, "FAIL_G3", None, id="g3-hard"),
+        pytest.param(4.0, {"bumps": 5}, {}, "FAIL_G4", None, id="g4-hard"),
         pytest.param(1.0, {"ratio_30": 0.45}, {}, "PASS_WARN", "G5", id="g5-warn"),
-        pytest.param(1.0, {"ratio_30": 0.55}, {}, "FAIL_G5", None, id="g5-hard"),
+        pytest.param(4.0, {"ratio_30": 0.55}, {}, "FAIL_G5", None, id="g5-hard"),
         pytest.param(1.0, {"ratio_30": None}, {}, "PASS", None, id="g5-unevaluable"),
         pytest.param(
             4.11,
@@ -2029,22 +2026,21 @@ _DEFAULT_GATE_CONTEXT = {
             8.83,
             {"ratio_30": 0.41},
             {"atlas_tier": "MCA_ACA_dil_dce_strict", "g6_atlas_eligible": False, "n_voxels": 2,
-             "hemisphere": "unilateral_left", "n_slabs_spanned": 1},
+             "n_slabs_spanned": 1},
             "FAIL_G6*",
             None,
-            id="g6-sparse-unilateral",
+            id="g6-insufficient-support",
         ),
         pytest.param(4.0, {}, {"n_voxels": 4, "n_slabs_spanned": 2},
-                     "FAIL_G6_g", None, id="g6-bilateral-n4"),
+                     "FAIL_G6_g", None, id="g6-n4"),
         pytest.param(4.0, {}, {"n_voxels": 5, "n_slabs_spanned": 2},
-                     "G6_ADMIT", None, id="g6-bilateral-n5"),
-        pytest.param(4.0, {}, {"n_voxels": 9, "hemisphere": "unilateral_right",
-                               "n_slabs_spanned": 2},
-                     "FAIL_G6_g", None, id="g6-unilateral-n9-two-slabs"),
-        pytest.param(4.0, {}, {"hemisphere": "unilateral_right", "n_slabs_spanned": 2},
-                     "G6_ADMIT", None, id="g6-unilateral-n10-two-slabs"),
-        pytest.param(4.0, {}, {"hemisphere": "unilateral_right", "n_slabs_spanned": 1},
-                     "FAIL_G6_g", None, id="g6-unilateral-n10-one-slab"),
+                     "FAIL_G6_g", None, id="g6-n5"),
+        pytest.param(4.0, {}, {"n_voxels": 9, "n_slabs_spanned": 2},
+                     "FAIL_G6_g", None, id="g6-n9-two-slabs"),
+        pytest.param(4.0, {}, {"n_slabs_spanned": 2},
+                     "G6_ADMIT", None, id="g6-n10-two-slabs"),
+        pytest.param(4.0, {}, {"n_slabs_spanned": 1},
+                     "FAIL_G6_g", None, id="g6-n10-one-slab"),
         pytest.param(5.99, {}, {}, "G6_ADMIT", None, id="g6-scale-5p99"),
         pytest.param(6.01, {}, {}, "G6_ADMIT", None, id="g6-scale-6p01"),
         pytest.param(7.5, {}, {}, "G6_ADMIT", None, id="g6-scale-7p5"),
@@ -2565,11 +2561,10 @@ class TestCascadeGateDecisions:
         for x, y, z in coords:
             conc[x, y, z, :] = weak_curve
         brain = np.ones((nx, ny, nz), dtype=np.uint8)
-        affine = np.eye(4)
         evaluation = det._evaluate_pool_with_gates_and_trim(
             coords, [0.7, 0.6],
             [{"peak_mm": 0.4}, {"peak_mm": 0.4}],
-            conc, brain, affine, tr=4.0, baseline_frames=5,
+            conc, brain, tr=4.0, baseline_frames=5,
             hct=0.42, target_peak=0.0,
             atlas_tier_label="MCA_ACA_dce_strict",
         )
@@ -2771,27 +2766,19 @@ class TestScoreAndGatePool:
         det.inputs.field_strength = 3.0
         return det
 
-    @staticmethod
-    def _bilateral_affine() -> np.ndarray:
-        # world_x = vox_i - 5  ->  i < 5 is left (x < 0), i >= 5 is right.
-        aff = np.eye(4, dtype=np.float64)
-        aff[0, 3] = -5.0
-        return aff
-
     def test_matches_manual_primitive_composition(self) -> None:
         """Helper output is bit-for-bit the manual primitive sequence."""
         tr, baseline_frames, hct = 4.0, 5, 0.42
-        cands = [(3, 10, 1), (7, 10, 2), (7, 11, 3)]  # left + right, 3 slabs
+        cands = [(3, 10, 1), (7, 10, 2), (7, 11, 3)]  # 3 slices
         conc_data, brain_mask = _make_synthetic_dce_4d(
             shape=(12, 14, 6, 40), baseline_frames=baseline_frames, tr=tr,
             arterial_coords=cands, arterial_peak=5.0,
         )
-        affine = self._bilateral_affine()
         scores = [0.9, 0.8, 0.7]
         det = self._make_detector(hematocrit=hct)
 
         outcome = det._score_and_gate_pool(
-            cands, scores, conc_data, brain_mask, affine, tr,
+            cands, scores, conc_data, brain_mask, tr,
             baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
         )
 
@@ -2804,17 +2791,15 @@ class TestScoreAndGatePool:
             curve_plasma, hct, 0.0, det._get_expected_peak_range,
         )
         qc = _compute_pool_qc(curve_scaled, tr, baseline_frames)
-        hemi, _nl, _nr = _classify_hemisphere(cands, affine)
         n_slabs = _count_slabs_spanned(cands)
         status, decision = _evaluate_gates(
-            sf, qc, "MCA_ACA_dce_strict", len(cands), hemi, n_slabs,
+            sf, qc, "MCA_ACA_dce_strict", len(cands), n_slabs,
             g6_atlas_eligible=True,
         )
 
         np.testing.assert_array_equal(outcome.curve_scaled, curve_scaled)
         assert outcome.scale_factor == sf
         assert outcome.qc == qc
-        assert outcome.hemisphere == hemi == "bilateral"
         assert outcome.n_slabs == n_slabs == 3
         assert outcome.status == status
         assert outcome.decision == decision
@@ -2833,7 +2818,7 @@ class TestScoreAndGatePool:
         det = self._make_detector(hematocrit=hct)
 
         outcome = det._score_and_gate_pool(
-            cands, [0.9, 0.8], conc_data, brain_mask, self._bilateral_affine(),
+            cands, [0.9, 0.8], conc_data, brain_mask,
             tr, baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
         )
 
@@ -2855,12 +2840,11 @@ class TestScoreAndGatePool:
             shape=(12, 14, 6, 40), baseline_frames=baseline_frames, tr=tr,
             arterial_coords=full, arterial_peak=5.0,
         )
-        affine = self._bilateral_affine()
         det = self._make_detector(hematocrit=hct)
 
         subset = full[:2]  # emulate a post-cascade filter dropping one voxel
         outcome = det._score_and_gate_pool(
-            subset, [0.9, 0.8], conc_data, brain_mask, affine, tr,
+            subset, [0.9, 0.8], conc_data, brain_mask, tr,
             baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
         )
 
@@ -2920,7 +2904,7 @@ class TestDetectedAIFEmissionInSitu:
             metrics=[self._full_metric()] * 3,
             curve_scaled=np.zeros(40), scale_factor=1.5,
             required_scale_factor=1.5, qc=_make_qc(),
-            atlas_tier="MCA_ACA_dce_strict", hemisphere="bilateral",
+            atlas_tier="MCA_ACA_dce_strict",
             n_slabs=2, status="PASS", gate_decisions=[],
         )
         cascade = CascadeResult(
@@ -2938,7 +2922,7 @@ class TestDetectedAIFEmissionInSitu:
         sentinel = PoolGateOutcome(
             curve_scaled=sentinel_curve, scale_factor=2.5,
             required_scale_factor=2.5, qc=_make_qc(),
-            hemisphere="bilateral", n_slabs=2, status="FAIL_G2",
+            n_slabs=2, status="FAIL_G2",
             decision=GateDecision(
                 tier="MCA_ACA_dce_strict", n_pool=2, scale_factor=2.5,
                 qc=_make_qc(), status="FAIL_G2", failing_gate="G2", warns=[],

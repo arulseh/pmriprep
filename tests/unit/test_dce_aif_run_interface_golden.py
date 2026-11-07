@@ -155,7 +155,7 @@ def _tier_result(cands: list[tuple[int, int, int]], status: str = "PASS") -> Tie
         metrics=[_full_metric()] * len(cands), curve_scaled=_bolus(),
         scale_factor=1.5, required_scale_factor=1.5,
         qc=_gate_qc(), atlas_tier="MCA_ACA_dce_strict",
-        hemisphere="bilateral", n_slabs=2, status=status, gate_decisions=[],
+        n_slabs=2, status=status, gate_decisions=[],
     )
 
 
