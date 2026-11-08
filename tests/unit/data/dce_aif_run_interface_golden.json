@@ -2031,7 +2031,7 @@
           "__f__": "0x0.0p+0"
         },
         "auto_detection_attempted": true,
-        "auto_fallback_reason": "all 1 cascade tiers exhausted; no tier produced any anchored keeper",
+        "auto_fallback_reason": "all 1 cascade tiers exhausted; no measured AIF passed acceptance",
         "auto_n_above_threshold": 0,
         "auto_n_candidates": 0,
         "baseline_frames": 5,
@@ -2527,7 +2527,7 @@
           "__f__": "0x0.0p+0"
         },
         "auto_detection_attempted": true,
-        "auto_fallback_reason": "all 1 cascade tiers exhausted; no tier produced any anchored keeper",
+        "auto_fallback_reason": "all 1 cascade tiers exhausted; no measured AIF passed acceptance",
         "auto_n_above_threshold": 0,
         "auto_n_candidates": 0,
         "baseline_frames": 5,

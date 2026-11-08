@@ -159,7 +159,10 @@ def test_dce_user_mask_bounds_pool_and_singleton(
     assert np.count_nonzero(used) == count and np.all(region[used] > 0.5)
     assert all(region[tuple(c)] > 0.5 for c in qc["candidate_coords"])
     assert qc["atlas_tier_used"] == "user_mask_strict"
-    assert len(qc["cascade_gate_decisions"]) == (3 if count == 1 else 1)
+    assert len(qc["cascade_gate_decisions"]) == (4 if count == 1 else 1)
+    if count == 1:
+        assert qc["cascade_gate_decisions"][-1]["outcome"] == "singleton_accepted"
+        assert qc["aif_gate_decisions"][0]["status"] == "PASS"
     block = build_aif_provenance_block(qc, modality="DCE")
     assert block["Source"] == "measured" and block["SearchRegion"] == "user_mask"
 

@@ -1260,11 +1260,7 @@ def _count_slabs_spanned(candidates: list[tuple[int, int, int]]) -> int:
 
 @dataclass
 class TierResult:
-    """Outcome of a single tier's progressive-trim acceptance attempt.
-
-    Returned by ``_evaluate_tier_with_trim`` on accept; ``None`` on
-    cascade fall-through.
-    """
+    """Checked curve and provenance for a pool or singleton acceptance attempt."""
 
     candidates: list[tuple[int, int, int]]
     scores: list[float]
@@ -1285,7 +1281,7 @@ class PoolGateOutcome:
 
     Returned by ``_score_and_gate_pool`` (the shared "average ->
     plasma-convert -> rescale -> QC -> slab span -> gate" body used
-    by both the progressive-trim loop and the post-filter gate check). ``curve_scaled``
+    by progressive trimming, singleton acceptance and the post-filter check). ``curve_scaled``
     is the exact curve the shape gates evaluated, so callers emit it directly.
     ``required_scale_factor`` remains the G1/G6 amplitude-adequacy input even
     when automatic peak-floor mutation is disabled.
@@ -3033,8 +3029,8 @@ class AIFDetection(BaseInterface):
         """Build the QC provenance dict for Pass-3 (population) fallback.
 
         Used when ``_run_two_pass_cascade`` returns ``detection_method=
-        "population"`` with empty candidates — i.e. no tier produced any
-        anchored keeper anywhere. The downstream per-candidate quality
+        "population"`` with empty candidates — no pool or singleton was
+        accepted. The downstream per-candidate quality
         filter at ``_run_interface`` only writes provenance when
         ``candidates`` is non-empty, so this helper is the only path that
         captures Pass-3 exhaustion.
@@ -3063,7 +3059,7 @@ class AIFDetection(BaseInterface):
             "auto_n_above_threshold": 0,
             "auto_fallback_reason": (
                 f"all {cascade_tiers_attempted} cascade tiers "
-                f"exhausted; no tier produced any anchored keeper"
+                f"exhausted; no measured AIF passed acceptance"
             ),
             "cascade_tiers_attempted": cascade_tiers_attempted,
             "cascade_best_score": 0.0,
@@ -3160,8 +3156,8 @@ class AIFDetection(BaseInterface):
 
         Runs the shared sequence: weighted-ROI average -> plasma-convert
         (``/ (1 - Hct)``) -> amplitude rescale -> QC -> slab
-        span -> gate evaluation. Used by both the progressive-trim loop and
-        the post-filter gate check so both paths apply the same operations.
+        span -> gate evaluation. Used by progressive trimming, singleton
+        acceptance and the post-filter check so all paths apply the same operations.
 
         Parameters
         ----------
@@ -3328,12 +3324,13 @@ class AIFDetection(BaseInterface):
         only when a tier produces ≥ 2 keepers AND has at least one
         arterial-grade timing anchor (Mouridsen-style cluster anchor).
 
-        Pass 2: if no tier had ≥ 2 keepers, fall back to the best
-        anchored single-keeper tier observed during Pass 1 (highest
-        max-score among tiers whose lone keeper passes the anchor gate).
+        Pass 2: if no pool was accepted, evaluate the best anchored
+        single keeper observed during Pass 1 (highest score among tiers
+        whose lone keeper passes the anchor gate). It must pass the same
+        curve and amplitude gates as a pool.
 
         Population AIF (Pass 3, handled by the caller) only triggers when
-        no tier produced any anchored keeper anywhere.
+        neither a pool nor the selected singleton passed acceptance.
 
         Whole-brain stays at "relaxed" (not permissive) because the atlas's
         spatial constraint is what makes permissive-tier candidates safe;
@@ -3388,11 +3385,13 @@ class AIFDetection(BaseInterface):
               ``has_anchor``.
             - ``tier_gate_decisions``: per-tier dicts with keys
               ``tier``, ``outcome`` (``"PASS"`` / ``"trim_exhausted"`` /
-              ``"skipped_quorum"`` / ``"skipped_anchor"``), and
+              ``"skipped_quorum"`` / ``"skipped_anchor"`` /
+              ``"singleton_accepted"`` / ``"singleton_rejected"``), and
               ``decisions`` (the per-iteration ``GateDecision`` log;
               empty when the tier was skipped before gates ran).
               Order matches ``anchor_outcomes`` (atlas tightest →
-              broadest × strict → permissive, then ``wb_relaxed``).
+              broadest × strict → permissive, then ``wb_relaxed``), followed
+              by the selected singleton's gate evaluation, when attempted.
             - ``atlas_search_outcome``: whether an atlas tier was selected,
               atlas tiers were exhausted, or no usable transformed-atlas
               support reached the detector. This describes the cascade-stage
@@ -3657,6 +3656,45 @@ class AIFDetection(BaseInterface):
                 candidates, scores, metrics_list,
                 detection_method, atlas_tier_used, _,
             ) = best_single_keeper
+            if gates_enabled:
+                keeper = next(i for i, score in enumerate(scores) if score >= _MIN_CANDIDATE_SCORE)
+                single_candidates = [candidates[keeper]]
+                single_scores = [scores[keeper]]
+                single_metrics = [metrics_list[keeper]]
+                outcome = self._score_and_gate_pool(
+                    single_candidates, single_scores, conc_data,
+                    brain_mask,  # type: ignore[arg-type]
+                    tr, baseline_frames,
+                    hct,  # type: ignore[arg-type]
+                    target_peak,  # type: ignore[arg-type]
+                    atlas_tier_used,
+                )
+                accepted = outcome.status in ("PASS", "PASS_WARN", "G6_ADMIT")
+                _record_tier_gate_outcome(
+                    atlas_tier_used,
+                    "singleton_accepted" if accepted else "singleton_rejected",
+                    [outcome.decision],
+                )
+                if accepted:
+                    tier_result = TierResult(
+                        candidates=single_candidates, scores=single_scores,
+                        metrics=single_metrics, curve_scaled=outcome.curve_scaled,
+                        scale_factor=outcome.scale_factor,
+                        required_scale_factor=outcome.required_scale_factor,
+                        qc=outcome.qc, atlas_tier=atlas_tier_used,
+                        n_slabs=outcome.n_slabs, status=outcome.status,
+                        gate_decisions=[outcome.decision],
+                    )
+                else:
+                    rejected = RejectedAIF(
+                        outcome.curve_scaled.copy(), single_candidates, single_scores,
+                        outcome.decision["failing_gate"] or "quality_checks_failed",
+                        outcome.scale_factor,
+                    )
+                    candidates, scores, metrics_list = [], [], []
+                    detection_method = "population"
+                    atlas_tier_used = None
+                    tier_result = None
 
         atlas_search_outcome: Literal[
             "selected", "exhausted", "unavailable_or_empty"
@@ -4521,8 +4559,8 @@ class AIFDetection(BaseInterface):
         )
 
         # Cascade-exhaustion provenance: when the two-pass cascade
-        # returns ``detection_method="population"`` (no tier produced
-        # any anchored keeper anywhere), record the fact + tier-attempt
+        # returns ``detection_method="population"`` (no pool or singleton
+        # passed acceptance), record the fact + tier-attempt
         # count + per-tier anchor outcomes so QC reviewers can see why
         # each tier failed. The downstream per-candidate quality
         # filter only writes provenance when ``candidates`` is
@@ -4533,9 +4571,22 @@ class AIFDetection(BaseInterface):
                 cascade_tiers_attempted,
                 anchor_outcomes=anchor_outcomes,
             )
+            if (
+                rejected is not None and tier_gate_decisions
+                and tier_gate_decisions[-1]["outcome"] == "singleton_rejected"
+            ):
+                _detection_attempt.update({
+                    "auto_best_score": float(max(rejected.scores)),
+                    "cascade_best_score": float(max(rejected.scores)),
+                    "auto_n_candidates": 1,
+                    "auto_n_above_threshold": 1,
+                    "auto_fallback_reason": (
+                        f"best anchored singleton failed {rejected.reason}"
+                    ),
+                })
             logger.warning(
-                "AIF cascade: all %d tiers exhausted without producing "
-                "any anchored keeper. Falling back to Parker population AIF.",
+                "AIF cascade: all %d tiers exhausted without accepting "
+                "a measured AIF. Falling back to Parker population AIF.",
                 cascade_tiers_attempted,
             )
 
@@ -4571,11 +4622,10 @@ class AIFDetection(BaseInterface):
                 scores = [scores[i] for i in keep]
                 metrics_list = [metrics_list[i] for i in keep]
             elif len(keep) == 1:
-                # Single high-quality voxel — use it but warn
+                # A single keeper still requires curve-level acceptance.
                 logger.warning(
                     "AIF quality filter: only 1/%d candidate with "
-                    "score >= %.2f. Using single voxel AIF "
-                    "(no consistency check possible).",
+                    "score >= %.2f. A single-voxel AIF has limited spatial support.",
                     n_before, _MIN_CANDIDATE_SCORE,
                 )
                 candidates = [candidates[keep[0]]]
@@ -4724,10 +4774,8 @@ class AIFDetection(BaseInterface):
             for cx, cy, cz in candidates:
                 aif_mask[cx, cy, cz] = 1
         else:
-            # In production, the only detected AIF without a G1-G6
-            # ``tier_result`` is the anchored Pass-2 singleton. Its candidate
-            # metrics and emitted curve remain represented in the standard QC
-            # fields below; there is no smaller pool to retry.
+            # Direct averaging for callers that did not enable cascade gates.
+            # Production pools and Pass-2 singletons carry a checked tier_result.
             aif_curve, aif_mask = self._compute_weighted_roi_aif(
                 candidates, scores, conc_data, brain_mask,
             )
@@ -4888,7 +4936,7 @@ class AIFDetection(BaseInterface):
         self, runtime: Any, emit: EmitResult, state: DetectionState,
         loaded: LoadedInputs, params: AIFParams,
     ) -> Any:
-        """Provenance + confidence + Pass-2 anchor + final metrics + save."""
+        """Record provenance, confidence, calibration and final metrics, then save."""
         import nibabel as nib  # type: ignore[import-untyped]
         aif_curve = emit.aif_curve
         aif_mask = emit.aif_mask
@@ -5018,11 +5066,9 @@ class AIFDetection(BaseInterface):
             qc_metrics["aif_confidence_reason"] = "single_voxel_support"
             qc_metrics["aif_support_voxels"] = 1
 
-        # Amplitude-anchor the Pass-2 fallback AIF to the dose-scaled population
-        # target via the shared _apply_aif_scale helper (identical math to the
-        # per-tier trim loop and the post-filter gate check). External AIFs bypass (supplied
-        # pre-scaled in plasma mM, Hct-corrected — see README); the gated cascade
-        # path bypasses (already scaled inside the trim loop, scale_factor recorded).
+        # Calibrate direct callers without a checked tier_result. Production
+        # pools and singletons already carry their scaled curve and scale factor;
+        # external AIFs are supplied in plasma mM and bypass calibration.
         if detection_method not in ("population", "external") and tier_result is None:
             current_peak = float(np.max(aif_curve))
             scale = _resolve_aif_scale(
@@ -5256,24 +5302,23 @@ class AIFDetection(BaseInterface):
         Two distinct gate-decision QC fields are emitted to the
         ``Metrics.aif_detection`` block of the per-session sidecar:
 
-        - ``aif_gate_decisions``: per-iteration ``GateDecision`` log of
-          the **winning** tier's progressive trim loop. Empty when no
-          tier wins (population fallback). Consumers reading this for
-          QC pass/fail summaries see only the accepted pool's history.
+        - ``aif_gate_decisions``: ``GateDecision`` log of the selected pool
+          or singleton, including a final-subset re-check when needed.
         - ``cascade_gate_decisions``: per-tier outcome list, one entry
           per attempted tier in cascade order (atlas tightest →
-          broadest × strict → permissive, then ``wb_relaxed``). Each
+          broadest × strict → permissive, then ``wb_relaxed``), followed
+          by the selected singleton's check when attempted. Each
           entry has ``tier`` (label), ``outcome`` (``"PASS"`` /
           ``"trim_exhausted"`` / ``"skipped_quorum"`` /
-          ``"skipped_anchor"``), and ``decisions`` (the full
+          ``"skipped_anchor"`` / ``"singleton_accepted"`` /
+          ``"singleton_rejected"``), and ``decisions`` (the full
           per-iteration ``GateDecision`` log; empty when the tier was
           skipped before gates ran). This field captures the
           diagnostic trail for tiers whose pool was discarded — needed
           for diagnosing cascades that exhaust to population.
 
-        Order of ``cascade_gate_decisions`` matches
-        ``cascade_anchor_outcomes`` and is asserted in
-        ``tests/unit/test_dce_aif.py``.
+        The singleton gate entry follows the per-tier entries; it does not
+        represent another search tier or increment the search-attempt count.
         """
         loaded = self._load_and_validate_inputs()
         if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:

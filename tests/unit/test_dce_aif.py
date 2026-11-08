@@ -761,7 +761,7 @@ class TestCascadeExhaustionProvenance:
         assert prov["cascade_tiers_attempted"] == 13
         assert prov["cascade_best_score"] == 0.0
         assert "all 13 cascade tiers exhausted" in prov["auto_fallback_reason"]
-        assert "no tier produced any anchored keeper" in prov["auto_fallback_reason"]
+        assert "no measured AIF passed acceptance" in prov["auto_fallback_reason"]
 
     def test_helper_threads_partial_attempt_count(self) -> None:
         """Helper accurately reports tier count even on partial cascades.
@@ -2958,109 +2958,111 @@ class TestDetectedAIFEmissionInSitu:
         assert res["aif_confidence"] == "reduced"
 
     @pytest.mark.parametrize(
-        ("target_peak", "blood_peak", "expected_factor", "warning"),
+        ("target_peak", "blood_peak", "expected_factor", "bad_tail", "failure"),
         [
-            (0.0, 5.0, 1.0, None),
-            (3.4, 1.0, 3.4, None),
-            (3.41, 1.0, 3.41, "substantially below expected range"),
-            (5.2, 1.0, 5.2, "substantially below expected range"),
-            (5.21, 1.0, 5.21, "Results may be unreliable"),
-            (6.65, 1.0, 6.65, "Results may be unreliable"),
+            (0.0, 5.0, 1.0, False, None),
+            (3.0, 1.0, 3.0, False, None),
+            (3.01, 1.0, 3.01, False, "G6_f"),
+            (0.0, 5.0, 1.0, True, "G2"),
         ],
     )
-    def test_pass2_singleton_is_emitted_with_qc(
+    def test_pass2_singleton_is_gated_before_emission(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture, target_peak: float,
-        blood_peak: float, expected_factor: float, warning: str | None,
+        target_peak: float, blood_peak: float, expected_factor: float,
+        bad_tail: bool, failure: str | None,
     ) -> None:
-        """A selected singleton emits its calibrated curve, QC and scale warnings."""
+        """Real singleton gates retain valid curves or emit population with rejection QC."""
         import nibabel as nib
 
         conc_f, mask_f = self._write_niftis(tmp_path, arterial_peak=blood_peak)
         monkeypatch.chdir(tmp_path)
-
         candidate = (10, 10, 10)
         hematocrit = 0.5
-        concentration = np.asarray(nib.load(conc_f).dataobj)
+        image = nib.load(conc_f)
+        concentration = image.get_fdata()
+        if bad_tail:
+            concentration[candidate][20:] = blood_peak * 0.6
+            nib.save(nib.Nifti1Image(concentration, image.affine), conc_f)
         expected_curve = concentration[candidate] / (1.0 - hematocrit) * expected_factor
-        cascade = CascadeResult(
-            candidates=[candidate], scores=[0.9],
-            metrics_list=[self._full_metric(peak_mm=blood_peak)], detection_method="atlas",
-            atlas_tier_used="MCA_ACA_dce_strict",
-            cascade_tiers_attempted=10, anchor_outcomes=[], tier_result=None,
-            tier_gate_decisions=[],
-            atlas_search_outcome="selected",
-            atlas_search_support_voxels=125,
+        # Isolate candidate discovery; run the cascade, shared gates and emission.
+        # The low-scoring neighbour must not contaminate the singleton gate.
+        found = ([candidate, (9, 10, 10)], [0.9, 0.1],
+                 [self._full_metric(peak_mm=blood_peak), self._full_metric()])
+        atlas = np.zeros(concentration.shape[:3], dtype=np.uint8)
+        atlas[8:13, 8:13, 8:13] = 1
+        atlas_file = tmp_path / "atlas.nii.gz"
+        nib.save(nib.Nifti1Image(atlas, image.affine), atlas_file)
+        iface = AIFDetection(
+            concentration_file=conc_f, brain_mask_file=mask_f, tr=4.0,
+            hematocrit=hematocrit, target_peak=target_peak,
+            atlas_mask_files=[str(atlas_file)],
         )
-
-        iface = AIFDetection()
-        iface.inputs.concentration_file = conc_f
-        iface.inputs.brain_mask_file = mask_f
-        iface.inputs.tr = 4.0
-        iface.inputs.hematocrit = hematocrit
-        iface.inputs.target_peak = target_peak
-
         with patch.object(
-            AIFDetection, "_prepare_search_mask",
-            wraps=AIFDetection._prepare_search_mask,
+            AIFDetection, "_prepare_search_mask", wraps=AIFDetection._prepare_search_mask,
         ) as prepare_spy, patch.object(
-            AIFDetection, "_run_two_pass_cascade", return_value=cascade,
+            AIFDetection, "_find_candidates_in_mask",
+            side_effect=[([], [], [])] * 3 + [found],
         ), patch.object(
-            AIFDetection, "_select_top_candidates",
-            side_effect=lambda cands, scs, mets, *a, **k: (cands, scs, mets),
-        ):
+            AIFDetection, "_score_and_gate_pool", wraps=iface._score_and_gate_pool,
+        ) as gate_spy:
             iface.run()
-
+        gate_spy.assert_called_once()
+        assert gate_spy.call_args.args[0] == [candidate]
         res = iface._results
-        assert res["scaling_factor"] == pytest.approx(expected_factor)
-        np.testing.assert_allclose(res["aif_curve"], expected_curve)
         qc = res["qc_metrics"]
-        assert qc["peak_scaling_required_factor"] == pytest.approx(expected_factor)
-        assert qc["scaling_factor_warning"] is (warning is not None)
-        assert qc["required_scaling_factor_warning"] is (warning is not None)
-        scale_warnings = [
-            record.getMessage() for record in caplog.records
-            if record.levelname == "WARNING" and "amplitude-calibration" in record.getMessage()
-        ]
-        assert len(scale_warnings) == (0 if warning is None else 1)
-        if warning is not None:
-            assert warning in scale_warnings[0]
-        assert res["aif_confidence"] == "reduced"
-        assert qc["aif_confidence_reason"] == "single_voxel_support"
-        assert qc["aif_support_voxels"] == 1
-        assert qc["aif_status"] == "WARN"
-        assert qc["raw_peak_mm"] == pytest.approx(blood_peak / (1.0 - hematocrit))
-        assert qc["peak_scaling_factor"] == pytest.approx(expected_factor)
-        assert qc["aif_uncertainty_inflation_factor"] == 1.0
-        from pmriprep.utils.aif_provenance import build_aif_provenance_block
-
-        provenance = build_aif_provenance_block(qc, modality="DCE")
-        assert provenance["Confidence"] == "reduced"
-        assert provenance["ConfidenceReason"] == "single_voxel_support"
-        assert provenance["SupportVoxels"] == 1
-        assert provenance["UncertaintyInflationFactor"] == 1.0
-        assert res["candidate_count"] == 1
-        assert res["qc_metrics"]["n_aif_voxels_selected"] == 1
-        assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]
-        assert res["qc_metrics"]["atlas_search_outcome"] == "selected"
-        assert res["qc_metrics"]["atlas_search_support_voxels"] == 125
-        assert res["qc_metrics"]["whole_brain_search_support_voxels"] > 0
-        assert np.isfinite(
-            res["qc_metrics"]["whole_brain_symmetry_angle_degrees"]
-        )
-        assert 0.0 < res["qc_metrics"]["whole_brain_symmetry_overlap"] <= 1.0
         assert prepare_spy.call_count == 2
-        assert (
-            prepare_spy.call_args_list[0].kwargs[
-                "apply_superior_fraction_exclusion"
-            ]
-            is False
-        )
+        atlas_kwargs = prepare_spy.call_args_list[0].kwargs
         whole_brain_kwargs = prepare_spy.call_args_list[1].kwargs
+        assert atlas_kwargs["apply_superior_fraction_exclusion"] is False
+        assert whole_brain_kwargs["apply_superior_fraction_exclusion"] is False
         assert whole_brain_kwargs["erosion_iterations"] == 0
         assert whole_brain_kwargs["physical_erosion_mm"] == pytest.approx(12.0)
-        assert whole_brain_kwargs["apply_superior_fraction_exclusion"] is False
         assert np.any(whole_brain_kwargs["symmetry_midline_zone"])
+        assert qc["atlas_search_outcome"] == "exhausted"
+        assert qc["atlas_search_support_voxels"] == 125
+        assert qc["whole_brain_search_support_voxels"] > 0
+        assert np.isfinite(qc["whole_brain_symmetry_angle_degrees"])
+        assert 0.0 < qc["whole_brain_symmetry_overlap"] <= 1.0
+        trace = qc["cascade_gate_decisions"][-1]
+        assert trace["decisions"][0]["n_pool"] == 1
+        if failure is not None:
+            assert res["detection_method"] == "population"
+            assert res["candidate_count"] == 0
+            assert qc["detection_status"] == "failed"
+            assert qc["aif_confidence"] == "low"
+            assert trace["outcome"] == "singleton_rejected"
+            assert trace["decisions"][0]["failing_gate"] == failure
+            assert qc["rejected_candidate"]["reason"] == failure
+            assert qc["auto_n_above_threshold"] == 1
+            assert qc["auto_best_score"] == pytest.approx(0.9)
+            assert failure in qc["auto_fallback_reason"]
+            np.testing.assert_allclose(np.loadtxt(res["out_rejected_aif_curve"]), expected_curve)
+            rejected_mask = nib.load(res["out_rejected_aif_mask"]).get_fdata()
+            assert rejected_mask[candidate] == 1 and np.count_nonzero(rejected_mask) == 1
+        else:
+            assert res["detection_method"] == "whole_brain"
+            assert trace["outcome"] == "singleton_accepted"
+            assert trace["decisions"][0]["status"] == "PASS"
+            assert qc["aif_gate_decisions"] == trace["decisions"]
+            assert res["scaling_factor"] == pytest.approx(expected_factor)
+            np.testing.assert_allclose(res["aif_curve"], expected_curve)
+            assert qc["peak_scaling_required_factor"] == pytest.approx(expected_factor)
+            assert qc["raw_peak_mm"] == pytest.approx(blood_peak / (1.0 - hematocrit))
+            assert qc["aif_confidence"] == "reduced"
+            assert qc["aif_confidence_reason"] == "single_voxel_support"
+            assert qc["aif_support_voxels"] == 1
+            assert qc["aif_status"] == "WARN"
+            assert qc["aif_uncertainty_inflation_factor"] == 1.0
+            assert qc["n_aif_voxels_filtered_out"] == 1
+            assert res["candidate_count"] == 1
+            assert qc["candidate_coords"] == [list(candidate)]
+            from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+            provenance = build_aif_provenance_block(qc, modality="DCE")
+            assert provenance["Confidence"] == "reduced"
+            assert provenance["ConfidenceReason"] == "single_voxel_support"
+            assert provenance["SupportVoxels"] == 1
+            assert provenance["UncertaintyInflationFactor"] == 1.0
 
 
 def test_population_fallback_retains_rejected_curve_and_matching_voxels(tmp_path, monkeypatch) -> None:

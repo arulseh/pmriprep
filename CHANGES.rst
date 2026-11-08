@@ -1,3 +1,12 @@
+1.0.0rc6.dev45 (2026-11-08)
+===========================
+
+* CHG: Apply pooled curve and amplitude gates to the selected DCE singleton
+  before acceptance. Failed singleton checks use the population AIF and retain
+  the rejected curve and gate provenance; accepted singletons keep reduced
+  confidence and are calibrated only once. Report singleton fidelity scores
+  from the emitted calibrated curve, consistently with pooled AIFs.
+
 1.0.0rc6.dev44 (2026-11-08)
 ===========================
 
