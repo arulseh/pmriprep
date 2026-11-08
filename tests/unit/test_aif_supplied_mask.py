@@ -67,10 +67,10 @@ def test_exhausted_user_mask_uses_nonfatal_fallback(
 
 
 @pytest.mark.parametrize("route", ["pool", "union", "single"])
-def test_dsc_user_mask_bounds_cascade_and_neighborhood_averaging(
+def test_dsc_user_mask_bounds_cascade_and_averaging(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str,
 ) -> None:
-    """Tier, union and expanded single-voxel averages use only supplied voxels."""
+    """Tier, union and single-voxel AIFs use only supplied voxels."""
     region = np.zeros((16, 16, 16))
     coords = [(8, 5, 7), (8, 6, 7), (8, 7, 7)]
     for coord in coords:
@@ -95,12 +95,10 @@ def test_dsc_user_mask_bounds_cascade_and_neighborhood_averaging(
 
     monkeypatch.setattr(detector, "_score_and_select_candidates", score)
     monkeypatch.setattr(detector, "_apply_postscore_aif_filters", lambda candidates, **kw: (candidates, {}))
-    monkeypatch.setattr(detector, "_aif_passes_quality", lambda *a: dsc_aif.AifQualityResult(route != "single", 0., 1., 0.))
+    monkeypatch.setattr(detector, "_aif_passes_quality", lambda *a: dsc_aif.AifQualityResult(True, 0., 1., 0.))
     if route == "single":
-        # Exercise the expanded neighborhood after the single voxel fails its gate.
-        outcomes = iter([False, True])
-        monkeypatch.setattr(detector, "_aif_global_max_in_fp", lambda *a: next(outcomes))
-        monkeypatch.setattr(detector, "_compute_aif_brr", lambda *a: 0.)
+        # Isolate the singleton while retaining its shared curve-quality gate.
+        monkeypatch.setattr(detector, "_try_trimmed_pool_acceptance", lambda *a: None)
     result = detector._run_candidate_cascade(context, 5, logging.getLogger(__name__))
     assert result.accepted_aif is not None
     curve, used, roi_size = result.accepted_aif
@@ -111,7 +109,9 @@ def test_dsc_user_mask_bounds_cascade_and_neighborhood_averaging(
     )
     np.testing.assert_allclose(curve, expected_curve)
     assert len(result.candidates) == (1 if route == "single" else 3)
-    assert roi_size == (3 if route == "single" else 1)
+    assert roi_size == 1
+    if route == "single":
+        assert np.count_nonzero(used) == 1
     if route == "union":
         assert result.detection_level == "user_mask_strict+user_mask_relaxed+user_mask_permissive"
     final = detector._finalize_post_cascade(

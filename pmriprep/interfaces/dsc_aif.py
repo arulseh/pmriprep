@@ -560,7 +560,7 @@ class AIFDetection(BaseInterface):
     - Symmetry-aligned posterior midline and edge-slice exclusions
     - Tissue TTP cross-validation
     - Cost-function scoring (lower = better) with S0-dominant weighting
-    - 3x3x3 ROI averaging with Savitzky-Golay smoothing
+    - Inverse-cost weighted candidate-voxel averaging with fixed-duration temporal smoothing
     - Multi-level fallback: atlas strict/relaxed/permissive -> brain relaxed/permissive
     """
 
@@ -1626,7 +1626,7 @@ class AIFDetection(BaseInterface):
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
         tr: float,
-        roi_size: int = 3,
+        roi_size: int = 1,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
         """Average candidate ROIs with inverse-cost weights and temporal smoothing.
 
@@ -1836,9 +1836,8 @@ class AIFDetection(BaseInterface):
     ) -> Optional[AIFPoolAcceptanceResult]:
         """Compute the inverse-cost-weighted averaged AIF and gate it.
 
-        Each candidate contributes its own voxel (``roi_size=1``). Tissue
-        contamination from 3x3x3 neighbourhoods had no SNR benefit over the
-        weighted mean across multiple candidate voxels.
+        Each candidate contributes its own voxel (``roi_size=1``), with
+        inverse-cost weighting across candidates.
 
         Returns
         -------
@@ -2522,30 +2521,36 @@ class AIFDetection(BaseInterface):
         concentration: npt.NDArray[Any], brain_mask: npt.NDArray[Any],
         tr: float, baseline_frames: int, logger: Any,
     ) -> tuple[Optional[_SingleBestAIFResult], Optional[_RejectedAIF]]:
-        """Evaluate the lowest-cost candidate and retain its rejected spatial QC."""
+        """Apply pooled curve checks to the best voxel and retain rejection QC."""
         if not candidates:
             return None, None
         best_candidate = min(candidates, key=lambda candidate: candidate[0])
-        rejected = None
-        for roi_size in (1, 3):
-            curve, mask = self._compute_roi_averaged_aif(
-                [best_candidate], concentration, brain_mask, tr, roi_size=roi_size,
-            )
-            peak_ok = self._aif_global_max_in_fp(curve, baseline_frames, tr)
-            brr = self._compute_aif_brr(curve, baseline_frames, tr)
-            if peak_ok and (np.isnan(brr) or brr >= AIF_AVG_BRR_MIN):
-                return _SingleBestAIFResult(curve, mask, roi_size, best_candidate), None
-            reason = "peak_outside_first_pass" if not peak_ok else "negative_tail"
-            rejected = _RejectedAIF(curve, mask, {
-                "reason": reason,
-                "roi_size": roi_size,
-                "baseline_frames_used": baseline_frames,
-                "aif_voxel_coord": list(best_candidate[1]),
-                "candidate_coords": [list(best_candidate[1])],
-                "candidate_scores": _costs_to_scores([best_candidate[0]]),
-                "baseline_return_ratio": float(brr) if np.isfinite(brr) else None,
-            })
-            logger.debug("Single-best AIF rejected: %s (ROI %d)", reason, roi_size)
+        curve, mask = self._compute_roi_averaged_aif(
+            [best_candidate], concentration, brain_mask, tr, roi_size=1,
+        )
+        quality = self._aif_passes_quality(curve, baseline_frames, tr)
+        if quality.passes:
+            return _SingleBestAIFResult(curve, mask, 1, best_candidate), None
+        if not self._aif_global_max_in_fp(curve, baseline_frames, tr):
+            reason = "peak_outside_first_pass"
+        elif quality.spr > 100.0:
+            reason = "secondary_peak"
+        elif quality.peak_ratio is None or not (
+            GAMMA_PEAK_RATIO_CASCADE_MIN <= quality.peak_ratio <= GAMMA_PEAK_RATIO_CASCADE_MAX
+        ):
+            reason = "peak_ratio"
+        else:
+            reason = "negative_tail"
+        rejected = _RejectedAIF(curve, mask, {
+            "reason": reason,
+            "roi_size": 1,
+            "baseline_frames_used": baseline_frames,
+            "aif_voxel_coord": list(best_candidate[1]),
+            "candidate_coords": [list(best_candidate[1])],
+            "candidate_scores": _costs_to_scores([best_candidate[0]]),
+            "baseline_return_ratio": float(quality.brr) if np.isfinite(quality.brr) else None,
+        })
+        logger.debug("Single-best AIF rejected: %s", reason)
         return None, rejected
 
 
@@ -3028,8 +3033,7 @@ class AIFDetection(BaseInterface):
 
         # Single-best fallback: union has voxels but per-tier and
         # union averaged-pool gates all rejected. Try the lowest-cost union
-        # voxel; the relaxed gate uses global_max_in_fp and
-        # AIF_AVG_BRR_MIN.
+        # voxel with the same curve-quality gate as the averaged pools.
         if accepted_aif is None and len(union_state.candidates) > 0:
             single_best, rejected = self._try_single_best_fallback(
                 union_state.candidates,

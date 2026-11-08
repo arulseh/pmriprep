@@ -95,10 +95,17 @@ def test_pool_below_minimum_is_not_evaluated(
     assert result is None
 
 
-def test_single_best_uses_lowest_cost_and_retries_larger_roi(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("spr, peak_ratio, brr, reason", [
+    (0.0, 1.0, 5.0, None),
+    (0.0, 1.0, float("nan"), None),
+    (101.0, 1.0, 5.0, "secondary_peak"),
+    (0.0, None, 5.0, "peak_ratio"),
+])
+def test_single_best_uses_lowest_cost_and_shared_curve_gate(
+    monkeypatch: pytest.MonkeyPatch, spr: float, peak_ratio: float | None,
+    brr: float, reason: str | None,
 ) -> None:
-    """The fallback selects by cost and tries the 3-voxel ROI after ROI 1."""
+    """The best voxel must pass the pool curve gate, including its NaN-BRR policy."""
     detector = AIFDetection()
     best_coord = (0, 0, 1)
     candidates = [
@@ -123,11 +130,13 @@ def test_single_best_uses_lowest_cost_and_retries_larger_roi(
 
     monkeypatch.setattr(detector, "_compute_roi_averaged_aif", compute)
     monkeypatch.setattr(
-        detector,
+        AIFDetection,
         "_aif_global_max_in_fp",
-        lambda curve, baseline, tr: bool(curve[0] == 3),
+        staticmethod(lambda curve, baseline, tr: True),
     )
-    monkeypatch.setattr(detector, "_compute_aif_brr", lambda *args: 5.0)
+    monkeypatch.setattr(AIFDetection, "_compute_aif_brr", lambda *args: brr)
+    monkeypatch.setattr(AIFDetection, "_compute_aif_spr", lambda *args: (spr, 4, 1.0))
+    monkeypatch.setattr("pmriprep.interfaces.dsc_aif._compute_aif_peak_ratio", lambda *args, **kw: peak_ratio)
 
     result, rejected = detector._try_single_best_fallback(
         candidates,
@@ -138,14 +147,20 @@ def test_single_best_uses_lowest_cost_and_retries_larger_roi(
         logging.getLogger(__name__),
     )
 
-    assert result is not None
-    assert result.candidate[1] == best_coord
-    assert result.roi_size == 3
-    assert attempted_sizes == [1, 3]
-    assert attempted_coords == [best_coord, best_coord]
+    if reason is None:
+        assert result is not None and rejected is None
+        assert result.candidate[1] == best_coord
+        assert result.roi_size == 1
+    else:
+        assert result is None and rejected is not None
+        assert rejected.qc["reason"] == reason
+        assert rejected.qc["candidate_coords"] == [list(best_coord)]
+        assert rejected.qc["roi_size"] == 1
+    assert attempted_sizes == [1]
+    assert attempted_coords == [best_coord]
 
 
-def test_single_best_rejects_all_rois_below_brr_floor(
+def test_single_best_rejects_below_brr_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No single-candidate fallback is accepted below the BRR floor."""
@@ -157,8 +172,10 @@ def test_single_best_rejects_all_rois_below_brr_floor(
         return np.ones(8), np.ones((2, 2, 2), dtype=bool)
 
     monkeypatch.setattr(detector, "_compute_roi_averaged_aif", compute)
-    monkeypatch.setattr(detector, "_aif_global_max_in_fp", lambda *args: True)
-    monkeypatch.setattr(detector, "_compute_aif_brr", lambda *args: -4.0)
+    monkeypatch.setattr(AIFDetection, "_aif_global_max_in_fp", staticmethod(lambda *args: True))
+    monkeypatch.setattr(AIFDetection, "_compute_aif_brr", lambda *args: -4.0)
+    monkeypatch.setattr(AIFDetection, "_compute_aif_spr", lambda *args: (0.0, 4, 1.0))
+    monkeypatch.setattr("pmriprep.interfaces.dsc_aif._compute_aif_peak_ratio", lambda *args, **kw: 1.0)
 
     result, rejected = detector._try_single_best_fallback(
         [(0.5, (0, 0, 0), {})],
@@ -170,4 +187,6 @@ def test_single_best_rejects_all_rois_below_brr_floor(
     )
 
     assert result is None
-    assert attempted_sizes == [1, 3]
+    assert attempted_sizes == [1]
+
+    assert rejected is not None and rejected.qc["reason"] == "negative_tail"

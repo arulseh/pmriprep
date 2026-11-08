@@ -1,3 +1,10 @@
+1.0.0rc6.dev44 (2026-11-08)
+===========================
+
+* CHG: Require DSC single-voxel AIFs to pass the same curve-quality checks as
+  pooled AIFs, retaining the shared allowance for unavailable BRR. Remove the
+  3x3x3 neighbourhood retry; failed detection yields AIF-independent maps only.
+
 1.0.0rc6.dev43 (2026-11-07)
 ===========================
 
