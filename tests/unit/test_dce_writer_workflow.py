@@ -400,6 +400,13 @@ def test_uncertainty_sidecar_records_collected_qc(
             "hessian_unavailable_fraction": 2 / 9,
         }
     }
+    fallback = {
+        "requested_inference": "vi", "fallback_inference": "nlls",
+        "n_retained_voxels": 10, "n_nlls_fallback": 2,
+        "fallback_fraction_of_retained": 0.2,
+    }
+    if inference == "vi":
+        fit_qc["inference_fallback"] = fallback
     inp.qc_metrics = _collect_qc_metrics(
         b1_qc=None, t1_qc=None, signal_conversion_qc=None,
         preprocess_qc=None, brain_extraction_qc=None, registration_qc=None,
@@ -420,6 +427,13 @@ def test_uncertainty_sidecar_records_collected_qc(
         )
     )
     metadata = json.loads(sidecar.read_text())
+    if inference == "vi":
+        assert metadata["PerfusionProcessing"]["InferenceFallback"] == fallback
+        assert "NaN where VI falls back to least squares" in metadata["UncertaintyFallbackBehavior"]
+    elif inference == "nlls":
+        assert "InferenceFallback" not in metadata["PerfusionProcessing"]
+        assert "UncertaintyFallbackBehavior" not in metadata
+    assert metadata["PerfusionProcessing"]["PKModeling"]["model"] == "tofts"
     if inference == "map":
         accounting = metadata["MAPUncertaintyAccounting"]
         assert accounting["n_laplace_hessian"] == 7

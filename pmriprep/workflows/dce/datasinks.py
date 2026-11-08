@@ -263,6 +263,11 @@ def _build_dce_meta(
         out["Units"] = units
     if extra:
         out.update(extra)
+        if isinstance(extra.get("PerfusionProcessing"), dict):
+            out["PerfusionProcessing"] = {
+                **(base.get("PerfusionProcessing") or {}),
+                **extra["PerfusionProcessing"],
+            }
     if map_key:
         scope_dce_map_processing(out, map_key)
         fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)
@@ -446,6 +451,16 @@ def _build_uncertainty_extra(
     )
     extra.update(build_dce_delay_metadata(qc_metrics))
     pk_qc = (qc_metrics or {}).get("pk_modeling") or {}
+    if str(estimation).lower() == "vi":
+        extra["UncertaintyFallbackBehavior"] = (
+            "NaN where VI falls back to least squares; parameter maps retain "
+            "the NLLS estimate, but its standard error is not a posterior SD."
+        )
+        fallback = (qc_metrics or {}).get("inference_fallback")
+        if fallback is None and isinstance(pk_qc, dict):
+            fallback = pk_qc.get("inference_fallback")
+        if isinstance(fallback, dict):
+            extra["PerfusionProcessing"] = {"InferenceFallback": dict(fallback)}
     if isinstance(pk_qc, dict):
         uncertainty_qc = pk_qc.get("parameter_uncertainty")
         if isinstance(uncertainty_qc, dict):

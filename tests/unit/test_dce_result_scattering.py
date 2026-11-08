@@ -307,6 +307,47 @@ def test_retained_fixed_fit_preserves_genuine_zero_parameter() -> None:
     assert maps.vp[0, 0, 0] == pytest.approx(0.02)
 
 
+@pytest.mark.parametrize("model", ["extended_tofts", "2cxm"])
+@pytest.mark.parametrize("inference,fallback", [("nlls", False), ("vi", False), ("vi", True)])
+def test_scatter_uncertainty_and_departure_follow_retained_engine(
+    model: str, inference: str, fallback: bool,
+) -> None:
+    """Fallback keeps kinetics but contributes no posterior SD or prior departure."""
+    maps = _uncertainty_maps()
+    maps.model_selection_codes = {model: 4}
+    for field in ("ktrans_std", "ve_std", "vp_std", "fp_std", "ps_std"):
+        getattr(maps, field).fill(np.nan)
+    constrained = inference == "vi" and not fallback
+    params = {"Ktrans": 0.1, "ve": 0.3, "vp": 0.03, "Fp": 40., "PS": 20., "E": 1 / 3}
+    result = {
+        "failed": False, "coords": (0, 0, 0), "params": params,
+        "selected_model_name": model, "converged": True, "r_squared": 0.95,
+        "uncertainties": {name: 0.01 for name in ("Ktrans", "ve", "vp", "Fp", "PS")},
+        "inference_fallback": fallback, "constrained": constrained,
+    }
+    summary = _scatter_dce_fit_results(
+        [VoxelInput(0, 0, 0, np.zeros(3), 0.02)], [result], maps,
+        model, False, inference, ConstraintMode.SOFT, 0.6,
+    )
+    assert maps.ktrans.item() == params["Ktrans"]
+    assert maps.vp.item() == params["vp"]
+    assert maps.ve.item() == params["ve"]
+    assert maps.r_squared.item() == 0.95
+    assert summary.n_retained == 1 and maps.retained_nondegenerate.item()
+    assert summary.n_inference_fallback == int(fallback)
+    fields = {"ve": "ve_std", "vp": "vp_std"}
+    fields.update({"Fp": "fp_std", "PS": "ps_std"} if model == "2cxm" else {"Ktrans": "ktrans_std"})
+    for parameter, field in fields.items():
+        value = getattr(maps, field).item()
+        if fallback:
+            assert np.isnan(value)
+        else:
+            assert value == pytest.approx(0.01 * maps.sigma_factor[parameter])
+    assert len(summary.vp_prior_departures) == summary.n_constrained == int(constrained)
+    if constrained:
+        assert summary.vp_prior_departures == pytest.approx([0.01 / 0.012])
+
+
 def test_vp_prior_departure_uses_relative_sigma_and_floor() -> None:
     """Bayesian SOFT departure uses relative uncertainty with a 0.001 floor."""
     assert _compute_vp_prior_departure(

@@ -244,21 +244,25 @@ def _scatter_dce_fit_results(
         _scatter_dce_parameters(
             maps, coords, selected_model, params, result["r_squared"],
         )
-        if result["uncertainties"]:
+        # Posterior-SD maps cannot contain the fallback's conditional NLLS SE.
+        if result["uncertainties"] and not (
+            inference != "nlls" and result.get("inference_fallback", False)
+        ):
             _scatter_dce_uncertainties(
                 maps, coords, selected_model, result["uncertainties"],
             )
         _scatter_dce_fit_artifacts(maps, coords, result)
-        departure = _compute_vp_prior_departure(
-            constraint_mode,
-            inference,
-            selected_model,
-            voxel.voxel_vp,
-            params.get("vp", 0.0),
-            constraint_vp_uncertainty,
-        )
-        if departure is not None:
-            vp_prior_departures.append(departure)
+        if result.get("constrained", False):
+            departure = _compute_vp_prior_departure(
+                constraint_mode,
+                inference,
+                selected_model,
+                voxel.voxel_vp,
+                params.get("vp", 0.0),
+                constraint_vp_uncertainty,
+            )
+            if departure is not None:
+                vp_prior_departures.append(departure)
         accounting = _account_retained_dce_fit(voxel, result, constraint_mode)
         n_constrained += accounting.n_constrained
         n_unconstrained_fallback += accounting.n_unconstrained_fallback
@@ -1484,7 +1488,8 @@ class ComputeDCEMaps(BaseInterface):
     Uncertainty maps contain NLLS standard errors or Bayesian posterior
     standard deviations, conditional on the selected family and delay, with
     parameter-specific AIF-confidence inflation.
-    Unavailable estimates remain NaN within the brain mask.
+    Unavailable estimates remain NaN within the brain mask. Bayesian
+    posterior-SD maps are NaN at voxels retaining an NLLS fallback estimate.
 
     The tSNR threshold can exclude noisy voxels from fitting. tSNR is
     computed as mean(baseline) / std(baseline). A typical threshold is 4.0.

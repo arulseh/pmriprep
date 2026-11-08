@@ -1,3 +1,10 @@
+1.0.0rc6.dev47 (2026-11-09)
+===========================
+
+* FIX: Keep Bayesian DCE posterior-SD maps unavailable (NaN) where fitting
+  falls back to least squares, and describe this in their sidecars. Restrict
+  prior-departure summaries to retained fits that actually used the DSC prior.
+
 1.0.0rc6.dev46 (2026-11-08)
 ===========================
 
