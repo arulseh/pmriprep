@@ -116,6 +116,7 @@ class TestBoilerplateVersionRendering:
         vers = {"FSL": "6.0.7.1", "ANTs": "2.6.5", "Nipype": "1.10.0",
                 "HD-BET": "2.0.1", "HD-GLIO": "2.0"}
         txt = _generate_boilerplate_text("0.78.0", ran, d, versions=vers)
+        assert len(txt.split("\n\n")) == 3
         assert "a Nipype v1.10.0-based" in txt
         assert "N4BiasFieldCorrection (v2.6.5)" in txt
         assert "FAST (FSL v6.0.7.1)" in txt
@@ -173,6 +174,7 @@ class TestBoilerplateVersionRendering:
         pdir = tmp_path / "pmriprep"
         ses = pdir / "sub-01" / "ses-01"
         ses.mkdir(parents=True)
+        assert _load_tool_versions(ses, "01") == {}
         (pdir / "dataset_description.json").write_text(json.dumps({
             "GeneratedBy": [
                 {"Name": "pmriprep", "Version": "0.78.0"},

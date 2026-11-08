@@ -56,15 +56,15 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
 # Boilerplate text for T1 mapping methods
 _T1_METHOD_TEXT: dict[str, str] = {
     "wlls": (
-        "DCE baseline T1 was estimated from variable flip angle images using "
-        "the linearized DESPOT1 signal model [@deoni_2003]. "
-        "Fitting used weighted linear least squares"
+        "Baseline T1 was estimated from variable-flip-angle images with "
+        "the linearized DESPOT1 signal model [@deoni_2003], "
+        "fitted by weighted linear least squares"
     ),
     "nlls": (
-        "DCE baseline T1 was estimated from variable flip angle images using "
+        "Baseline T1 was estimated from variable-flip-angle images with "
         "the spoiled gradient-echo signal model underlying DESPOT1 "
-        "[@deoni_2003]. Fitting used weighted linear least squares "
-        "initialization followed by nonlinear least squares in signal space"
+        "[@deoni_2003], fitted by nonlinear least squares in signal space "
+        "after weighted linear least-squares initialization"
     ),
     "external": "a user-supplied T1 map",
     "assumed": "a uniform field-strength-dependent T1",
@@ -156,16 +156,11 @@ def _inject_tool_versions(
 def _load_tool_versions(ses_path: Path, session_id: str) -> dict[str, str]:
     """Build the ``{tool: version}`` map for boilerplate version rendering.
 
-    Prefers versions recorded at run time in the pipeline-root
+    Reads versions recorded at run time in the pipeline-root
     ``dataset_description.json`` ``GeneratedBy`` (keeping ``--report-only``
-    faithful to the run); falls back to a live query only when the file or its
-    entries are missing. Only tools with a resolvable version are included.
+    faithful to the run). Missing versions are omitted rather than taken from
+    the environment generating the report.
     """
-    from pmriprep.utils.sidecar_builders import (
-        _normalize_tool_version,
-        get_imaging_software_versions,
-    )
-
     pipeline_dir = ses_path.parent.parent if session_id else ses_path.parent
     versions: dict[str, str] = {}
     dd_path = pipeline_dir / "dataset_description.json"
@@ -179,11 +174,6 @@ def _load_tool_versions(ses_path: Path, session_id: str) -> dict[str, str]:
         except (OSError, ValueError):
             versions = {}
 
-    if not versions:
-        for name, raw in get_imaging_software_versions().items():
-            norm = _normalize_tool_version(raw)
-            if norm:
-                versions[name] = norm
     return versions
 
 
@@ -246,21 +236,23 @@ def _generate_boilerplate_text(
             "[@kickingereder_2019]."
         )
 
+    paragraphs = [" ".join(sentences)]
+
     # DSC perfusion
     dsc_data = pipeline_data.get("dsc")
     if ran_pipelines.get("dsc") and dsc_data is not None:
         dsc_text = _build_dsc_boilerplate(dsc_data.get("qc_metrics", {}))
         if dsc_text:
-            sentences.append(dsc_text)
+            paragraphs.append(dsc_text)
 
     # DCE perfusion
     dce_data = pipeline_data.get("dce")
     if ran_pipelines.get("dce") and dce_data is not None:
         dce_text = _build_dce_boilerplate(dce_data.get("qc_metrics", {}))
         if dce_text:
-            sentences.append(dce_text)
+            paragraphs.append(dce_text)
 
-    return _inject_tool_versions(" ".join(sentences), versions)
+    return _inject_tool_versions("\n\n".join(paragraphs), versions)
 
 
 def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> str:
@@ -328,20 +320,19 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> str:
     return " ".join(sentences)
 
 
-def _motion_was_applied(pipeline_qc: dict[str, Any]) -> bool:
+def _motion_was_applied(pipeline_qc: dict[str, Any]) -> bool | None:
     """Read the ``motion_applied`` provenance flag from a pipeline QC dict.
 
     Both DSC and DCE surface a flat ``preprocessing.motion_applied``; a nested
     ``motion_summary.motion_applied`` is accepted as a fallback for live (unfiltered)
-    QC dicts. Defaults to True (motion correction applied) when absent.
+    QC dicts. Returns None when the correction status is not recorded.
     """
     preproc = pipeline_qc.get("preprocessing", {})
-    return bool(
-        preproc.get(
-            "motion_applied",
-            preproc.get("motion_summary", {}).get("motion_applied", True),
-        )
+    applied = preproc.get(
+        "motion_applied",
+        preproc.get("motion_summary", {}).get("motion_applied"),
     )
+    return applied if isinstance(applied, bool) else None
 
 
 def _build_motion_boilerplate(qc: dict[str, Any], modality: str) -> str:
@@ -360,6 +351,9 @@ def _build_motion_boilerplate(qc: dict[str, Any], modality: str) -> str:
         Motion methods sentence, with tool details only when recorded.
     """
     preprocessing = qc.get("preprocessing", {})
+    applied = _motion_was_applied(qc)
+    if applied is None:
+        return ""
     tool = ""
     if preprocessing.get("motion_tool") == "ANTs":
         from pmriprep.utils.sidecar_builders import _normalize_tool_version
@@ -376,7 +370,7 @@ def _build_motion_boilerplate(qc: dict[str, Any], modality: str) -> str:
         "first": "the first volume",
     }.get(preprocessing.get("reference_type"))
     reference_text = f" relative to {reference}" if reference else ""
-    if _motion_was_applied(qc):
+    if applied:
         return f"{modality} time-series data were motion-corrected{tool}{reference_text}."
     return (
         f"{modality} motion correction was omitted; motion was estimated for "
@@ -400,7 +394,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     sentences: list[str] = []
 
     deconv = dsc_qc.get("deconvolution", {})
-    method = deconv.get("method", "oSVD")
+    method = deconv.get("method") or ""
     is_cpi = method.lower() == "cpi"
     fallback_used = (
         is_cpi
@@ -446,7 +440,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     if configured_aif_source == "external":
         aif_source = "external"
     else:
-        aif_source = detected_aif_source or configured_aif_source or "auto"
+        aif_source = detected_aif_source or configured_aif_source
 
     if aif_source == "unavailable":
         sentences.append("AIF-dependent perfusion parameters were not estimated.")
@@ -454,14 +448,13 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         sentences.append("A user-supplied DSC arterial input function was used.")
     elif aif_info.get("search_region") == "user_mask":
         sentences.append(
-            "The DSC arterial input function was detected within a user-supplied "
-            "search mask using a multi-level criteria cascade [@rulseh_inprep]."
+            "The DSC arterial input function was selected automatically within "
+            "a user-supplied search mask [@rulseh_inprep]."
         )
-    else:
+    elif aif_source:
         sentences.append(
-            "The DSC arterial input function was automatically "
-            "detected using MRA-atlas-guided voxel selection with a "
-            "multi-level criteria cascade [@mouches_2019; @rulseh_inprep]."
+            "The DSC arterial input function was selected automatically using "
+            "an atlas-guided search [@mouches_2019; @rulseh_inprep]."
         )
 
     preload = dsc_qc.get("preload", {})
@@ -477,24 +470,21 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             )
         else:
             sentences.append(
-                "Per-voxel BSW leakage correction was applied to account for "
-                "contrast extravasation [@boxerman_2006]."
+                "Leakage was corrected voxelwise with the BSW method [@boxerman_2006]."
             )
     elif preload.get("leakage_correction_disabled"):
         sentences.append(
-            "BSW leakage correction was disabled; tissue concentration curves "
-            "were baseline-centered."
+            "BSW leakage correction was disabled."
         )
     elif preload.get("k2_method") == "bsw" or (
         preload.get("k2_reference_available") is False
     ):
         sentences.append(
-            "BSW leakage correction was not applied as an eligible reference "
-            "curve could not be constructed; tissue concentration curves remained "
-            "baseline-centered."
+            "BSW leakage correction was not applied, as no eligible reference "
+            "curve could be formed."
         )
 
-    auc_cbv_available = deconv.get("cbv_auc_available", aif_source != "unavailable")
+    auc_cbv_available = deconv.get("cbv_auc_available") is True
     if auc_cbv_available:
         tissue_curve = (
             "BSW-corrected" if preload.get("preload_correction_applied")
@@ -502,28 +492,30 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         )
         if aif_source == "external":
             auc_aif = "user-supplied AIF"
-        else:
+        elif aif_source:
             auc_aif = "measured AIF"
+        else:
+            auc_aif = "AIF"
         sentences.append(
-            "DSC AUC-CBV was computed as the "
+            "AUC-based CBV was computed as the "
             f"ratio of the post-baseline integrals of the {tissue_curve} tissue "
             f"concentration curve and the {auc_aif}."
         )
 
-    if deconv.get("deconvolution_performed", aif_source != "unavailable"):
+    if deconv.get("deconvolution_performed", bool(method)):
         if is_cpi:
             if deconv.get("cpi_leakage_method") == "bsw":
                 sentences.append(
-                    "Other model-derived DSC parameter maps were estimated using "
+                    "CBF and the other model-derived maps were estimated using "
                     "control point interpolation fitted to the original DSC signal "
                     "[@mehndiratta_2013], jointly estimating signed "
-                    "leakage with voxel-specific Gaussian priors on K2 "
+                    "leakage with voxel-specific Gaussian K2 priors "
                     "centred on the BSW estimate "
                     "[@boxerman_2006; @rulseh_inprep]."
                 )
             elif deconv.get("cpi_leakage_method") == "none":
                 sentences.append(
-                    "Other model-derived DSC parameter maps were estimated using "
+                    "CBF and the other model-derived maps were estimated using "
                     "control point interpolation fitted to the original DSC signal "
                     "with a perfusion-only signal model "
                     "[@mehndiratta_2013]."
@@ -532,16 +524,12 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             if fallback_used:
                 sentences.append(
                     "Voxels with a rejected CPI fit were replaced by oSVD "
-                    "estimates [@wu_2003]. The fallback retained signed residues "
-                    "without post-fit clipping and used the full 2N-sample "
-                    "periodic residue area, including circular closure."
+                    "estimates [@wu_2003]."
                 )
-        else:
-            method_text = _DSC_DECONV_TEXT.get(
-                method, _DSC_DECONV_TEXT.get("oSVD", ""),
-            )
+        elif method in _DSC_DECONV_TEXT:
+            method_text = _DSC_DECONV_TEXT[method]
             sentences.append(
-                f"Other model-derived DSC parameter maps were produced using {method_text}."
+                f"CBF was estimated by {method_text}."
             )
             if method in ("sSVD", "tikhonov"):
                 sentences.append(
@@ -549,15 +537,10 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
                     "integration [@sourbron_2007]."
                 )
             sentences.append(
-                "Signed unconstrained residues were retained without post-fit clipping. "
-                "Reported MTT was computed as AUC-CBV divided by CBF."
+                "MTT was computed as AUC-based CBV divided by CBF."
             )
             sentences.append(
-                "Secondary residue-integral CBV used the full 2N-sample periodic "
-                "area, including circular closure."
-                if method == "oSVD" else
-                "Secondary residue-integral CBV used finite trapezoidal integration "
-                "over all N residue samples."
+                "Residue-integral CBV was provided as a secondary map."
             )
 
         if is_cpi and (deconv.get("cpi_gamma_fraction") or 0) > 0:
@@ -569,23 +552,33 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
 
         # Inference engine (only for cpi parametric methods).
         if is_cpi:
-            inference = deconv.get("inference", "vi")
+            inference = deconv.get("inference")
             if inference in _INFERENCE_TEXT:
                 sentences.append(f"CPI parameter estimation used {_INFERENCE_TEXT[inference]}")
 
-    # NAWM normalization
+    # State only normalizations with an available reference factor.
+    normalized = []
     for output_name, source_name, factor_key in (
         ("nCBF", "CBF", "cbf_normalization_factor"),
         ("nCBV", "the post-baseline tissue concentration integral", "normalization_factor"),
     ):
         norm_factor = dsc_qc.get(factor_key)
         if norm_factor is not None and math.isfinite(norm_factor) and norm_factor > 0:
-            sentences.append(
-                f"DSC {output_name} was obtained by dividing {source_name} by "
-                "its median value within the normal-appearing white matter reference."
-            )
+            normalized.append((output_name, source_name))
+    if len(normalized) == 2:
+        sentences.append(
+            "nCBF and nCBV were obtained by dividing CBF and the post-baseline "
+            "tissue concentration integral, respectively, by their medians in "
+            "the normal-appearing white matter reference."
+        )
+    elif normalized:
+        output_name, source_name = normalized[0]
+        sentences.append(
+            f"{output_name} was obtained by dividing {source_name} by "
+            "its median value within the normal-appearing white matter reference."
+        )
 
-    return " ".join(sentences)
+    return " ".join(sentence for sentence in sentences if sentence)
 
 
 def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
@@ -609,23 +602,30 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
 
     # Registration to the anatomical reference is independent of the separate
     # VFA-to-DCE and B1+-map registrations used to prepare quantitative inputs.
-    sentences.append(
-        "DCE and T1-weighted images were aligned by comparing header alignment "
-        "with FLIRT rigid-body registration candidates using foreground overlap "
-        "[@jenkinson_2002]."
-    )
+    registration = dce_qc.get("registration", {}).get("registration_method")
+    if registration == "header":
+        sentences.append(
+            "DCE and T1-weighted images were aligned using scanner header geometry."
+        )
+    elif registration == "flirt":
+        sentences.append(
+            "A rigid-body transform between DCE and T1-weighted space "
+            "was computed using FLIRT [@jenkinson_2002]."
+        )
+    else:
+        sentences.append("DCE and T1-weighted images were aligned.")
 
     # T1 mapping
     t1_info = dce_qc.get("t1_mapping", {})
     signal_info = dce_qc.get("signal_conversion", {})
     mapping_method = t1_info.get("method", t1_info.get("t1_method"))
-    t1_method = mapping_method or "nlls"
+    t1_method = mapping_method
     # Conversion provenance determines the input actually used, even when a
     # mapping step ran but its result could not be used.
     t1_source = signal_info.get("t1_source")
     if t1_source in ("assumed", "external"):
         t1_method = t1_source
-    t1_text = _T1_METHOD_TEXT.get(t1_method, _T1_METHOD_TEXT["nlls"])
+    t1_text = _T1_METHOD_TEXT.get(t1_method or "", "")
 
     # B1+ correction
     b1_info = dce_qc.get("b1_mapping", {})
@@ -636,7 +636,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     b1_text = _B1_CORRECTION_TEXT.get(b1_method, "") if b1_applied else ""
 
     conc = (
-        "DCE signal was converted to gadolinium concentration by inversion of "
+        "Signal was converted to gadolinium concentration by inverting "
         "the spoiled gradient-echo signal equation [@schabel_2008]"
     )
 
@@ -665,9 +665,9 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
                 t1_text += f" of {assumed_t1:g} ms"
             if "field_strength" in policy:
                 field_text = f" at {field_strength:g} T" if isinstance(field_strength, (int, float)) else ""
-                t1_text += f" (field-strength reference{field_text})"
+                t1_text += f" (default{field_text})"
         sentences.append(conc + f", using {t1_text}{b1_text}.")
-    else:
+    elif t1_text:
         # Full VFA T1 mapping: describe the mapping first, then the
         # concentration conversion that uses it.
         t1_sentence = t1_text
@@ -676,59 +676,66 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         t1_sentence += "."
         sentences.append(t1_sentence)
 
-        sentences.append(conc + ".")
-        if b1_text:
-            sentences.append(
-                "The same B1+ correction was applied during DCE signal conversion."
-            )
+        sentences.append(conc + (", with the same B1+ correction." if b1_text else "."))
+    else:
+        sentences.append(conc + b1_text + ".")
 
     # AIF detection
     aif_info = dce_qc.get("aif_detection", {})
-    aif_source = aif_info.get("aif_source") or aif_info.get("detection_method", "auto")
-    singleton = aif_info.get("aif_support_voxels") == 1
-    pooling_text = (
-        "selection of a single voxel, reported with reduced confidence"
-        if singleton else "quality-weighted averaging"
-    )
-
+    aif_source = aif_info.get("aif_source") or aif_info.get("detection_method")
     if aif_source == "population":
         sentences.append(
-            "The Parker population AIF was used for DCE analysis [@parker_2006]."
+            "The Parker population AIF [@parker_2006] was used."
         )
     elif aif_source == "external":
         sentences.append("A user-supplied DCE arterial input function was used.")
     elif aif_info.get("search_region") == "user_mask":
         sentences.append(
-            "The DCE arterial input function was detected within a user-supplied "
-            f"search mask using dose-aware candidate assessment and {pooling_text} "
+            "The DCE arterial input function was selected automatically within "
+            "a user-supplied search mask "
             "[@rulseh_inprep]."
         )
-    elif aif_info.get("detection_method") == "whole_brain":
+    elif aif_source:
         sentences.append(
-            "The DCE arterial input function was detected by whole-brain search "
-            f"with dose-aware candidate assessment and {pooling_text} [@rulseh_inprep]."
-        )
-    else:
-        sentences.append(
-            "The DCE arterial input function was automatically "
-            "detected using MRA-atlas-guided candidate selection with "
-            f"dose-aware candidate assessment and {pooling_text} "
+            "The DCE arterial input function was selected automatically using "
+            "an atlas-guided search "
             "[@mouches_2019; @rulseh_inprep]."
         )
 
     # Detected and population AIFs are blood curves converted to plasma;
     # user-supplied DCE AIFs are required to be plasma concentration already.
-    if aif_source != "external":
-        hct = aif_info.get("hematocrit", 0.42)
-        sentences.append(
-            f"The DCE arterial input function was corrected from whole-blood to "
-            f"plasma concentration using a hematocrit of {hct} "
-            f"[@tofts_1999]."
-        )
+    hct = aif_info.get("hematocrit")
+    if (
+        (aif_source or aif_info.get("search_region") == "user_mask")
+        and aif_source != "external"
+        and isinstance(hct, (int, float)) and math.isfinite(hct)
+    ):
+        if hct == 0:
+            hct_text = (
+                " without blood-to-plasma correction."
+                if aif_source == "population"
+                else ", and was used without blood-to-plasma correction."
+            )
+        else:
+            hct_text = (
+                ", and was corrected from whole-blood to plasma concentration "
+                f"using a hematocrit of {hct} [@tofts_1999]."
+            )
+        sentences[-1] = sentences[-1].removesuffix(".") + hct_text
 
     # Pharmacokinetic modeling
     pk_info = dce_qc.get("pk_modeling", {})
-    model = pk_info.get("model", "auto")
+    model = pk_info.get("model")
+    inference = pk_info.get("inference")
+    fitted_models = pk_info.get("candidate_models", []) if model == "auto" else [model]
+    if not fitted_models:
+        solver = "bounded least squares"
+    elif "patlak" not in fitted_models:
+        solver = "bounded nonlinear least squares"
+    elif len(fitted_models) == 1:
+        solver = "bounded linear least squares"
+    else:
+        solver = "bounded least squares (linear for Patlak, nonlinear otherwise)"
 
     if model == "auto":
         candidates = pk_info.get("candidate_models", [])
@@ -742,17 +749,16 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             else:
                 model_list = model_names[0] if model_names else "available models"
             sentences.append(
-                f"DCE pharmacokinetic analysis used per-voxel "
-                f"model selection by the Bayesian information criterion "
-                f"[@schwarz_1978] "
-                f"among {model_list}."
+                f"For each voxel, {model_list} were fitted by {solver}."
             )
         else:
             sentences.append(
-                "DCE pharmacokinetic analysis used per-voxel "
-                "model selection by the Bayesian information criterion "
-                "[@schwarz_1978]."
+                f"Candidate models were fitted to each voxel by {solver}."
             )
+        sentences.append(
+            "Models were compared using the Bayesian information criterion "
+            "(BIC) [@schwarz_1978]."
+        )
         if "2cxm" in candidates:
             sentences.append(
                 "The exchange model was selected only where an extended Tofts fit "
@@ -764,78 +770,44 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
                 "When a valid Patlak fit was available, a more complex model "
                 "required a BIC at least 6 lower."
             )
-    else:
+    elif model:
         model_text = _DCE_PK_MODEL_TEXT.get(model, model)
         sentences.append(
-            f"DCE pharmacokinetic analysis used {model_text}."
+            f"{model_text[0].upper() + model_text[1:]} was fitted to each voxel by {solver}."
         )
 
     sentences.append(
-        "Model tissue curves were computed by analytic convolution of each model's "
+        "Model curves were computed by analytic convolution of each model's "
         "impulse response with a shape-preserving piecewise cubic Hermite (PCHIP) "
-        "interpolant of the sampled plasma AIF [@fritsch_1984], with the first and "
-        "last AIF values held outside the acquired interval."
+        "interpolant of the plasma AIF [@fritsch_1984]."
     )
     timing = pk_info.get("delay_correction", {})
     if timing.get("enabled") is True:
         limit = timing.get("maximum_seconds")
-        step = timing.get("grid_step_seconds")
         grid_text = (
-            f" over 0–{limit:g} s in {step:g}-s steps"
-            if isinstance(limit, (int, float)) and isinstance(step, (int, float)) else ""
+            f" over 0–{limit:g} s" if isinstance(limit, (int, float)) else ""
+        )
+        bic_text = (
+            "BIC" if model == "auto" else
+            "the Bayesian information criterion (BIC) [@schwarz_1978]"
         )
         sentences.append(
-            f"An effective AIF delay was estimated for each model family{grid_text}. "
-            "Each voxel used a reference delay estimated from its in-plane "
-            "neighbourhood, with zero used when pooled evidence was insufficient "
-            "or flat. A voxel-specific delay was retained if it lowered BIC by "
-            "at least 6 after accounting for the additional delay parameter. "
-            "The fitted delay is a model offset, not a vascular transit time"
-            + (f"; {limit:g} s is the search limit." if isinstance(limit, (int, float)) else ".")
+            f"An effective AIF delay was estimated for each model{grid_text} using "
+            "an in-plane neighbourhood reference. A voxel-specific delay replaced "
+            f"this reference only when {bic_text} improved by at least 6, including the "
+            "penalty for fitting delay."
         )
     elif timing.get("enabled") is False:
         sentences.append("The AIF delay was fixed at zero.")
 
-    # Inference engine
-    inference = pk_info.get("inference", "nlls")
-    inference_text = _INFERENCE_TEXT["vi"] if inference == "vi" else ""
-    if inference == "nlls":
-        fitted_models = pk_info.get("candidate_models", []) if model == "auto" else [model]
-        if not fitted_models:
-            inference_text = "bounded least squares."
-        elif "patlak" not in fitted_models:
-            inference_text = "bounded nonlinear least squares."
-        elif len(fitted_models) == 1:
-            inference_text = "bounded linear least squares."
-        else:
-            inference_text = (
-                "bounded linear least squares for Patlak and "
-                "bounded nonlinear least squares for the other candidate models."
-            )
-    if inference_text:
-        sentences.append(f"DCE parameter estimation used {inference_text}")
     if inference == "vi":
-        sentences.append(
-            "VI refined least-squares estimates with the model and delay held fixed."
+        vi_text = (
+            "Estimates were refined by variational Bayesian inference "
+            "[@chappell_2009] with the model and delay held fixed"
         )
         if pk_info.get("inference_fallback", {}).get("n_nlls_fallback", 0) > 0:
-            sentences.append(
-                "Unsuccessful VI fits retained the least-squares estimate "
-                "for the same model and delay."
-            )
-
-    if pk_info.get("qc_acceptance_policy", {}).get("identification", {}).get("basis") == "selected_nlls":
-        sentences.append(
-            "The binary DCE QC mask combined fit-quality checks on the reported "
-            "estimate with primary-parameter identification checks at the corresponding "
-            "least-squares fit, including uncertainty across acceptable delays. "
-            "Quantitative maps remained unfiltered."
-        )
-        if inference == "vi":
-            sentences.append(
-                "VI posterior uncertainty was reported separately and was not used "
-                "for identification screening."
-            )
+            vi_text += "; where VI failed, the least-squares estimate was kept"
+        sentences.append(vi_text + ".")
 
     constraint = pk_info.get("dsc_cbv_constraint", {})
     n_constrained = pk_info.get("n_constrained", 0)
@@ -856,7 +828,14 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             f"{width_text} was used by retained Bayesian fits."
         )
 
-    return " ".join(sentences)
+    if pk_info.get("qc_acceptance_policy", {}).get("identification", {}).get("basis") == "selected_nlls":
+        sentences.append(
+            "A binary QC mask marking voxels with adequate fit quality and "
+            "well-identified primary parameters, assessed at the least-squares "
+            "fit, was provided as an additional output."
+        )
+
+    return " ".join(sentence for sentence in sentences if sentence)
 
 
 # Mapping: internal image key -> (desc_label, default_suffix)

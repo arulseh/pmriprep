@@ -1,3 +1,12 @@
+1.0.0rc6.dev46 (2026-11-08)
+===========================
+
+* CHG: Simplify generated methods into self-contained anatomy, DSC and DCE
+  paragraphs, preserving scientific method choices while reducing implementation
+  detail. Describe automatic AIF search generically and name the applied DCE
+  alignment method. Omit unrecorded method choices and tool versions instead
+  of substituting defaults or querying the report-generation environment.
+
 1.0.0rc6.dev45 (2026-11-08)
 ===========================
 

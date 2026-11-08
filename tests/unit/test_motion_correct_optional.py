@@ -326,11 +326,11 @@ class TestDCEInterfacePassthrough:
             ("motion-corrected using ANTs",),
             id="dsc-off",
         ),
-        pytest.param("dsc", None, ("DSC time-series data were motion-corrected.",), ("using ANTs",), id="dsc-unspecified-tool"),
+        pytest.param("dsc", None, (), ("motion-corrected", "motion correction was omitted", "using ANTs"), id="dsc-unspecified-status"),
         pytest.param(
             "dce",
             True,
-            ("motion-corrected using ANTs", "@jenkinson_2002"),
+            ("motion-corrected using ANTs", "mean baseline image"),
             (),
             id="dce-on",
         ),

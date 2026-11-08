@@ -79,7 +79,7 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path, delay_enabled: bool) -> None
             "t1_source": "assumed", "assumed_t1_ms": 1400,
             "assumed_t1_policy": "uniform_configured", "b1_correction_applied": False,
         },
-        "aif_detection": {"aif_source": "auto", "detection_method": "whole_brain", "aif_support_voxels": 1},
+        "aif_detection": {"aif_source": "auto", "detection_method": "whole_brain", "aif_support_voxels": 1, "hematocrit": 0.42},
         "pk_modeling": {
             "model": "auto" if delay_enabled else "2cxm", "qc_voxel_rsquared": 0.85,
             "candidate_models": ["patlak", "extended_tofts", "2cxm"] if delay_enabled else [],
@@ -119,18 +119,21 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path, delay_enabled: bool) -> None
     assert "Variable flip angle T1 mapping did not provide a usable map" in text
     assert ", using a user-configured uniform T1" in text
     assert "B1+ transmit field correction" not in text
-    assert "single voxel, reported with reduced confidence" in text
-    assert "quality-weighted averaging" not in text
-    assert "whole-brain search" in text and "MRA-atlas-guided" not in text
+    assert (
+        "The DCE arterial input function was selected automatically using "
+        "an atlas-guided search [@mouches_2019; @rulseh_inprep], and was corrected "
+        "from whole-blood to plasma concentration"
+    ) in text
     assert "piecewise cubic Hermite (PCHIP)" in text
     assert ("in-plane neighbourhood" in text) == delay_enabled
-    assert ("0–12 s in 0.1-s steps" in text) == delay_enabled
+    assert ("0–12 s" in text) == delay_enabled
     assert ("delay was fixed at zero" in text) != delay_enabled
     assert ("exchange model was selected only where" in text) == delay_enabled
-    assert "VI refined least-squares estimates with the model and delay held fixed" in text
-    assert "same model and delay" in text
-    assert "binary DCE QC mask" in text and "corresponding least-squares fit" in text
-    assert "VI posterior uncertainty was reported separately" in text
+    assert "with the model and delay held fixed" in text
+    assert "where VI failed, the least-squares estimate was kept" in text
+    assert "A binary QC mask marking voxels" in text
+    assert "assessed at the least-squares fit" in text
+    assert "provided as an additional output" in text
 
 
 def test_load_pipeline_sidecars_anat(tmp_path: Path) -> None:

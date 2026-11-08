@@ -402,23 +402,6 @@ def get_hdglio_version() -> str:
     return _dist_version("hd-glio", _HDGLIO_PINNED_VERSION)
 
 
-def get_imaging_software_versions() -> Dict[str, str]:
-    """Return the version map for the third-party imaging tools pmriprep uses.
-
-    Keys match the ``GeneratedBy`` ``Name`` values so the boilerplate's
-    live-query fallback aligns with the recorded provenance.
-    """
-    from pmriprep.utils.provenance import get_software_versions
-
-    return {
-        "FSL": get_fsl_version(),
-        "ANTs": get_ants_version(),
-        "Nipype": get_software_versions().get("nipype", "unknown"),
-        "HD-BET": get_hdbet_version(),
-        "HD-GLIO": get_hdglio_version(),
-    }
-
-
 def build_tool_generatedby_entries() -> List[Dict[str, Any]]:
     """Build per-suite ``GeneratedBy`` objects for pmriprep's third-party tools.
 

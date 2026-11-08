@@ -156,7 +156,7 @@ def test_boilerplate_scientific_wording_matches_configurable_methods(supplied_ma
                 "search_region": "user_mask" if supplied_mask else "automatic",
             },
             "preload": {"preload_correction_applied": True},
-            "deconvolution": {"method": "tikhonov"},
+            "deconvolution": {"method": "tikhonov", "cbv_auc_available": True},
         }
     )
     assert "L-curve" in tikhonov
@@ -167,22 +167,23 @@ def test_boilerplate_scientific_wording_matches_configurable_methods(supplied_ma
     assert "100 log-spaced" in tikhonov
     assert "either curvature sign" in tikhonov
     assert "upper endpoint" in tikhonov
-    assert "without post-fit clipping" in tikhonov
     assert "@rosen_1990" in tikhonov
     assert "@boxerman_2006" in tikhonov
     assert "@weisskoff_1994" not in tikhonov
     if supplied_mask:
-        assert "detected within a user-supplied search mask" in tikhonov
+        assert "selected automatically within a user-supplied search mask" in tikhonov
     else:
-        assert "MRA-atlas-guided voxel selection" in tikhonov
+        assert "atlas-guided search" in tikhonov
         assert "@mouches_2019" in tikhonov
     assert "concentration curve and the measured AIF" in tikhonov
     assert "AIF-dependent perfusion parameters were not estimated." not in tikhonov
 
     dce = ru._build_dce_boilerplate(
         {
+            "preprocessing": {"motion_applied": True},
             "aif_detection": {
                 "aif_source": "auto",
+                "hematocrit": 0.42,
                 "search_region": "user_mask" if supplied_mask else "automatic",
             },
             "pk_modeling": {
@@ -192,12 +193,11 @@ def test_boilerplate_scientific_wording_matches_configurable_methods(supplied_ma
         }
     )
     assert "DCE time-series data were motion-corrected" in dce
-    assert "dose-aware candidate assessment" in dce
     assert ", and the extended Tofts model" not in dce
     if supplied_mask:
-        assert "detected within a user-supplied search mask" in dce
+        assert "selected automatically within a user-supplied search mask" in dce
     else:
-        assert "MRA-atlas-guided candidate selection" in dce
+        assert "atlas-guided search" in dce
         assert "@mouches_2019" in dce
     assert "@schabel_2008" in dce
     assert "@tofts_1999" in dce
@@ -226,17 +226,18 @@ def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths(
             "normalization_factor": 1.0,
         }
     )
-    assert "DSC nCBV was obtained by dividing the post-baseline tissue concentration integral" in partial
+    assert "nCBV was obtained by dividing the post-baseline tissue concentration integral" in partial
     assert "AIF-dependent perfusion parameters were not estimated." in partial
     assert "automatically detected" not in partial
     if bsw_applied:
-        assert "Per-voxel BSW leakage correction was applied" in partial
+        assert "Leakage was corrected voxelwise with the BSW method" in partial
     else:
-        assert "eligible reference curve could not be constructed" in partial
+        assert "no eligible reference curve could be formed" in partial
 
     disabled = ru._build_dsc_boilerplate(
         {
             "config": {"aif_source": "external"},
+            "deconvolution": {"cbv_auc_available": True},
             "preload": {
                 "preload_correction_applied": False,
                 "k2_method": "none",
@@ -272,7 +273,7 @@ def test_dsc_boilerplate_reports_normalization_per_map(
         "cbf_normalization_factor": cbf_factor,
     })
     for name in ("nCBV", "nCBF"):
-        assert (f"DSC {name} was obtained" in text) == (name in expected)
+        assert (name in text) == (name in expected)
 
 
 def test_signal_cpi_boilerplate_distinguishes_auc_correction_from_joint_fit() -> None:
@@ -290,11 +291,11 @@ def test_signal_cpi_boilerplate_distinguishes_auc_correction_from_joint_fit() ->
         "control point interpolation fitted to the original DSC signal "
         "[@mehndiratta_2013], jointly estimating signed leakage"
     ) in text
-    assert "Gaussian priors on K2 centred on the BSW estimate" in text
+    assert "Gaussian K2 priors centred on the BSW estimate" in text
     assert "rather than fixing" not in text
     assert "centred on the BSW estimate [@boxerman_2006; @rulseh_inprep]" in text
     assert text.count("@mehndiratta_2013") == 1
-    assert "nonlinear variational Bayesian inference" in text
+    assert "variational Bayesian inference" in text
     assert "@chappell_2009" in text
     assert "@mehndiratta_2014" not in text
 
@@ -344,9 +345,35 @@ def test_signal_cpi_boilerplate_reports_actual_osvd_fallback(
     assert text.count("@mehndiratta_2013") == 1
 
 
+def test_boilerplate_omits_unrecorded_method_choices() -> None:
+    """Incomplete records must not silently acquire default processing claims."""
+    dsc = ru._build_dsc_boilerplate({})
+    dce = ru._build_dce_boilerplate({})
+    for text in (dsc, dce):
+        assert "motion-corrected" not in text
+        assert "motion correction was omitted" not in text
+        assert "atlas-guided search" not in text
+        assert "was fitted" not in text and "were fitted" not in text
+    assert "CBF was estimated" not in dsc
+    assert "AUC-based CBV was computed" not in dsc
+    assert "DESPOT1" not in dce and "uniform T1" not in dce
+    assert "hematocrit" not in dce and "Models were compared" not in dce
+    measured = ru._build_dce_boilerplate({"aif_detection": {"aif_source": "auto"}})
+    assert "atlas-guided search" in measured
+    assert "plasma concentration using a hematocrit" not in measured
+    assert "without blood-to-plasma correction" not in measured
+    cpi = ru._build_dsc_boilerplate({
+        "deconvolution": {"method": "cpi", "cpi_leakage_method": "none"},
+    })
+    assert "control point interpolation" in cpi
+    assert "variational Bayesian inference" not in cpi
+    motion = ru._build_motion_boilerplate({"preprocessing": {"motion_applied": True}}, "DCE")
+    assert motion == "DCE time-series data were motion-corrected."
+
+
 def test_dsc_boilerplate_follows_processing_dependency_order() -> None:
     text = ru._build_dsc_boilerplate({"deconvolution": {"method": "oSVD"}})
-    assert text.index("rigid-body transform") < text.index("converted to concentration")
+    assert text.index("rigid-body transform") < text.index("ΔR2* estimation")
 
 
 @pytest.mark.parametrize(
@@ -367,10 +394,14 @@ def test_cpi_dispersion_citation_requires_retained_fits(
     assert ("retained dispersion-aware CPI fits" in text) is cited
 
 
-def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
+@pytest.mark.parametrize("registration, hct", [("header", 0.42), ("flirt", 0.0)])
+def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior(
+    registration: str, hct: float,
+) -> None:
     """DCE methods text reflects quantitative inputs used by retained fits."""
     text = ru._build_dce_boilerplate(
         {
+            "registration": {"registration_method": registration},
             "t1_mapping": {
                 "method": "assumed",
                 "assumed_t1_ms": 1200.0,
@@ -381,7 +412,7 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
             "signal_conversion": {"b1_correction_applied": True},
             "aif_detection": {
                 "aif_source": "population",
-                "hematocrit": 0.42,
+                "hematocrit": hct,
             },
             "pk_modeling": {
                 "model": "2cxm",
@@ -394,13 +425,21 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
             },
         }
     )
-    assert "uniform T1 of 1200 ms (field-strength reference at 3 T)" in text
+    assert ("scanner header geometry" in text) == (registration == "header")
+    assert ("using FLIRT [@jenkinson_2002]" in text) == (registration == "flirt")
+    assert "uniform T1 of 1200 ms (default at 3 T)" in text
     assert "with B1+ transmit field correction" in text
     assert "Parker population AIF" in text
-    assert "hematocrit of 0.42" in text
+    if hct == 0:
+        assert "was used without blood-to-plasma correction." in text
+    else:
+        assert (
+            "was used, and was corrected from whole-blood to plasma concentration "
+            "using a hematocrit of 0.42 [@tofts_1999]."
+        ) in text
     assert "@sourbron_2013" in text
-    assert "piecewise cubic Hermite (PCHIP) interpolant of the sampled plasma AIF" in text
-    assert "nonlinear variational Bayesian inference" in text
+    assert "piecewise cubic Hermite (PCHIP) interpolant of the plasma AIF" in text
+    assert "variational Bayesian inference" in text
     assert "@chappell_2009" in text
     assert "relative standard deviation of 60%" in text
     assert "used by retained Bayesian fits" in text
@@ -422,6 +461,7 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
 
     rejected_b1 = ru._build_dce_boilerplate(
         {
+            "aif_detection": {"aif_source": "external"},
             "t1_mapping": {
                 "method": "external",
                 "b1_correction": "precomputed",
@@ -431,6 +471,8 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
     )
     assert "user-supplied T1 map" in rejected_b1
     assert "B1+ transmit field correction" not in rejected_b1
+    assert "A user-supplied DCE arterial input function was used." in rejected_b1
+    assert "hematocrit" not in rejected_b1
 
 
 @pytest.mark.parametrize(
@@ -442,10 +484,9 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
         ("auto", ["extended_tofts", "2cxm"], "nlls",
          "bounded nonlinear least squares."),
         ("auto", ["patlak", "extended_tofts"], "nlls",
-         "bounded linear least squares for Patlak and "
-         "bounded nonlinear least squares for the other candidate models."),
+         "bounded least squares (linear for Patlak, nonlinear otherwise)."),
         ("auto", [], "nlls", "bounded least squares."),
-        ("patlak", [], "vi", "nonlinear variational Bayesian inference [@chappell_2009]."),
+        ("patlak", [], "vi", "variational Bayesian inference [@chappell_2009]"),
     ],
 )
 def test_dce_methods_describe_the_model_specific_solver(
@@ -458,9 +499,8 @@ def test_dce_methods_describe_the_model_specific_solver(
             "qc_acceptance_policy": {"identification": {"basis": "selected_nlls"}},
         },
     })
-    sentence = next(s for s in text.split(". ") if s.startswith("DCE parameter estimation"))
-    assert sentence.rstrip(".") == f"DCE parameter estimation used {expected}".rstrip(".")
-    assert ("VI posterior uncertainty was reported" in text) == (inference == "vi")
+    assert expected.rstrip(".") in text
+    assert "assessed at the least-squares fit" in text
 
 
 @pytest.mark.parametrize("method", ["wlls", "nlls"])
@@ -469,10 +509,11 @@ def test_dce_t1_methods_separate_signal_model_from_fitter(method: str) -> None:
     text = ru._build_dce_boilerplate({
         "t1_mapping": {"method": method, "b1_correction": "afi"},
     })
-    model_sentence, fitting_text = text.split("[@deoni_2003]. ", 1)
+    model_sentence, fitting_text = text.split("[@deoni_2003], ", 1)
     assert "DESPOT1" in model_sentence
     assert "weighted linear least squares" not in model_sentence
-    assert fitting_text.startswith("Fitting used weighted linear least squares")
+    assert fitting_text.startswith("fitted by")
+    assert "weighted linear least" in fitting_text
     fitting_sentence = fitting_text.split(". ", 1)[0]
     assert ("nonlinear least squares in signal space" in fitting_sentence) == (method == "nlls")
     assert "actual flip angle imaging method [@yarnykh_2007]" in fitting_sentence
@@ -494,7 +535,7 @@ def test_render_citations_falls_back_to_markdown(tmp_path: Path, monkeypatch) ->
 
     ses = tmp_path / "pmriprep" / "sub-01" / "ses-0001"
     ses.mkdir(parents=True)
-    md = "Methods text [@wu_2003]."
+    md = "Methods text [@wu_2003].\n\nA second methods paragraph."
 
     html, raw = ru._render_citations(md, ses)
 
