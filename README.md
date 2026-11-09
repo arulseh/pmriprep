@@ -128,15 +128,16 @@ accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 follow the corresponding NiPreps conventions. The default CPU budget is capped
 at 8; consider setting `--nprocs` if more CPUs are available.
 
-CPI fitting uses single-threaded workers up to the process and node-memory
-limits; `--sloppy` reduces its fitting iterations for testing. HD-BET uses
+CPI fitting supports variational Bayesian inference (VI) or spatial variational Bayes (SVB).
+Single-threaded workers are used up to the process and node-memory limits;
+`--sloppy` reduces fitting iterations for testing. HD-BET uses
 test-time augmentation on CUDA and MPS; CPU and sloppy execution
 disable it for speed.
 
 Automatic DCE selection compares Patlak and extended Tofts; 2CXM is eligible
 at volume intervals ≤2 s with additional evidence checks. Explicit 2CXM is
 available at any interval, but coarse sampling limits parameter identification.
-VI refines least-squares parameter estimates with the model and delay held fixed.
+VI refines bounded least-squares (BLS) parameter estimates with the model and delay held fixed.
 
 PMRIPrep automatically creates lesion and normal-appearing white-matter (NAWM)
 masks when tumor segmentation runs with the required anatomical inputs. Supplying
@@ -252,6 +253,8 @@ Tumor-segmentation fields:
 | `nawm_min_voxels` | `500` | Minimum accepted NAWM voxels (int) |
 
 ## BIDS inputs
+
+PMRIPrep requires brain MRI data; other anatomical regions are currently not supported.
 
 A normal run requires `dataset_description.json` and an anatomical T1w image.
 Post-contrast-only T1w anatomy is supported, but downstream options requiring a
