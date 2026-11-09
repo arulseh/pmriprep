@@ -713,10 +713,10 @@ class TestVIConvergenceAndInitialization:
         assert result.parameters["Ktrans"] == pytest.approx(0.01, rel=0.10)
         assert result.parameters["ve"] == pytest.approx(0.10, rel=0.10)
 
-    def test_supplied_initial_parameters_skip_redundant_nlls(
+    def test_supplied_initial_parameters_skip_redundant_bls(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A complete batched warm start bypasses the scalar NLLS fit."""
+        """A complete batched warm start bypasses the scalar BLS fit."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
             ktrans=0.12,
             ve=0.30,
@@ -727,7 +727,7 @@ class TestVIConvergenceAndInitialization:
 
         def fail_if_called(*args: object, **kwargs: object) -> None:
             del args, kwargs
-            raise AssertionError("scalar NLLS warm start was called")
+            raise AssertionError("scalar BLS warm start was called")
 
         monkeypatch.setattr(model, "fit", fail_if_called)
         result = BayesianPKFitter(model).fit_vi(
@@ -744,7 +744,7 @@ class TestVIConvergenceAndInitialization:
     def test_incomplete_initial_parameters_keep_scalar_warm_start(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An incomplete external warm start falls back to scalar NLLS."""
+        """An incomplete external warm start falls back to scalar BLS."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
         model = ToftsModel()
         original_fit = model.fit
@@ -909,10 +909,10 @@ class TestBayesianMAPFitSynthetic:
         assert np.isnan(result.uncertainties["Ktrans"])
         assert result.credible_intervals == {}
 
-    def test_supplied_map_initial_parameters_skip_redundant_nlls(
+    def test_supplied_map_initial_parameters_skip_redundant_bls(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """MAP keeps three starts without recomputing its NLLS candidate."""
+        """MAP keeps three starts without recomputing its BLS candidate."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
             ktrans=0.1,
             ve=0.2,
@@ -923,7 +923,7 @@ class TestBayesianMAPFitSynthetic:
 
         def fail_if_called(*args: object, **kwargs: object) -> None:
             del args, kwargs
-            raise AssertionError("scalar NLLS warm start was called")
+            raise AssertionError("scalar BLS warm start was called")
 
         monkeypatch.setattr(model, "fit", fail_if_called)
         result = BayesianPKFitter(model).fit_map(

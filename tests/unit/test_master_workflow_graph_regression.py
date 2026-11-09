@@ -151,7 +151,7 @@ def _build_master(
     create_subtraction: bool = False,
     dsc_underlays: list[str] | None = None,
     dce_underlays: list[str] | None = None,
-    dce_inference: str = "nlls",
+    dce_inference: str = "bls",
     cbv_constraint_mode: str = "auto",
 ) -> Any:
     bids = _write_case(root, modalities, session_id)
@@ -334,7 +334,7 @@ def test_requested_subtraction_underlay_builds_anatomical_node(
 
 @pytest.mark.parametrize(
     ("inference", "mode", "needs_dsc"),
-    [("nlls", "auto", False), ("vi", "skip", False), ("vi", "auto", True)],
+    [("bls", "auto", False), ("vi", "skip", False), ("vi", "auto", True)],
 )
 def test_dce_fitting_waits_for_dsc_only_when_prior_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -882,7 +882,7 @@ def test_connect_master_dsc_to_dce_ignores_dose_without_dsc_state(
 
 @pytest.mark.parametrize(
     ("inference", "constraint_mode", "warn"),
-    [("nlls", "auto", False), ("vi", "auto", True), ("vi", "skip", False)],
+    [("bls", "auto", False), ("vi", "auto", True), ("vi", "skip", False)],
 )
 def test_connect_master_dsc_to_dce_routes_dose_with_cached_dsc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,

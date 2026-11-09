@@ -454,7 +454,7 @@ def _build_uncertainty_extra(
     if str(estimation).lower() == "vi":
         extra["UncertaintyFallbackBehavior"] = (
             "NaN where VI falls back to least squares; parameter maps retain "
-            "the NLLS estimate, but its standard error is not a posterior SD."
+            "the BLS estimate, but its standard error is not a posterior SD."
         )
         fallback = (qc_metrics or {}).get("inference_fallback")
         if fallback is None and isinstance(pk_qc, dict):
@@ -608,7 +608,7 @@ def _build_dce_pk_map_meta(
     )
     if map_key == "delay":
         out.update(
-            EstimationBasis="selected_nlls", SpatialSmoothingApplied=False,
+            EstimationBasis="selected_bls", SpatialSmoothingApplied=False,
             DelayConvention="Positive delay evaluates the plasma AIF at t-delay",
             MissingValue="NaN for background or unavailable selection; zero is a selected or fixed zero delay",
             BoundaryInterpretation=(
@@ -1741,8 +1741,8 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
 
     # --- Inference-specific absolute uncertainty ---
-    is_nlls = inference.lower() == "nlls"
-    uncertainty_desc = "dceStandardError" if is_nlls else "dcePosteriorSD"
+    is_bls = inference.lower() == "bls"
+    uncertainty_desc = "dceStandardError" if is_bls else "dcePosteriorSD"
     for spec in _UNCERTAINTY_MAPS:
         if spec.in_attr not in present:
             continue
@@ -1761,7 +1761,7 @@ def init_dce_datasinks_wf(
             desc_value=uncertainty_desc, suffix=spec.suffix,
             description=(
                 f"{spec.suffix} parameter standard error"
-                if is_nlls else f"{spec.suffix} posterior standard deviation"
+                if is_bls else f"{spec.suffix} posterior standard deviation"
             ),
             units=spec.units, extra=None,
             extra_node=uncertainty_extra, map_key=spec.map_key,
@@ -1837,7 +1837,7 @@ def init_dce_datasinks_wf(
                 "DCE binary QC mask (1=passes, 0=otherwise). QC combines "
                 "fit-quality checks on the reported estimate with "
                 "data-identification checks evaluated at the corresponding "
-                "NLLS fit. VI posterior uncertainty is reported separately "
+                "BLS fit. VI posterior uncertainty is reported separately "
                 "and is not used for identification screening. Quantitative "
                 "derivatives remain uncensored; regional summaries include "
                 "labelled passing-voxel companions."

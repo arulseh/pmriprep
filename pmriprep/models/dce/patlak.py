@@ -64,7 +64,7 @@ class PatlakModel(PKModel):
 
     The scalar ``fit`` method uses bounded nonlinear least squares by default.
     The batched map path solves the bounded linear concentration-domain
-    problem for NLLS and uses the same forward equation for Bayesian fitting.
+    problem for BLS and uses the same forward equation for Bayesian fitting.
     Graphical regression supplies a data-driven initialization candidate.
     """
 
@@ -504,7 +504,7 @@ class PatlakModel(PKModel):
             n_parameters=self.n_parameters,
             n_observations=n_obs,
             converged=converged,
-            fitting_method="nlls",
+            fitting_method="bls",
             fitted_curve=fitted_curve,
         )
 

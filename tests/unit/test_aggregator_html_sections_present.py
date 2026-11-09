@@ -478,14 +478,14 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior(
 @pytest.mark.parametrize(
     ("model", "candidates", "inference", "expected"),
     [
-        ("patlak", [], "nlls", "bounded linear least squares."),
-        ("extended_tofts", [], "nlls", "bounded nonlinear least squares."),
-        ("auto", ["patlak"], "nlls", "bounded linear least squares."),
-        ("auto", ["extended_tofts", "2cxm"], "nlls",
+        ("patlak", [], "bls", "bounded linear least squares."),
+        ("extended_tofts", [], "bls", "bounded nonlinear least squares."),
+        ("auto", ["patlak"], "bls", "bounded linear least squares."),
+        ("auto", ["extended_tofts", "2cxm"], "bls",
          "bounded nonlinear least squares."),
-        ("auto", ["patlak", "extended_tofts"], "nlls",
+        ("auto", ["patlak", "extended_tofts"], "bls",
          "bounded least squares (linear for Patlak, nonlinear otherwise)."),
-        ("auto", [], "nlls", "bounded least squares."),
+        ("auto", [], "bls", "bounded least squares."),
         ("patlak", [], "vi", "variational Bayesian inference [@chappell_2009]"),
     ],
 )
@@ -496,7 +496,7 @@ def test_dce_methods_describe_the_model_specific_solver(
     text = ru._build_dce_boilerplate({
         "pk_modeling": {
             "model": model, "candidate_models": candidates, "inference": inference,
-            "qc_acceptance_policy": {"identification": {"basis": "selected_nlls"}},
+            "qc_acceptance_policy": {"identification": {"basis": "selected_bls"}},
         },
     })
     assert expected.rstrip(".") in text

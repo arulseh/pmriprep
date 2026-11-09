@@ -91,12 +91,6 @@ _INFERENCE_TEXT: dict[str, str] = {
         "[@chappell_2009] with a CBF-only spatial M-prior "
         "[@penny_2005; @groves_2009]."
     ),
-    "map": (
-        "maximum a posteriori inference "
-        "with Laplace approximation for uncertainty quantification "
-        "[@woolrich_2009]."
-    ),
-    "nlls": "nonlinear least squares.",
 }
 
 # Boilerplate text for brain extraction tools
@@ -805,7 +799,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             "Estimates were refined by variational Bayesian inference "
             "[@chappell_2009] with the model and delay held fixed"
         )
-        if pk_info.get("inference_fallback", {}).get("n_nlls_fallback", 0) > 0:
+        if pk_info.get("inference_fallback", {}).get("n_bls_fallback", 0) > 0:
             vi_text += "; where VI failed, the least-squares estimate was kept"
         sentences.append(vi_text + ".")
 
@@ -828,7 +822,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             f"{width_text} was used by retained Bayesian fits."
         )
 
-    if pk_info.get("qc_acceptance_policy", {}).get("identification", {}).get("basis") == "selected_nlls":
+    if pk_info.get("qc_acceptance_policy", {}).get("identification", {}).get("basis") == "selected_bls":
         sentences.append(
             "A binary QC mask marking voxels with adequate fit quality and "
             "well-identified primary parameters, assessed at the least-squares "

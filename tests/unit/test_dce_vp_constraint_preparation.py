@@ -103,16 +103,16 @@ def test_prepare_vp_constraint_distinguishes_absent_dsc_run(
 
 @pytest.mark.parametrize("is_auto", [False, True])
 @pytest.mark.parametrize("dsc_present", [False, True])
-def test_prepare_vp_constraint_rejects_nlls_prior_before_loading_dsc(
+def test_prepare_vp_constraint_rejects_bls_prior_before_loading_dsc(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     is_auto: bool,
     dsc_present: bool,
 ) -> None:
-    """Explicit and auto-selected Patlak NLLS omit the DSC prior."""
+    """Explicit and auto-selected Patlak BLS omit the DSC prior."""
     monkeypatch.setattr(
         "pmriprep.utils.dsc_cbv_constraint.prepare_vp_constraint_from_data",
-        lambda **kwargs: pytest.fail("NLLS must not prepare a DSC prior"),
+        lambda **kwargs: pytest.fail("BLS must not prepare a DSC prior"),
     )
     interface = ComputeDCEMaps(
         brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
@@ -123,13 +123,13 @@ def test_prepare_vp_constraint_rejects_nlls_prior_before_loading_dsc(
         interface.inputs.dsc_aif_qc = {"detection_method": "atlas"}
 
     result = interface._prepare_vp_constraint(
-        _prepared(populated=True, inference="nlls")._replace(is_auto=is_auto)
+        _prepared(populated=True, inference="bls")._replace(is_auto=is_auto)
     )
 
     assert result.vp_map is None
     assert result.mode == ConstraintMode.SKIP
     assert result.vp_uncertainty == 0.0
-    assert result.qc["skip_reason"] == "nlls_constraint_unsupported"
+    assert result.qc["skip_reason"] == "bls_constraint_unsupported"
     assert result.candidate_names == ["patlak"]
 
 
@@ -205,7 +205,7 @@ def test_patlak_vi_maps_use_qualified_dsc_prior(tmp_path: Path, model: str) -> N
     assert outputs.constraint_qc["mode"] == "soft"
     assert outputs.constraint_qc["vp_median"] == pytest.approx(0.01)
     assert outputs.qc_metrics["n_constrained"] == 1
-    assert outputs.qc_metrics["inference_fallback"]["n_nlls_fallback"] == 0
+    assert outputs.qc_metrics["inference_fallback"]["n_bls_fallback"] == 0
     assert np.isfinite(nib.load(outputs.out_vp).get_fdata()).all()
     if model == "auto":
         assert nib.load(outputs.out_model_selection).get_fdata().item() == 1

@@ -96,7 +96,7 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     np.testing.assert_array_equal(nib.load(path).get_fdata(), 2.5)
     meta = json.loads(path.with_suffix("").with_suffix(".json").read_text())
     assert meta["Units"] == "s" and not meta["SpatialSmoothingApplied"]
-    assert meta["EstimationBasis"] == "selected_nlls"
+    assert meta["EstimationBasis"] == "selected_bls"
     assert meta["AIFDependent"] is True
     assert meta["DelayCorrectionApplied"] is True
     assert meta["MinimumDelaySeconds"] == 0.0
@@ -172,7 +172,7 @@ def test_registered_vfa_t1map_writes_registration_provenance(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts", inference="nlls",
+        pk_model="tofts", inference="bls",
         present_inputs={"t1_map"}, t1_source_files=[str(vfa)],
     )
     wf.base_dir = str(tmp_path / "work")
@@ -212,7 +212,7 @@ def test_registered_vfa_t1map_skips_absent_registration_output(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts", inference="nlls",
+        pk_model="tofts", inference="bls",
         present_inputs={"t1_map"},
     )
     wf.base_dir = str(tmp_path / "work")
@@ -242,7 +242,7 @@ def test_registered_vfa_t1map_skips_population_fallback(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts", inference="nlls",
+        pk_model="tofts", inference="bls",
         present_inputs={"t1_map"},
     )
     wf.base_dir = str(tmp_path / "work")
@@ -268,7 +268,7 @@ def test_registered_vfa_t1map_skips_population_fallback(
 def test_dce_writer_recreates_deleted_cached_derivative(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """NLLS parameter and standard-error derivatives are rewritten despite cached nodes."""
+    """BLS parameter and standard-error derivatives are rewritten despite cached nodes."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -276,14 +276,14 @@ def test_dce_writer_recreates_deleted_cached_derivative(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts", inference="nlls",
+        pk_model="tofts", inference="bls",
         present_inputs={"ktrans_uncertainty"},
     )
     wf.base_dir = str(tmp_path / "work")
     wf.inputs.inputnode.source_dce = src
     wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz", 0.25)
     wf.inputs.inputnode.ktrans_uncertainty = _write_nii(tmp_path / "se.nii.gz", 0.03125)
-    wf.inputs.inputnode.config_dict = {"inference": "nlls"}
+    wf.inputs.inputnode.config_dict = {"inference": "bls"}
     wf.inputs.inputnode.qc_metrics = {}
 
     perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
@@ -354,7 +354,7 @@ def test_dce_factory_with_bayesian_uncertainty(
     assert uncertainty_meta["UncertaintyStatistic"] == "posterior_standard_deviation"
 
 
-@pytest.mark.parametrize("inference", ["nlls", "vi", "map"])
+@pytest.mark.parametrize("inference", ["bls", "vi", "map"])
 def test_uncertainty_sidecar_records_collected_qc(
     tmp_path: Path, minimal_bids: tuple[Path, str], inference: str,
 ) -> None:
@@ -386,7 +386,7 @@ def test_uncertainty_sidecar_records_collected_qc(
             "identification": identification_policy(), "approximate_test_mode": True,
             "interpretation": "Maps and QC are approximate and for testing only.",
         },
-        "identification_qc": {"basis": "selected_nlls", "by_model": {"tofts": {"evaluated": 10}}},
+        "identification_qc": {"basis": "selected_bls", "by_model": {"tofts": {"evaluated": 10}}},
         "parameter_uncertainty": {
             "aif_inflation_input_factor": 2.0,
             "aif_parameter_scale_factors": {"Ktrans": 1.5, "ve": 1.0},
@@ -401,8 +401,8 @@ def test_uncertainty_sidecar_records_collected_qc(
         }
     }
     fallback = {
-        "requested_inference": "vi", "fallback_inference": "nlls",
-        "n_retained_voxels": 10, "n_nlls_fallback": 2,
+        "requested_inference": "vi", "fallback_inference": "bls",
+        "n_retained_voxels": 10, "n_bls_fallback": 2,
         "fallback_fraction_of_retained": 0.2,
     }
     if inference == "vi":
@@ -420,7 +420,7 @@ def test_uncertainty_sidecar_records_collected_qc(
     assert qc_meta["QCAcceptancePolicy"] == fit_qc["qc_acceptance_policy"]
     assert "IdentificationQC" not in qc_meta.get("PerfusionProcessing", {}).get("PKModeling", {})
 
-    desc = "dceStandardErrorKtrans" if inference == "nlls" else "dcePosteriorSDKtrans"
+    desc = "dceStandardErrorKtrans" if inference == "bls" else "dcePosteriorSDKtrans"
     sidecar = next(
         (out / "pmriprep" / "sub-01" / "ses-0001" / "perf").glob(
             f"*desc-{desc}_stat.json"
@@ -430,7 +430,7 @@ def test_uncertainty_sidecar_records_collected_qc(
     if inference == "vi":
         assert metadata["PerfusionProcessing"]["InferenceFallback"] == fallback
         assert "NaN where VI falls back to least squares" in metadata["UncertaintyFallbackBehavior"]
-    elif inference == "nlls":
+    elif inference == "bls":
         assert "InferenceFallback" not in metadata["PerfusionProcessing"]
         assert "UncertaintyFallbackBehavior" not in metadata
     assert metadata["PerfusionProcessing"]["PKModeling"]["model"] == "tofts"

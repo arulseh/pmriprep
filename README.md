@@ -114,7 +114,7 @@ Key DCE options:
 | Option | Description |
 |---|---|
 | `--dce-model {auto,patlak,tofts,extended_tofts,2cxm}` | Select PK model; `auto` uses voxelwise BIC |
-| `--dce-inference {nlls,vi}` | Select inference (default: nlls) |
+| `--dce-inference {bls,vi}` | Select inference (default: bls) |
 | `--dce-aif-method {auto,population}` | Select detected or population AIF |
 | `--dce-aif-file FILE` | Supply a plasma-concentration AIF in mM |
 | `--dce-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
@@ -202,7 +202,7 @@ DCE fields:
 | Field | Default | Description |
 |---|---:|---|
 | `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
-| `inference` | `nlls` | `nlls` or `vi` |
+| `inference` | `bls` | `bls` or `vi` |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
 | `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
@@ -224,7 +224,7 @@ DCE fields:
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
 | `delay_correction` | `true` | Local correction of the effective AIF–tissue model offset; `false` fixes delay at zero |
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
-| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad vp prior for VI; `skip` disables it. NLLS is always unconstrained |
+| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad vp prior for VI; `skip` disables it. BLS is always unconstrained |
 | `no_dsc_validation` | `false` | Skip descriptive DSC–DCE vascular concordance measurement |
 | `ser_early_time_s` | `60.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `300.0` | Late SER sample time after the selected global contrast reference (s) |
@@ -346,7 +346,7 @@ DSC uses measured AIFs for deconvolution. If no acceptable AIF is found,
 tissue-based nCBV, PSR, TTP, CNR and tSNR remain available, together with K2
 when BSW correction is applied; AIF-dependent perfusion maps are withheld.
 
-DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
+DCE parameter-uncertainty derivatives contain BLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.
 CPI CBF uncertainty derivatives contain posterior standard deviations
 conditional on the fitted inputs and model.

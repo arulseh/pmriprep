@@ -17,7 +17,7 @@ from pmriprep.models.dce.identification import IdentificationResult, identify_fi
 
 @dataclass
 class ConditionalInput:
-    """Eligible selected NLLS fit and the unchanged observations used to obtain it.
+    """Eligible selected BLS fit and the unchanged observations used to obtain it.
 
     Attributes
     ----------
@@ -37,7 +37,7 @@ class ConditionalInput:
     tissue: np.ndarray
     delay: float
     seed: FitResult
-    inference: Literal["nlls", "vi"]
+    inference: Literal["bls", "vi"]
     profile_spread: np.ndarray
     profile_sse: float
     vp_prior: float | None = None
@@ -47,7 +47,7 @@ class ConditionalInput:
 
 @dataclass
 class ConditionalResult:
-    """Reported inference and separate selected-NLLS identification evidence.
+    """Reported inference and separate selected-BLS identification evidence.
 
     Timings are worker elapsed seconds, not parallel wall time. Identification
     never changes the refinement, its parameters, or its retention.
@@ -60,7 +60,7 @@ class ConditionalResult:
 
 
 def finish_conditional(block: list[ConditionalInput]) -> list[ConditionalResult]:
-    """Compute conditional NLLS SEs, then optionally refine at unchanged timing.
+    """Compute conditional BLS SEs, then optionally refine at unchanged timing.
 
     Parameters
     ----------
@@ -71,8 +71,8 @@ def finish_conditional(block: list[ConditionalInput]) -> list[ConditionalResult]
     Returns
     -------
     list of ConditionalResult
-        Conditional estimates and NLLS identification in input order.
-        NLLS uncertainty uses SSE/(n-k) and the full kinetic Jacobian. It does
+        Conditional estimates and BLS identification in input order.
+        BLS uncertainty uses SSE/(n-k) and the full kinetic Jacobian. It does
         not include uncertainty in the selected delay or arterial input.
     """
     results: list[ConditionalResult] = []
@@ -111,8 +111,8 @@ def finish_conditional(block: list[ConditionalInput]) -> list[ConditionalResult]
                 item.family, item.aif, item.times, item.tissue, item.delay,
                 seed, item.observed,
             )
-            if item.inference == "nlls":
-                refined = Refinement(seed, "nlls", "nlls", item.family, item.delay, False, None)
+            if item.inference == "bls":
+                refined = Refinement(seed, "bls", "bls", item.family, item.delay, False, None)
             elif item.inference == "vi":
                 prior = (
                     create_vp_prior_from_dsc(item.vp_prior, relative_uncertainty=item.prior_relative_uncertainty)
@@ -120,7 +120,7 @@ def finish_conditional(block: list[ConditionalInput]) -> list[ConditionalResult]
                 )
                 refined = refine_vi(model, vp_prior=prior, sloppy=item.sloppy)
             else:
-                raise ValueError("Only NLLS and VI pipeline inference are supported.")
+                raise ValueError("Only BLS and VI pipeline inference are supported.")
             results.append(ConditionalResult(
                 refined, identification, identification_seconds,
                 perf_counter() - started - identification_seconds,

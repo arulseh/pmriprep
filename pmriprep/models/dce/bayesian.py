@@ -614,8 +614,8 @@ class BayesianPKFitter:
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
         initial_parameters : mapping of str to float or None, optional
-            Natural-space parameters used for the NLLS warm-start candidate.
-            When omitted or incomplete, the scalar NLLS fit is computed.
+            Natural-space parameters used for the BLS warm-start candidate.
+            When omitted or incomplete, the scalar BLS fit is computed.
 
         Returns
         -------
@@ -667,7 +667,7 @@ class BayesianPKFitter:
 
             return min(-(log_prior_t + log_lik), 1e30)
 
-        # Multi-start: try NLLS warm-start, prior mean, and data-driven guess.
+        # Multi-start: try BLS warm-start, prior mean, and data-driven guess.
         # Nelder-Mead handles the residual-derived noise scale and hard bounds.
         x0_prior_nat = np.array(self.model.get_initial_guess(), dtype=np.float64)
         x0_data_nat = np.array(
@@ -675,9 +675,9 @@ class BayesianPKFitter:
             dtype=np.float64,
         )
 
-        # NLLS warm-start candidate. A preceding batched fit may supply this
+        # BLS warm-start candidate. A preceding batched fit may supply this
         # candidate; otherwise compute it with the scalar model implementation.
-        x0_nlls_nat = x0_prior_nat.copy()
+        x0_bls_nat = x0_prior_nat.copy()
         param_names = self.model.get_parameter_names()
         if initial_parameters is not None:
             supplied = np.array(
@@ -685,19 +685,19 @@ class BayesianPKFitter:
                 dtype=np.float64,
             )
             if np.all(np.isfinite(supplied)):
-                x0_nlls_nat = supplied
+                x0_bls_nat = supplied
             else:
                 initial_parameters = None
 
         if initial_parameters is None:
             try:
-                nlls_result = self.model.fit(
+                bls_result = self.model.fit(
                     tissue_curve, aif, time_points, weights=weights,
                 )
-                if nlls_result.converged:
-                    x0_nlls_nat = np.array(
+                if bls_result.converged:
+                    x0_bls_nat = np.array(
                         [
-                            nlls_result.parameters.get(p, x0_prior_nat[i])
+                            bls_result.parameters.get(p, x0_prior_nat[i])
                             for i, p in enumerate(param_names)
                         ],
                         dtype=np.float64,
@@ -720,7 +720,7 @@ class BayesianPKFitter:
                 for i in range(n_params)
             ], dtype=np.float64)
 
-        x0_nlls_t = _to_t(x0_nlls_nat)
+        x0_bls_t = _to_t(x0_bls_nat)
         x0_prior_t = _to_t(x0_prior_nat)
         x0_data_t = _to_t(x0_data_nat)
 
@@ -728,7 +728,7 @@ class BayesianPKFitter:
         converged = False
         fitted_params_t = x0_prior_t
 
-        for x0 in [x0_nlls_t, x0_prior_t, x0_data_t]:
+        for x0 in [x0_bls_t, x0_prior_t, x0_data_t]:
             try:
                 result = optimize.minimize(
                     neg_log_posterior_t,
@@ -895,7 +895,7 @@ class BayesianPKFitter:
             Use fast, low-quality settings for testing.
         initial_parameters : mapping of str to float or None, optional
             Natural-space parameter values used to initialize the variational
-            linearization. When omitted, an NLLS warm start is computed.
+            linearization. When omitted, a BLS warm start is computed.
 
         Returns
         -------

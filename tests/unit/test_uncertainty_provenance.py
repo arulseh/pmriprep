@@ -9,7 +9,7 @@ from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
     ("inference", "method", "uncertainty_method", "spatial"),
     [
         (
-            "nlls",
+            "bls",
             "least_squares",
             "local_jacobian_covariance",
             False,
@@ -44,10 +44,10 @@ def test_inference_metadata(
     assert result["IncludesModelSelectionUncertainty"] is False
 
 
-def test_nlls_statistics_are_frequentist() -> None:
-    """NLLS absolute uncertainty is identified as a standard error."""
+def test_bls_statistics_are_frequentist() -> None:
+    """BLS absolute uncertainty is identified as a standard error."""
     standard_error = build_uncertainty_provenance(
-        "nlls", modality="DCE"
+        "bls", modality="DCE"
     )
     assert standard_error["UncertaintyStatistic"] == "parameter_standard_error"
     assert standard_error["ConditionalOnAppliedDelay"] is True

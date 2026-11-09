@@ -84,7 +84,7 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path, delay_enabled: bool) -> None
             "model": "auto" if delay_enabled else "2cxm", "qc_voxel_rsquared": 0.85,
             "candidate_models": ["patlak", "extended_tofts", "2cxm"] if delay_enabled else [],
             "inference": "vi", "temporal_weighting": "unit",
-            "inference_fallback": {"n_nlls_fallback": 1},
+            "inference_fallback": {"n_bls_fallback": 1},
             "delay_correction": {"enabled": delay_enabled, "maximum_seconds": 12, "grid_step_seconds": 0.1},
             "qc_acceptance_policy": {"identification": identification_policy()},
         },

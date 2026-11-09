@@ -123,10 +123,10 @@ def test_conditional_covariance_matches_linear_theory_and_marks_rank_loss() -> N
     np.testing.assert_allclose(derivative, design, atol=1e-8)
 
 
-def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
+def test_reported_quality_and_bls_identification_both_gate_binary_mask(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Missing NLLS evidence fails QC without erasing VI or fallback estimates."""
+    """Missing BLS evidence fails QC without erasing VI or fallback estimates."""
     from copy import deepcopy
     from typing import Any
     from pmriprep.models.dce import identification, local_refinement
@@ -155,7 +155,7 @@ def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
         # Distinguish reported-fit quality from good identification at its seed.
         fit.r_squared = -1 if len(calls) == 2 else fit.r_squared
         fallback = len(calls) == 3
-        return Refinement(fit, "vi", "nlls" if fallback else "vi", model.name, 0, fallback,
+        return Refinement(fit, "vi", "bls" if fallback else "vi", model.name, 0, fallback,
                           "test_numerical_fallback" if fallback else None)
 
     monkeypatch.setattr(identification, "profile_excursion", excursion)
@@ -174,7 +174,7 @@ def test_reported_quality_and_nlls_identification_both_gate_binary_mask(
     assert evidence["evaluated"] == 4 and evidence["primary_pass"] == 3
     assert evidence["parameters"]["Ktrans"]["failures"] == {"output_unavailable": 1}
     assert qc["inference_fallback_reasons"] == {"test_numerical_fallback": 1}
-    assert qc["qc_acceptance_policy"]["identification"]["basis"] == "selected_nlls"
+    assert qc["qc_acceptance_policy"]["identification"]["basis"] == "selected_bls"
     assert qc["qc_acceptance_policy"]["approximate_test_mode"] is False
     assert qc["timing_diagnostics"]["tau_e"]["applicable_retained"] == 0
     assert qc["timing_diagnostics"]["sensitivity_refits_performed"] is False

@@ -86,7 +86,7 @@ class FitResult:
     model_name : str
         Name of the fitted model.
     uncertainties : dict of str to numpy.ndarray
-        Local NLLS parameter standard errors, param_name → (N,), when
+        Local BLS parameter standard errors, param_name → (N,), when
         requested. Unavailable estimates are NaN, including non-converged
         fits and Patlak parameters at an active bound.
     """
@@ -106,7 +106,7 @@ def concat_fit_results(
 ) -> FitResult:
     """Concatenate per-chunk FitResults along the voxel axis.
 
-    Used by the chunked-multiproc NLLS fitting path: workers return a
+    Used by the chunked-multiproc BLS fitting path: workers return a
     FitResult for their slice of voxels, and the parent stitches them
     back into one whole-volume FitResult preserving voxel order.
 

@@ -162,7 +162,7 @@ def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
         model="auto",
         baseline_frames=2,
         tsnr_threshold=10.0,
-        inference="nlls",
+        inference="bls",
         save_fitted_curves=True,
     )
 
@@ -174,7 +174,7 @@ def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
     assert prepared.candidate_names == ["patlak", "extended_tofts", "2cxm"]
     assert prepared.model_name == "2cxm"
     assert prepared.baseline_frames == 2
-    assert prepared.inference == "nlls"
+    assert prepared.inference == "bls"
     assert prepared.save_fitted_curves is True
     expected_domain = np.zeros(shape, dtype=bool)
     expected_domain[0, 0, 0] = True
@@ -274,7 +274,7 @@ def _empty_preparation() -> _DCEFitPreparation:
         tsnr_map=np.ones((1, 1, 1), dtype=float),
         peak_enhancement=None,
         fitting_mask=np.zeros((1, 1, 1), dtype=bool),
-        inference="nlls",
+        inference="bls",
         save_fitted_curves=False,
     )
 
@@ -304,7 +304,7 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     assert maps.iauc_qc["detected_bolus_arrival_frame"] == 0
 
 
-@pytest.mark.parametrize("inference", ["nlls", "vi"])
+@pytest.mark.parametrize("inference", ["bls", "vi"])
 def test_interface_uses_unit_weights_without_dropping_observations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inference: str,
 ) -> None:

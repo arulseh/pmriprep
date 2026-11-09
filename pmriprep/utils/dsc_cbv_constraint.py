@@ -2,7 +2,7 @@
 
 Implements quality-gated conversion of DSC-derived CBV maps to Bayesian vp priors
 for use in DCE PK model fitting. When DSC data is available and passes quality
-checks, the CBV-derived vp map informs Bayesian fitting without bounding NLLS.
+checks, the CBV-derived vp map informs Bayesian fitting without bounding BLS.
 
 The prior pipeline:
     1. Assess DSC CBV quality (tissue CNR coverage and nCBV support/ranges)
@@ -63,7 +63,7 @@ CBV_NEGATIVE_FRACTION_MAX: float = 0.01
 SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
 SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
 SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
-SKIP_REASON_NLLS_UNSUPPORTED = "nlls_constraint_unsupported"
+SKIP_REASON_BLS_UNSUPPORTED = "bls_constraint_unsupported"
 NO_DSC_RUN_REASON_STRING = "No DSC data were available for a vp prior."
 
 

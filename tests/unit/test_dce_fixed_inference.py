@@ -53,19 +53,19 @@ def test_actual_vi_keeps_selected_family_delay_and_full_history(family: ProfileF
     seed = model.fit(model.tissue, model.input_aif, model.input_times)
     item = ConditionalInput(
         family, model.context.aif, np.arange(65) / 30, model.context.observed,
-        model.tissue, 2, seed, "nlls",
+        model.tissue, 2, seed, "bls",
         np.zeros(5 if family == "2cxm" else model.n_parameters), seed.residual_sum_squares,
     )
-    nlls, vi = finish_conditional([item, replace(item, inference="vi")])
+    bls, vi = finish_conditional([item, replace(item, inference="vi")])
     result = vi.refinement
     params = np.array(model.dict_to_params(seed.parameters))
     if family == "patlak":
         params = np.array([params[0], np.nan, params[1]])
     expected = identify_fixed_point(family, model.context, params, seed.residual_sum_squares)
-    for conditional in (nlls, vi):
+    for conditional in (bls, vi):
         np.testing.assert_array_equal(conditional.identification.effective, expected.effective)
         assert conditional.identification.reasons == expected.reasons
-    assert nlls.refinement.fit.parameters == seed.parameters
+    assert bls.refinement.fit.parameters == seed.parameters
     assert result.family == family and result.delay == 2
     assert result.actual_engine == "vi" and not result.fallback
     assert result.fit.converged and result.fit.uncertainties
@@ -121,7 +121,7 @@ def test_vi_fallback_preserves_seed_but_does_not_hide_contract_or_process_errors
             else:
                 response.parameters["Fp"] = 500
         result = inference.refine_vi(model)
-        assert result.fallback and result.actual_engine == "nlls"
+        assert result.fallback and result.actual_engine == "bls"
         assert result.delay == 2 and result.fit.parameters == seed.parameters
         np.testing.assert_array_equal(result.fit.fitted_curve, seed.fitted_curve)
     for error in (MemoryError("allocation"), RuntimeError("backend contract")):

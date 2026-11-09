@@ -75,7 +75,7 @@ def init_dce_pk_modeling_wf(
 
     Wraps :class:`~pmriprep.interfaces.dce_compute.ComputeDCEMaps`, which fits the
     configured tracer-kinetic model (Tofts, extended Tofts, Patlak or 2CXM) to
-    the concentration time series and AIF using NLLS or VI. Outputs include
+    the concentration time series and AIF using BLS or VI. Outputs include
     model-specific parameters and uncertainties, IAUC and model-free maps.
 
     Parameters
@@ -1513,7 +1513,7 @@ def init_dce_preproc_wf(
     t1w_to_dce_xfm
         Path to the T1w-to-DCE ITK X5 transform.
     ktrans_uncertainty
-        Path to Ktrans standard error (NLLS) or posterior standard deviation (VI).
+        Path to Ktrans standard error (BLS) or posterior standard deviation (VI).
     ve_uncertainty
         Corresponding ve uncertainty map for models that estimate ve.
     qc_metrics

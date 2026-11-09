@@ -98,9 +98,9 @@ def test_model_specific_zero_rate_boundaries(
 
 
 @pytest.mark.parametrize("model,rate,ceiling,is_auto,inference", [
-    ("tofts", "Ktrans", KTRANS_BOUNDS.max, False, "nlls"),
+    ("tofts", "Ktrans", KTRANS_BOUNDS.max, False, "bls"),
     ("extended_tofts", "Ktrans", KTRANS_BOUNDS.max, True, "vi"),
-    ("patlak", "Ktrans", KTRANS_BOUNDS.max, True, "nlls"),
+    ("patlak", "Ktrans", KTRANS_BOUNDS.max, True, "bls"),
     ("2cxm", "Fp", FP_BOUNDS.max, False, "vi"),
     ("2cxm", "PS", PS_BOUNDS.max, True, "vi"),
 ])
@@ -308,7 +308,7 @@ def test_retained_fixed_fit_preserves_genuine_zero_parameter() -> None:
 
 
 @pytest.mark.parametrize("model", ["extended_tofts", "2cxm"])
-@pytest.mark.parametrize("inference,fallback", [("nlls", False), ("vi", False), ("vi", True)])
+@pytest.mark.parametrize("inference,fallback", [("bls", False), ("vi", False), ("vi", True)])
 def test_scatter_uncertainty_and_departure_follow_retained_engine(
     model: str, inference: str, fallback: bool,
 ) -> None:
@@ -362,7 +362,7 @@ def test_vp_prior_departure_uses_relative_sigma_and_floor() -> None:
     ("mode", "inference", "model", "prior"),
     [
         (ConstraintMode.SKIP, "map", "extended_tofts", 0.04),
-        (ConstraintMode.SOFT, "nlls", "extended_tofts", 0.04),
+        (ConstraintMode.SOFT, "bls", "extended_tofts", 0.04),
         (ConstraintMode.SOFT, "map", "tofts", 0.04),
         (ConstraintMode.SOFT, "map", "extended_tofts", None),
         (ConstraintMode.SOFT, "map", "extended_tofts", 0.0),
@@ -382,12 +382,12 @@ def test_vp_prior_departure_skips_inapplicable_paths(
 
 def test_summarize_inference_fallback_names_denominator() -> None:
     """Bayesian fallback QC reports its engines, count, and retained fraction."""
-    assert _summarize_inference_fallback("nlls", 8, 0) is None
+    assert _summarize_inference_fallback("bls", 8, 0) is None
     assert _summarize_inference_fallback("vi", 8, 2) == {
         "requested_inference": "vi",
-        "fallback_inference": "nlls",
+        "fallback_inference": "bls",
         "n_retained_voxels": 8,
-        "n_nlls_fallback": 2,
+        "n_bls_fallback": 2,
         "fallback_fraction_of_retained": 0.25,
     }
 
@@ -597,7 +597,7 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
         SimpleNamespace(),
         "tofts",
         False,
-        "nlls",
+        "bls",
         ConstraintMode.SKIP,
         0.0,
     )

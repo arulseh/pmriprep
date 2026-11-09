@@ -289,7 +289,7 @@ class LocalDelayRunner:
                 pending.append((next_start, self._executor.submit(_fit_profile_block, block(next_start))))
 
     def refine_selected(self, inputs: list[ConditionalInput]) -> list[ConditionalResult]:
-        """Reuse the bounded pool for NLLS identification and fixed-delay inference.
+        """Reuse the bounded pool for BLS identification and fixed-delay inference.
 
         Parameters
         ----------

@@ -131,7 +131,7 @@ class TestToftsRecovery:
 
     @pytest.mark.parametrize("noise_frac,tol", NOISE_LEVELS_STANDARD)
     @pytest.mark.parametrize("ktrans,ve", TOFTS_PARAMS)
-    def test_nlls(
+    def test_bls(
         self,
         ktrans: float,
         ve: float,
@@ -139,7 +139,7 @@ class TestToftsRecovery:
         tol: float,
         dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
     ) -> None:
-        """Test NLLS recovery of Tofts parameters."""
+        """Test BLS recovery of Tofts parameters."""
         aif, time_min = dce_aif_and_time
         model = ToftsModel()
 
@@ -299,7 +299,7 @@ class TestExtendedToftsRecovery:
 
     @pytest.mark.parametrize("noise_frac,tol", NOISE_LEVELS_ETOFTS)
     @pytest.mark.parametrize("ktrans,ve,vp", ETOFTS_PARAMS)
-    def test_nlls(
+    def test_bls(
         self,
         ktrans: float,
         ve: float,
@@ -308,7 +308,7 @@ class TestExtendedToftsRecovery:
         tol: float,
         dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
     ) -> None:
-        """Test NLLS recovery of Extended Tofts parameters."""
+        """Test BLS recovery of Extended Tofts parameters."""
         aif, time_min = dce_aif_and_time
         model = ExtendedToftsModel()
 
@@ -422,7 +422,7 @@ class TestPatlakRecovery:
 
     @pytest.mark.parametrize("noise_frac,tol", NOISE_LEVELS_STANDARD)
     @pytest.mark.parametrize("ktrans,vp", PATLAK_PARAMS)
-    def test_nlls(
+    def test_bls(
         self,
         ktrans: float,
         vp: float,
@@ -430,7 +430,7 @@ class TestPatlakRecovery:
         tol: float,
         dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
     ) -> None:
-        """Test NLLS recovery of Patlak parameters."""
+        """Test BLS recovery of Patlak parameters."""
         aif, time_min = dce_aif_and_time
         model = PatlakModel()
 
@@ -499,7 +499,7 @@ class Test2CXMRecovery:
 
     @pytest.mark.parametrize("noise_frac,tol", NOISE_LEVELS_2CXM)
     @pytest.mark.parametrize("fp,ps,ve,vp", TWO_CXM_PARAMS)
-    def test_nlls(
+    def test_bls(
         self,
         fp: float,
         ps: float,
@@ -509,7 +509,7 @@ class Test2CXMRecovery:
         tol: float,
         dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
     ) -> None:
-        """Test NLLS recovery of 2CXM parameters."""
+        """Test BLS recovery of 2CXM parameters."""
         aif, time_min = dce_aif_and_time
         model = TwoCompartmentExchangeModel()
 
@@ -672,19 +672,19 @@ class TestDCEEdgeCases:
         self,
         dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
     ) -> None:
-        """Patlak model should recover parameters via both NLLS and graphical."""
+        """Patlak model should recover parameters via both BLS and graphical."""
         aif, time_min = dce_aif_and_time
         model = PatlakModel()
 
         ktrans, vp = 0.05, 0.03
         curve = model.evaluate([ktrans, vp], aif, time_min)
 
-        result_nlls = model.fit(curve, aif, time_min)
+        result_bls = model.fit(curve, aif, time_min)
         result_graph = model.fit_graphical(curve, aif, time_min)
 
         # Both methods should agree within 5%
-        assert abs(result_nlls.parameters["Ktrans"] - result_graph.parameters["Ktrans"]) / ktrans < 0.05
-        assert abs(result_nlls.parameters["vp"] - result_graph.parameters["vp"]) / vp < 0.05
+        assert abs(result_bls.parameters["Ktrans"] - result_graph.parameters["Ktrans"]) / ktrans < 0.05
+        assert abs(result_bls.parameters["vp"] - result_graph.parameters["vp"]) / vp < 0.05
 
 
 # =============================================================================

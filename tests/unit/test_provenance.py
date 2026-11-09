@@ -77,10 +77,10 @@ class TestEnrichDCE:
                     "r_squared": 12,
                 },
                 "identification_qc": {
-                    "basis": "selected_nlls", "by_model": {"extended_tofts": {"evaluated": 98}},
+                    "basis": "selected_bls", "by_model": {"extended_tofts": {"evaluated": 98}},
                 },
                 "timing_diagnostics": {
-                    "basis": "selected_nlls", "report_only": True,
+                    "basis": "selected_bls", "report_only": True,
                     "acquisition_frame_interval_seconds": 7.4,
                 },
                 "r2_median": 0.87,

@@ -2459,7 +2459,7 @@
       "delay_correction": true,
       "dsc_agent_standard_dose": 0.1,
       "dsc_dose": 1.0,
-      "inference": "nlls",
+      "inference": "bls",
       "model": "auto",
       "n_procs": 1,
       "save_fitted_curves": false,

@@ -162,7 +162,7 @@ def _compute_vp_prior_departure(
 
     if (
         constraint_mode != ConstraintMode.SOFT
-        or inference == "nlls"
+        or inference == "bls"
         or model_name not in ("extended_tofts", "patlak", "2cxm")
         or voxel_prior is None
         or voxel_prior <= 0
@@ -244,9 +244,9 @@ def _scatter_dce_fit_results(
         _scatter_dce_parameters(
             maps, coords, selected_model, params, result["r_squared"],
         )
-        # Posterior-SD maps cannot contain the fallback's conditional NLLS SE.
+        # Posterior-SD maps cannot contain the fallback's conditional BLS SE.
         if result["uncertainties"] and not (
-            inference != "nlls" and result.get("inference_fallback", False)
+            inference != "bls" and result.get("inference_fallback", False)
         ):
             _scatter_dce_uncertainties(
                 maps, coords, selected_model, result["uncertainties"],
@@ -300,17 +300,17 @@ def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
 def _summarize_inference_fallback(
     inference: str,
     n_retained: int,
-    n_nlls_fallback: int,
+    n_bls_fallback: int,
 ) -> Optional[dict[str, str | int | float]]:
-    """Summarize retained Bayesian requests supplied by NLLS fallback fits."""
-    if inference == "nlls":
+    """Summarize retained Bayesian requests supplied by BLS fallback fits."""
+    if inference == "bls":
         return None
     return {
         "requested_inference": inference,
-        "fallback_inference": "nlls",
+        "fallback_inference": "bls",
         "n_retained_voxels": n_retained,
-        "n_nlls_fallback": n_nlls_fallback,
-        "fallback_fraction_of_retained": n_nlls_fallback / max(1, n_retained),
+        "n_bls_fallback": n_bls_fallback,
+        "fallback_fraction_of_retained": n_bls_fallback / max(1, n_retained),
     }
 
 
@@ -506,7 +506,7 @@ def _build_dce_qc_mask(
     tsnr_threshold: float = 0.0,
     *, identification_pass: npt.NDArray[np.bool_],
 ) -> npt.NDArray[np.uint8]:
-    """Combine reported-fit quality with selected-NLLS identification."""
+    """Combine reported-fit quality with selected-BLS identification."""
     return _evaluate_dce_qc_mask(
         fitting_mask,
         optimizer_converged,
@@ -553,7 +553,7 @@ def _evaluate_dce_qc_mask(
     tsnr_threshold: float = 0.0,
     *, identification_pass: npt.NDArray[np.bool_],
 ) -> _DCEQCMaskEvaluation:
-    """Conjoin reported-fit quality and the corresponding NLLS identification."""
+    """Conjoin reported-fit quality and the corresponding BLS identification."""
     from pmriprep.models.dce.identification import identification_policy
 
     if identification_pass.shape != fitting_mask.shape or identification_pass.dtype != np.bool_:
@@ -1172,10 +1172,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
 
     # Inference engine options
     inference = traits.Enum(
-        "nlls",
+        "bls",
         "vi",
         usedefault=True,
-        desc="Inference engine: nlls (bounded least squares) or vi (variational Bayes).",
+        desc="Inference engine: bls (bounded least squares) or vi (variational Bayes).",
     )
     # tSNR filtering
     tsnr_threshold = traits.Float(
@@ -1320,7 +1320,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ps = File(desc="PS map (permeability-surface area product, mL/min/100mL, 2cxm only)")
     out_e = File(desc="E map (extraction fraction, 2cxm only)")
 
-    # Parameter uncertainty maps (standard error for NLLS; posterior SD otherwise)
+    # Parameter uncertainty maps (standard error for BLS; posterior SD otherwise)
     out_ktrans_std = File(desc="Ktrans parameter uncertainty map")
     out_ve_std = File(desc="ve parameter uncertainty map")
     out_vp_std = File(desc="vp parameter uncertainty map")
@@ -1344,7 +1344,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     # QC outputs
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
-    out_qc_mask = File(desc="Binary QC: reported-fit quality AND selected-NLLS primary identification")
+    out_qc_mask = File(desc="Binary QC: reported-fit quality AND selected-BLS primary identification")
     out_delay = File(exists=True, desc="Native selected AIF-relative model delay in seconds")
     out_fitting_mask = File(desc="Internal fitting-eligibility mask")
     out_optimizer_converged_mask = File(
@@ -1415,7 +1415,7 @@ class ComputeDCEMaps(BaseInterface):
         the time axis is generated from volume_tr. The validated axis controls
         fitting and model eligibility.
     inference : str
-        Public inference engines: nlls (default, bounded least squares) or
+        Public inference engines: bls (default, bounded least squares) or
         vi (variational Bayes).
     delay_correction : bool
         Estimate local effective input delay, or fix delay to zero when false.
@@ -1446,7 +1446,7 @@ class ComputeDCEMaps(BaseInterface):
     out_e : str, optional
         Path to E map (2cxm only).
     out_ktrans_std : str, optional
-        Ktrans standard error for NLLS or posterior standard deviation for
+        Ktrans standard error for BLS or posterior standard deviation for
         Bayesian fitting, where available. Not propagated for derived 2CXM
         Ktrans.
     out_ve_std : str, optional
@@ -1485,11 +1485,11 @@ class ComputeDCEMaps(BaseInterface):
     - Ktrans and kep are in min⁻¹
     - Concentration is in mM (millimolar)
 
-    Uncertainty maps contain NLLS standard errors or Bayesian posterior
+    Uncertainty maps contain BLS standard errors or Bayesian posterior
     standard deviations, conditional on the selected family and delay, with
     parameter-specific AIF-confidence inflation.
     Unavailable estimates remain NaN within the brain mask. Bayesian
-    posterior-SD maps are NaN at voxels retaining an NLLS fallback estimate.
+    posterior-SD maps are NaN at voxels retaining a BLS fallback estimate.
 
     The tSNR threshold can exclude noisy voxels from fitting. tSNR is
     computed as mean(baseline) / std(baseline). A typical threshold is 4.0.
@@ -1853,7 +1853,7 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dsc_cbv_constraint import (
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
-            SKIP_REASON_NLLS_UNSUPPORTED,
+            SKIP_REASON_BLS_UNSUPPORTED,
             ConstraintMode,
             prepare_vp_constraint_from_data,
         )
@@ -1894,7 +1894,7 @@ class ComputeDCEMaps(BaseInterface):
                 candidate_names,
             )
 
-        if prepared.inference == "nlls":
+        if prepared.inference == "bls":
             return _DCEVPConstraint(
                 None,
                 ConstraintMode.SKIP,
@@ -1903,9 +1903,9 @@ class ComputeDCEMaps(BaseInterface):
                     "mode": "skip",
                     "reason": (
                         "DSC-informed vp priors are supported only for Bayesian "
-                        "fitting; NLLS used the model's ordinary bounds."
+                        "fitting; BLS used the model's ordinary bounds."
                     ),
-                    "skip_reason": SKIP_REASON_NLLS_UNSUPPORTED,
+                    "skip_reason": SKIP_REASON_BLS_UNSUPPORTED,
                 },
                 model_name,
                 candidate_names,
@@ -2230,7 +2230,7 @@ class ComputeDCEMaps(BaseInterface):
         start = time.monotonic()
         n_procs = max(1, int(self.inputs.n_procs))
         mode = cast(SelectionMode, "auto" if prepared.is_auto else prepared.model_name)
-        engine = cast(Literal["nlls", "vi"], prepared.inference)
+        engine = cast(Literal["bls", "vi"], prepared.inference)
         delay_enabled, sloppy = bool(self.inputs.delay_correction), bool(self.inputs.sloppy)
         fit_times = prepared.time_points
         interval = float(fit_times[1] - fit_times[0])
@@ -2383,20 +2383,20 @@ class ComputeDCEMaps(BaseInterface):
         )
         qc["inference_fallback_reasons"] = dict(fallbacks)
         qc["identification_qc"] = {
-            "basis": "selected_nlls",
-            "scope": "selected_nondegenerate_nlls_fits_before_vi",
+            "basis": "selected_bls",
+            "scope": "selected_nondegenerate_bls_fits_before_vi",
             "denominator": "evaluated count within each model; parameter failure counts overlap",
             "unevaluated_primary_pass": False,
             "by_model": identification_counts,
         }
         qc["timing_diagnostics"] = {
-            "basis": "selected_nlls", "report_only": True,
+            "basis": "selected_bls", "report_only": True,
             "acquisition_frame_interval_seconds": prepared.selection_tr_seconds,
             "observation_indices": list(range(prepared.n_timepoints)),
             "observation_times_seconds": (fit_times * 60).tolist(),
             "original_observation_times_seconds": (prepared.time_points * 60).tolist(),
             "n_observations": prepared.n_timepoints,
-            "scope": "selected_nlls_fits_before_numerical_retention_and_vi",
+            "scope": "selected_bls_fits_before_numerical_retention_and_vi",
             "sensitivity_refits_performed": False,
             "endpoint_convention": "PCHIP with first/last AIF values held outside acquired support",
             "approximate_test_mode": sloppy,
@@ -2404,7 +2404,7 @@ class ComputeDCEMaps(BaseInterface):
         qc["local_fitting_execution"] = dict(
             n_procs=n_procs, chunk_size=128, peak_slice_profile_bytes=max_profile_bytes,
             elapsed_seconds=time.monotonic() - start,
-            includes="profiles, selection, NLLS identification, conditional uncertainty, VI and scattering",
+            includes="profiles, selection, BLS identification, conditional uncertainty, VI and scattering",
             identification_worker_seconds=identification_worker_seconds,
             refinement_worker_seconds=refinement_worker_seconds,
             worker_timing_basis="summed worker elapsed seconds, not parallel wall time",

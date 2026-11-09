@@ -31,6 +31,11 @@ def test_supported_dce_and_dsc_modes_are_accepted() -> None:
         ]
     )
     assert args.dsc_inference == "svb"
+    from pmriprep.config.dce import DCEConfig
+    from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+    assert DCEConfig().inference == "bls"
+    assert ComputeDCEMaps().inputs.inference == "bls"
 
 
 def test_help_advertises_supported_inference_modes() -> None:
@@ -40,7 +45,7 @@ def test_help_advertises_supported_inference_modes() -> None:
     dsc_help = parser._option_string_actions["--dsc-inference"].help
 
     assert "--dsc-inference {vi,svb}" in help_text
-    assert "--dce-inference {nlls,vi}" in help_text
+    assert "--dce-inference {bls,vi}" in help_text
     assert dsc_help is not None
     assert "nonlinear least squares" not in dsc_help
     assert "Laplace MAP" not in help_text

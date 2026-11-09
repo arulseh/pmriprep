@@ -540,10 +540,10 @@ Examples:
     )
     dce_group.add_argument(
         "--dce-inference",
-        choices=["nlls", "vi"],
-        metavar="{nlls,vi}",
+        choices=["bls", "vi"],
+        metavar="{bls,vi}",
         default=None,
-        help="Inference engine for DCE: nlls (default, bounded least "
+        help="Inference engine for DCE: bls (default, bounded least "
         "squares; linear for Patlak, nonlinear for other models), "
         "vi (variational Bayes).",
     )

@@ -302,7 +302,7 @@ class ToftsModel(PKModel):
             n_parameters=self.n_parameters,
             n_observations=n_obs,
             converged=converged,
-            fitting_method="nlls",
+            fitting_method="bls",
             fitted_curve=fitted_curve,
         )
 

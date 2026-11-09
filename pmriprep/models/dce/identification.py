@@ -1,4 +1,4 @@
-"""Primary-parameter identification from conditional NLLS delay profiles."""
+"""Primary-parameter identification from conditional BLS delay profiles."""
 
 from __future__ import annotations
 
@@ -28,14 +28,14 @@ def identification_policy() -> dict[str, object]:
     Returns
     -------
     dict
-        Selected-NLLS basis, numerical conventions and interpretation limits.
+        Selected-BLS basis, numerical conventions and interpretation limits.
         Individual Fp/PS warnings remain separate from the primary conjunction.
     """
     return {
-        "basis": "selected_nlls",
+        "basis": "selected_bls",
         "description": (
             "QC combines fit-quality checks on the reported estimate with "
-            "data-identification checks evaluated at the corresponding NLLS fit. "
+            "data-identification checks evaluated at the corresponding BLS fit. "
             "VI posterior uncertainty is reported separately and is not used "
             "for identification screening."
         ),
@@ -68,7 +68,7 @@ def identification_policy() -> dict[str, object]:
 
 @dataclass
 class IdentificationResult:
-    """NLLS identification evidence, independent of retention and fit-quality QC.
+    """BLS identification evidence, independent of retention and fit-quality QC.
 
     Attributes
     ----------
@@ -140,7 +140,7 @@ def evaluate_identification(
     spread: np.ndarray, joint_outputs: tuple[int, ...], *,
     names: tuple[str, ...], primary: tuple[str, ...],
 ) -> IdentificationResult:
-    """Evaluate conditional NLLS precision, profile excursions and bound margins.
+    """Evaluate conditional BLS precision, profile excursions and bound margins.
 
     Parameters
     ----------
@@ -151,7 +151,7 @@ def evaluate_identification(
     predict : callable
         Fixed-family, fixed-delay prediction on the original observations.
     sse : float
-        Unweighted NLLS residual sum of squares at these coordinates.
+        Unweighted BLS residual sum of squares at these coordinates.
     values, gradients, output_upper : ndarray
         Reported outputs, their output-by-coordinate gradients and upper bounds.
     spread : ndarray
@@ -255,7 +255,7 @@ def identify_profile_point(
     profile: DelayProfile, member: int, index: int,
     aif: np.ndarray, times: np.ndarray,
 ) -> IdentificationResult:
-    """Assess the selected NLLS point without fitting, selecting or masking data.
+    """Assess the selected BLS point without fitting, selecting or masking data.
 
     Parameters
     ----------
@@ -271,14 +271,14 @@ def identify_profile_point(
     Returns
     -------
     IdentificationResult
-        Identification at the selected NLLS estimate. Profile excursions use
+        Identification at the selected BLS estimate. Profile excursions use
         Q <= min(Q) + 1, with Q = n*log(max(SSE, 1e-30)); n counts observations,
         never neighbors or the full input history. An incomplete profile has
         unavailable excursions. Fixed-zero profiles have zero excursion.
 
     Notes
     -----
-    This evaluates data identification at the selected NLLS fit for both NLLS
+    This evaluates data identification at the selected BLS fit for both BLS
     and VI reporting. VI posterior uncertainty is separate. The final QC mask
     also requires fit-quality checks on the reported estimate; this function
     does not apply those checks, replace estimates or change model admission.

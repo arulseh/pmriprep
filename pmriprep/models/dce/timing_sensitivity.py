@@ -1,4 +1,4 @@
-"""Conditional NLLS timing diagnostics, separate from selection and central QC."""
+"""Conditional BLS timing diagnostics, separate from selection and central QC."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class TimingOffset:
 
 @dataclass
 class TimingSensitivity:
-    """Minus/plus-one-frame NLLS diagnostics at the selected kinetic family.
+    """Minus/plus-one-frame BLS diagnostics at the selected kinetic family.
 
     Attributes
     ----------
@@ -81,7 +81,7 @@ class TimingSensitivity:
     observations : ndarray
         Original retained indices shared by central and both perturbed fits.
     central_identification : IdentificationResult
-        Selected NLLS identification, including its own-family profile excursion.
+        Selected BLS identification, including its own-family profile excursion.
     central_retained : bool
         Central numerical retention, not the final binary QC mask.
     offsets : tuple of TimingOffset
@@ -118,9 +118,9 @@ def timing_sensitivity(
     Returns
     -------
     TimingSensitivity
-        Raw NLLS fits and per-parameter usable signed changes. Both endpoints
+        Raw BLS fits and per-parameter usable signed changes. Both endpoints
         must be numerically retained and pass the adopted identification screen.
-        VI reporting uses this same NLLS diagnostic, not posterior differences.
+        VI reporting uses this same BLS diagnostic, not posterior differences.
 
     Notes
     -----

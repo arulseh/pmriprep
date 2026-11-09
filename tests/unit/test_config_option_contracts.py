@@ -410,7 +410,7 @@ def test_dsc_interface_rejects_unsupported_inference(inference: str) -> None:
         ComputeDSCMaps(inference=inference)
 
 
-@pytest.mark.parametrize("inference", ["nlls", "vi"])
+@pytest.mark.parametrize("inference", ["bls", "vi"])
 def test_dce_inference_selection_is_independent(inference: str) -> None:
     """DSC's inference choices do not alter DCE's existing dispatch controls."""
     from pmriprep.interfaces.dce_compute import ComputeDCEMaps
@@ -422,7 +422,7 @@ def test_dce_inference_selection_is_independent(inference: str) -> None:
     assert ComputeDCEMaps(inference=config.inference).inputs.inference == inference
 
 
-@pytest.mark.parametrize("inference", ["map", "mcmc"])
+@pytest.mark.parametrize("inference", ["nlls", "map", "mcmc"])
 def test_retired_dce_pipeline_modes_are_rejected(inference: str) -> None:
     from traits.trait_errors import TraitError
     from pmriprep.interfaces.dce_compute import ComputeDCEMaps

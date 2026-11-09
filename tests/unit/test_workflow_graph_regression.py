@@ -386,7 +386,7 @@ def _dce_preproc_datasinks(bids: Path) -> pe.Workflow:
         subject_id="0001",
         session_id="0001",
         pk_model="auto",
-        inference="nlls",
+        inference="bls",
         present_inputs={"dce_moco", "dce_mean", "aif_mask"},
         motion_correct=False,
     )
@@ -402,7 +402,7 @@ def _dce_t1_datasinks(bids: Path) -> pe.Workflow:
         subject_id="0001",
         session_id="0001",
         pk_model="auto",
-        inference="nlls",
+        inference="bls",
         present_inputs={"t1_map"},
         t1_source_files=[str(vfa)],
     )
@@ -416,7 +416,7 @@ def _dce_anat_datasinks(bids: Path) -> pe.Workflow:
         subject_id="0001",
         session_id="0001",
         pk_model="auto",
-        inference="nlls",
+        inference="bls",
         present_inputs={
             "brain_mask", "nawm_mask", "lesion_mask_dce",
             "user_lesion_mask_dce", "roi_mask_dce",

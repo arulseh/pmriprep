@@ -194,16 +194,16 @@ class TestDelayCorrectionProvenance:
 
 
 class TestInferenceFallbackProvenance:
-    """Bayesian-to-NLLS fallback accounting reaches every PK-map sidecar."""
+    """Bayesian-to-BLS fallback accounting reaches every PK-map sidecar."""
 
     def test_surfaces_from_merged_pipeline_qc(
         self, base_sidecar, pk_qc_metrics,
     ) -> None:
         fallback = {
             "requested_inference": "vi",
-            "fallback_inference": "nlls",
+            "fallback_inference": "bls",
             "n_retained_voxels": 100,
-            "n_nlls_fallback": 4,
+            "n_bls_fallback": 4,
             "fallback_fraction_of_retained": 0.04,
         }
         pk_qc_metrics["pk_modeling"]["inference_fallback"] = fallback
@@ -273,7 +273,7 @@ def test_dce_image_mask_metadata_route(tmp_path) -> None:
     workflow = init_dce_datasinks_wf(
         output_dir=str(tmp_path / 'out'), bids_dir=str(tmp_path),
         subject_id='test', session_id='01', present_inputs={'brain_mask'},
-        pk_model='auto', inference='nlls',
+        pk_model='auto', inference='bls',
     )
     node = workflow.get_node('brain_mask_dce_meta')
     node.base_dir = str(tmp_path / 'work')

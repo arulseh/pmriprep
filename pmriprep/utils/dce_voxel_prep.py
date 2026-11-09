@@ -124,7 +124,7 @@ def prepare_voxel_for_fitting(
             )
 
     # Concentration conversion owns baseline subtraction. Preserve signed
-    # baseline noise so CPU Bayesian paths and batched NLLS consume the same
+    # baseline noise so CPU Bayesian paths and batched BLS consume the same
     # baseline-subtracted curve.
     prepared = tissue_curve
 

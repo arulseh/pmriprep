@@ -76,7 +76,7 @@ def selected_fit_result(
     Returns
     -------
     FitResult
-        Reconstructed NLLS estimate and curve with the selected BIC. Numerical
+        Reconstructed BLS estimate and curve with the selected BIC. Numerical
         success does not imply retention or identification; callers must apply
         retention before using this result as an inference seed.
     """
@@ -108,12 +108,12 @@ def selected_fit_result(
         r_squared=base.compute_r_squared(tissue, curve),
         aic=base.compute_aic(sse, len(tissue)), bic=timing.bic,
         model_name=profile.family, n_parameters=base.n_parameters,
-        n_observations=len(tissue), converged=True, fitting_method="nlls",
+        n_observations=len(tissue), converged=True, fitting_method="bls",
     )
 
 
 class FixedDelayModel(PKModel):
-    """Bind kinetic inference to one input, observation set and eligible NLLS fit.
+    """Bind kinetic inference to one input, observation set and eligible BLS fit.
 
     Parameters
     ----------
@@ -126,7 +126,7 @@ class FixedDelayModel(PKModel):
     delay : float
         Fixed effective offset in seconds; not an inference parameter.
     seed : FitResult
-        Eligible converged NLLS fit from the same family, offset and observations.
+        Eligible converged BLS fit from the same family, offset and observations.
     observed : ndarray, optional
         Retained original indices; intervening input history is preserved.
 
@@ -152,8 +152,8 @@ class FixedDelayModel(PKModel):
         self.input_times = np.array(np.asarray(times)[indices], copy=True)
         self.tissue = np.array(tissue, dtype=float, copy=True)
         self._seed = deepcopy(seed)
-        if not self.valid_result(seed) or seed.fitting_method != "nlls":
-            raise ValueError("Eligible same-model NLLS seed required.")
+        if not self.valid_result(seed) or seed.fitting_method != "bls":
+            raise ValueError("Eligible same-model BLS seed required.")
         self.check_result_curve(seed)
         for array in (self.input_aif, self.input_times, self.tissue):
             array.setflags(write=False)
@@ -195,14 +195,14 @@ class FixedDelayModel(PKModel):
         self, tissue_curve: np.ndarray, aif: np.ndarray, time_points: np.ndarray,
         initial_guess: Sequence[float] | None = None, weights: np.ndarray | None = None,
     ) -> FitResult:
-        """Return a copy of the selected NLLS fit for identical data/unit weights.
+        """Return a copy of the selected BLS fit for identical data/unit weights.
 
         The optional initial_guess is not used: this is cached reuse, not a new
         optimization. Changed observations or weighting cannot reuse the seed.
         """
         self._check_inputs(aif, time_points)
         if not np.array_equal(tissue_curve, self.tissue):
-            raise ValueError("Cannot reuse NLLS for changed observations.")
+            raise ValueError("Cannot reuse BLS for changed observations.")
         if weights is not None and not np.array_equal(weights, np.ones_like(self.tissue)):
             raise ValueError("Only unit temporal weights are supported.")
         return deepcopy(self._seed)
@@ -238,8 +238,8 @@ class Refinement:
     """Retained kinetics with fixed-selection and fallback provenance."""
 
     fit: FitResult
-    requested_engine: Literal["vi", "nlls"]
-    actual_engine: Literal["vi", "nlls"]
+    requested_engine: Literal["vi", "bls"]
+    actual_engine: Literal["vi", "bls"]
     family: str
     delay: float
     fallback: bool
@@ -249,12 +249,12 @@ class Refinement:
 def refine_vi(
     model: FixedDelayModel, *, vp_prior: BayesianPrior | None = None, sloppy: bool = False,
 ) -> Refinement:
-    """Refine kinetics at fixed timing, or retain the eligible same-delay NLLS fit.
+    """Refine kinetics at fixed timing, or retain the eligible same-delay BLS fit.
 
     Parameters
     ----------
     model : FixedDelayModel
-        Checked operator/data and eligible selected NLLS seed.
+        Checked operator/data and eligible selected BLS seed.
     vp_prior : BayesianPrior, optional
         Already qualified DSC prior; it cannot change family or timing.
     sloppy : bool
@@ -284,4 +284,4 @@ def refine_vi(
             model.check_result_curve(result)
             return Refinement(deepcopy(result), "vi", "vi", model.name, model.delay, False, None)
         reason = "nonconverged" if not result.converged else "invalid_result"
-    return Refinement(seed, "vi", "nlls", model.name, model.delay, True, reason)
+    return Refinement(seed, "vi", "bls", model.name, model.delay, True, reason)

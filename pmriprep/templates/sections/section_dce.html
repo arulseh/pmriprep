@@ -757,7 +757,7 @@
                 <div class="metric-label">Constraint</div>
                 <div class="metric-value
                     {%- if cbv_c.mode == 'soft' %} pass
-                    {%- elif cbv_c.mode == 'skip' and cbv_c.skip_reason in ['nlls_constraint_unsupported', 'disabled_by_configuration', 'model_without_vp'] %} na
+                    {%- elif cbv_c.mode == 'skip' and cbv_c.skip_reason in ['bls_constraint_unsupported', 'disabled_by_configuration', 'model_without_vp'] %} na
                     {%- elif cbv_c.mode == 'skip' %} warn
                     {%- else %} unknown{% endif %}">{{ 'Not applied' if cbv_c.mode == 'skip' else cbv_c.mode }}</div>
             </div>

@@ -82,7 +82,7 @@ class DCEConfig:
         Pharmacokinetic model: auto (per-voxel BIC selection),
         tofts, extended_tofts, patlak, or 2cxm.
     inference : str
-        Public inference engines: nlls (default, bounded least squares) and
+        Public inference engines: bls (default, bounded least squares) and
         vi (variational Bayes).
     delay_correction : bool
         Estimate local effective AIF delay; false fixes the delay to zero.
@@ -133,7 +133,7 @@ class DCEConfig:
 
     # Model settings
     model: str = "auto"
-    inference: str = "nlls"
+    inference: str = "bls"
 
     # Relaxivity override
     r1_relaxivity: Optional[float] = None  # User-supplied r1 (s^-1/mM)
@@ -172,7 +172,7 @@ class DCEConfig:
         """
         categorical_options = {
             "model": ({"auto", "tofts", "extended_tofts", "patlak", "2cxm"}, self.model),
-            "inference": ({"nlls", "vi"}, self.inference),
+            "inference": ({"bls", "vi"}, self.inference),
             "aif_method": ({"auto", "population"}, self.aif_method),
             "t1_method": ({"nlls", "wlls"}, self.t1_method),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),

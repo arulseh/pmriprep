@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 _INFERENCE_METADATA: dict[str, dict[str, object]] = {
-    "nlls": {
+    "bls": {
         "InferenceMethod": "least_squares",
         "UncertaintyEstimationMethod": "local_jacobian_covariance",
         "UncertaintyApproximation": "local_linear_Gaussian",
@@ -93,7 +93,7 @@ def build_uncertainty_provenance(
 
     statistic = (
         "parameter_standard_error"
-        if normalized_inference == "nlls"
+        if normalized_inference == "bls"
         else "posterior_standard_deviation"
     )
     metadata["UncertaintyStatistic"] = statistic

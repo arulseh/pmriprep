@@ -662,7 +662,7 @@ def test_saved_dce_status_maps_are_brain_masked(tmp_path) -> None:
         aif_file=str(aif_file),
         brain_mask_file=str(mask_file),
         model="auto",
-        inference="nlls",
+        inference="bls",
         time_points_file=str(time_points_file),
         baseline_frames=5,
         constraint_mode="skip",

@@ -97,7 +97,7 @@ def test_chunk_boundaries_and_reused_pool_do_not_change_slice_results() -> None:
                     selected.append(ConditionalInput(
                         family, aif, times, observed, curves[i],
                         float(profile.delays_seconds[timing.index]), seed,
-                        "vi" if i % 2 else "nlls",
+                        "vi" if i % 2 else "bls",
                         profile_excursion(profile, i, timing.index),
                         float(profile.sse[timing.index, i]),
                     ))

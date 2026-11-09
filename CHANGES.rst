@@ -1,3 +1,12 @@
+1.0.0rc6.dev48 (2026-11-09)
+===========================
+
+* CHG: Rename the DCE least-squares engine from ``nlls`` to ``bls`` (bounded
+  least squares), including configuration and provenance identifiers. Fitting
+  and numerical outputs are unchanged; T1 fitting retains its ``nlls`` name.
+  Old DCE engine values are no longer accepted. Methods regenerated from older
+  outputs omit the QC-mask and VI-fallback clauses tied to the renamed keys.
+
 1.0.0rc6.dev47 (2026-11-09)
 ===========================
 

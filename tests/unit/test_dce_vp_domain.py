@@ -28,7 +28,7 @@ def test_patlak_recovers_full_fraction_domain(
     sampling: tuple[np.ndarray, np.ndarray],
     vp: float,
 ) -> None:
-    """Independent linear recovery agrees with both production NLLS solvers."""
+    """Independent linear recovery agrees with both production BLS solvers."""
     time, aif = sampling
     design = np.column_stack((cumulative_trapezoid(aif, time, initial=0), aif))
     tissue = design @ [0.05, vp]
