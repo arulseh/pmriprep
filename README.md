@@ -255,7 +255,6 @@ Tumor-segmentation fields:
 ## BIDS inputs
 
 PMRIPrep requires brain MRI data; other anatomical regions are currently not supported.
-
 A normal run requires `dataset_description.json` and an anatomical T1w image.
 Post-contrast-only T1w anatomy is supported, but downstream options requiring a
 pre-contrast T1w reference are unavailable. DSC and DCE run when corresponding
