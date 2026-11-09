@@ -66,6 +66,7 @@ class GenerateUnifiedReport(BaseInterface):
 
     input_spec = GenerateUnifiedReportInputSpec
     output_spec = GenerateUnifiedReportOutputSpec
+    _always_run = True
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.report_utils import generate_unified_report

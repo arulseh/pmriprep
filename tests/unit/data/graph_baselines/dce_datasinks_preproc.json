@@ -37,6 +37,12 @@
       "base"
     ],
     [
+      "check_outputs",
+      "written_files",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
       "dataset_description",
       "dd_path",
       "outputnode",
@@ -75,8 +81,8 @@
     [
       "dd_merge",
       "out",
-      "dataset_description",
-      "_trigger"
+      "check_outputs",
+      "written_files"
     ],
     [
       "figures_writer",
@@ -243,6 +249,12 @@
     [
       "inputnode",
       "output_dir",
+      "check_outputs",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
       "dataset_description",
       "output_dir"
     ],
@@ -399,6 +411,12 @@
     [
       "inputnode",
       "session_id",
+      "check_outputs",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
       "dce_mean_sink",
       "session"
     ],
@@ -419,6 +437,12 @@
       "session_id",
       "ktrans_map_sink",
       "session"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "check_outputs",
+      "source_file"
     ],
     [
       "inputnode",
@@ -484,6 +508,12 @@
       "inputnode",
       "subject_id",
       "base_perf_no_ktrans_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "check_outputs",
       "subject"
     ],
     [
@@ -628,6 +658,21 @@
         "meta_dict"
       ]
     },
+    "check_outputs": {
+      "input_names": [
+        "figure_dependencies",
+        "map_stems",
+        "output_dir",
+        "required_stem",
+        "session",
+        "source_file",
+        "subject",
+        "written_files"
+      ],
+      "output_names": [
+        "written_files"
+      ]
+    },
     "dataset_description": {
       "input_names": [
         "_trigger",
@@ -732,6 +777,7 @@
     "base_minimal_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "base_perf_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "base_perf_no_ktrans_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "check_outputs": "8d8fc8b7353888144cefa6d967833da21db26cb25ccf8613cc869c5a50e150c1",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "dce_mean_meta": "1c6572f5bbe00a0d945d34494afcdfc78ef65d8b9a5b34d19562c0c63259ffdd",
     "dce_mean_sink": "e3559021d0c32100066320a2a676bf2ca1b4670f0c194a7a66b0b7d3adf6312a",
@@ -763,6 +809,10 @@
       "n_procs": 1
     },
     "base_perf_no_ktrans_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "check_outputs": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -848,6 +898,31 @@
       "minimal": false,
       "pk_dependent": false
     },
+    "check_outputs": {
+      "map_stems": [
+        "desc-dceDelay_stat",
+        "desc-dceKtrans_stat",
+        "desc-dceVe_stat",
+        "desc-dceKep_stat",
+        "desc-dceVp_stat",
+        "desc-dceFp_stat",
+        "desc-dcePS_stat",
+        "desc-dceE_stat",
+        "desc-dceStandardErrorKtrans_stat",
+        "desc-dceStandardErrorVe_stat",
+        "desc-dceStandardErrorVp_stat",
+        "desc-dceStandardErrorFp_stat",
+        "desc-dceStandardErrorPS_stat",
+        "desc-dcePosteriorSDKtrans_stat",
+        "desc-dcePosteriorSDVe_stat",
+        "desc-dcePosteriorSDVp_stat",
+        "desc-dcePosteriorSDFp_stat",
+        "desc-dcePosteriorSDPS_stat",
+        "desc-dceModelSelection_dseg",
+        "desc-dceDeltaBIC_stat"
+      ],
+      "required_stem": "desc-dceKtrans_stat"
+    },
     "dce_mean_meta": {
       "function_str": "def _build_dce_mean_meta(\n    base: dict,\n    qc_metrics: dict | None = None,\n    motion_correct: bool = True,\n) -> dict:\n    \"\"\"Build metadata for the temporal mean across all acquired DCE volumes.\"\"\"\n    from pmriprep.utils.sidecar_builders import scope_dce_map_processing\n\n    out = dict(base)\n    out.update({\n        \"Description\": \"Temporal mean across all acquired DCE volumes\",\n        \"TemporalAggregation\": \"arithmetic_mean_all_acquired_volumes\",\n        \"IncludesPostContrastVolumes\": True,\n        \"MotionCorrectionApplied\": bool(motion_correct),\n        \"SkullStripped\": False,\n    })\n    preprocessing = (qc_metrics or {}).get(\"preprocessing\", {})\n    if isinstance(preprocessing, dict):\n        n_volumes = preprocessing.get(\"n_volumes\")\n        if n_volumes is not None:\n            out[\"NumberOfVolumes\"] = int(n_volumes)\n        baseline_frames = preprocessing.get(\n            \"baseline_frames_used\", preprocessing.get(\"baseline_frames\")\n        )\n        if baseline_frames is not None:\n            out[\"BaselineFrames\"] = int(baseline_frames)\n    scope_dce_map_processing(out, \"mean\")\n    return out\n",
       "motion_correct": false
@@ -927,6 +1002,10 @@
     ],
     [
       "base_perf_no_ktrans_meta",
+      "Function"
+    ],
+    [
+      "check_outputs",
       "Function"
     ],
     [

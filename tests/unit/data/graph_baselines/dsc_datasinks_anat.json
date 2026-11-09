@@ -109,6 +109,12 @@
       "in4"
     ],
     [
+      "check_outputs",
+      "written_files",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
       "dataset_description",
       "dd_path",
       "outputnode",
@@ -123,8 +129,8 @@
     [
       "dd_merge",
       "out",
-      "dataset_description",
-      "_trigger"
+      "check_outputs",
+      "written_files"
     ],
     [
       "figures_writer",
@@ -369,6 +375,12 @@
     [
       "inputnode",
       "output_dir",
+      "check_outputs",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
       "dataset_description",
       "output_dir"
     ],
@@ -561,6 +573,12 @@
     [
       "inputnode",
       "session_id",
+      "check_outputs",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
       "figures_writer",
       "session_id"
     ],
@@ -586,6 +604,12 @@
       "inputnode",
       "source_dsc",
       "brain_mask_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "check_outputs",
       "source_file"
     ],
     [
@@ -832,6 +856,12 @@
       "inputnode",
       "subject_id",
       "base_perf_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "check_outputs",
       "subject"
     ],
     [
@@ -1098,6 +1128,21 @@
       ],
       "output_names": [
         "meta_dict"
+      ]
+    },
+    "check_outputs": {
+      "input_names": [
+        "figure_dependencies",
+        "map_stems",
+        "output_dir",
+        "required_stem",
+        "session",
+        "source_file",
+        "subject",
+        "written_files"
+      ],
+      "output_names": [
+        "written_files"
       ]
     },
     "dataset_description": {
@@ -1377,6 +1422,7 @@
     "base_minimal_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "brain_mask_dsc_meta": "536189bc59856981221ce5b8d23f031a37da882a2f71322d78a76c782a6a2e6e",
+    "check_outputs": "8d8fc8b7353888144cefa6d967833da21db26cb25ccf8613cc869c5a50e150c1",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "flair_in_dsc_meta": "2be50df0a288609ad38afb8ac5759b04121182bab4037254f398acb0bd917196",
     "flair_postcon_in_dsc_meta": "2be50df0a288609ad38afb8ac5759b04121182bab4037254f398acb0bd917196",
@@ -1414,6 +1460,10 @@
       "n_procs": 1
     },
     "brain_mask_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "check_outputs": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -1581,6 +1631,27 @@
       ],
       "space": "dscref",
       "suffix": "mask"
+    },
+    "check_outputs": {
+      "map_stems": [
+        "desc-dscMtt_stat",
+        "desc-dscTmax_stat",
+        "desc-dscPsr_stat",
+        "desc-dscRelCbf_stat",
+        "desc-dscRelCbv_stat",
+        "desc-dscRelAUCCbv_stat",
+        "desc-dscTtp_stat",
+        "desc-dscCnr_stat",
+        "desc-dscTsnr_stat",
+        "desc-dscK2_stat",
+        "desc-dscNawmNormCbv_stat",
+        "desc-dscNawmNormCbf_stat",
+        "desc-dscArrivalDelay_stat",
+        "desc-dscPosteriorSDCbf_stat",
+        "desc-dscParametricRsquared_stat",
+        "desc-dscFallback_mask"
+      ],
+      "required_stem": "desc-dscRelAUCCbv_stat"
     },
     "dd_merge": {
       "axis": "vstack",
@@ -1839,6 +1910,10 @@
     [
       "brain_mask_dsc_sink",
       "PMRIPrepDataSink"
+    ],
+    [
+      "check_outputs",
+      "Function"
     ],
     [
       "dataset_description",

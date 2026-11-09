@@ -11,6 +11,130 @@ import pytest
 from traits.trait_base import Undefined
 
 
+@pytest.mark.parametrize("modality,mode", [
+    ("dce", "2cxm"), ("dce", "auto"), ("dsc", "cpi"), ("dsc", "oSVD"),
+])
+def test_reused_perfusion_outputs_warn_without_altering_leftovers(
+    tmp_path: Path, modality: str, mode: str, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Real writers and serialized checks preserve files and report leftovers."""
+    from pmriprep.workflows.dce.datasinks import (
+        _copy_perf_map as copy_dce,
+        init_dce_datasinks_wf,
+    )
+    from pmriprep.workflows.dsc.datasinks import (
+        _copy_perf_map as copy_dsc,
+        init_dsc_datasinks_wf,
+    )
+
+    out = tmp_path / "out"
+    kwargs = dict(output_dir=str(out), bids_dir=str(tmp_path), subject_id="01", session_id="01")
+    if modality == "dce":
+        wf = init_dce_datasinks_wf(**kwargs, pk_model=mode, inference="bls" if mode == "2cxm" else "vi")
+        descs = [("dce", "Ktrans", "stat")]
+        if mode == "2cxm":
+            descs += [("dceStandardError", "Fp", "stat"), ("dce", "Fp", "stat")]
+        else:
+            descs += [("dcePosteriorSD", "Ktrans", "stat"), ("dceModelSelection", "", "dseg")]
+        copy_map = copy_dce
+    else:
+        wf = init_dsc_datasinks_wf(**kwargs, deconvolution_method=mode)
+        descs = [("dscRelAUC", "cbv", "stat")]
+        if mode == "cpi":
+            descs += [("dsc", "arrivalDelay", "stat"), ("dscPosteriorSD", "cbf", "stat")]
+        else:
+            descs += [("dsc", "tmax", "stat")]
+        copy_map = copy_dsc
+
+    check = wf.get_node("check_outputs")
+    assert check.interface._always_run
+    prefix = "sub-01_ses-01_acq-fast_run-1"
+    source = tmp_path / f"{prefix}_{modality}.nii.gz"
+    source.write_bytes(b"current map bytes")
+    ses = out / "pmriprep" / "sub-01" / "ses-01"
+    perf = ses / "perf"
+    perf.mkdir(parents=True)
+    figures = ses / "figures"
+    figures.mkdir()
+    owned = set()
+    for stem in check.inputs.map_stems:
+        for extension in (".nii.gz", ".json"):
+            path = perf / f"{prefix}_{stem}{extension}"
+            path.write_bytes(b"obsolete")
+            owned.add(path)
+    selection_figure = figures / f"{prefix}_desc-modelselection_dce.png"
+    if modality == "dce":
+        selection_figure.write_bytes(b"figure")
+    sentinels = [
+        perf / f"sub-01_ses-01_acq-fast_run-2_{check.inputs.required_stem}.nii.gz",
+        perf / f"{prefix}_desc-userCustom_stat.json",
+        perf / f"{prefix}_desc-{'dscMtt' if modality == 'dce' else 'dceKtrans'}_stat.nii.gz",
+    ]
+    for path in sentinels:
+        path.write_bytes(b"preserve")
+
+    anchor_image = perf / f"{prefix}_desc-{modality}Preproc_{modality}.nii.gz"
+    anchor_image.write_bytes(b"preprocessed")
+    anchor = anchor_image.with_name(anchor_image.name[:-7] + ".json")
+    anchor_metadata = {"QCProcessingWarnings": ["Unrelated advisory"], "PipelineQC": {}}
+    anchor.write_text(json.dumps(anchor_metadata))
+    check.inputs.output_dir = str(out)
+    check.inputs.subject = "01"
+    check.inputs.session = "01"
+    check.inputs.source_file = str(source)
+    check.inputs.written_files = [str(anchor_image), "", Undefined, [None]]
+    caplog.clear()
+    check.interface.run(cwd=str(tmp_path))
+    assert not caplog.records, "Preprocessing-only export cannot establish stale fits"
+    assert json.loads(anchor.read_text()) == anchor_metadata
+
+    written = [copy_map(
+        in_file=str(source), output_dir=str(out), subject="01", session="01",
+        desc=desc, suffix=suffix, bids_suffix=bids_suffix,
+        meta_dict={"Sources": [str(source)]},
+    ) for desc, suffix, bids_suffix in descs]
+    current = {Path(p) for p in written}
+    current |= {p.with_name(p.name[:-7] + ".json") for p in current}
+    before = {p: p.read_bytes() for p in ses.rglob("*") if p.is_file()}
+    warning_prefix = "These files were not produced by the current run and may contain earlier results: "
+    written.append(str(anchor_image))
+    check.inputs.written_files = [written, "", Undefined]
+    for _ in range(2):
+        caplog.clear()
+        result = check.interface.run(cwd=str(tmp_path))
+        assert result.outputs.written_files == written
+        assert all(p.read_bytes() == data for p, data in before.items())
+        warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        warning = warnings[0]
+        expected = {str(p.relative_to(ses)) for p in owned - current}
+        if modality == "dce" and mode == "2cxm":
+            expected.add(str(selection_figure.relative_to(ses)))
+        assert set(warning.removeprefix(warning_prefix).split(", ")) == expected
+        assert any(r.levelno == logging.WARNING and r.message == warning for r in caplog.records)
+
+    from pmriprep.utils.report_utils import generate_unified_report
+
+    report = ses / "sub-01_ses-01.html"
+    generate_unified_report("01", "01", str(report), str(ses), str(figures), {modality: True})
+    html = report.read_text()
+    assert "Unrelated advisory" in html and warning_prefix not in html
+    assert all(p.read_bytes() == data for p, data in before.items())
+    if modality == "dce":
+        assert selection_figure.read_bytes() == b"figure"
+
+    # Simulate manual relocation of leftovers; the next check logs no warning.
+    archive = tmp_path / "manual_archive"
+    archive.mkdir()
+    for filename in expected:
+        path = ses / filename
+        path.rename(archive / path.name)
+    caplog.clear()
+    check.interface.run(cwd=str(tmp_path))
+    assert not caplog.records
+    assert json.loads(anchor.read_text()) == anchor_metadata
+
+
 def test_dce_transform_sink_names_both_directions(tmp_path: Path) -> None:
     """DCE X5 filenames must describe the transform direction they contain."""
     from pmriprep.workflows.dce.datasinks import _copy_dce_xfm

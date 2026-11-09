@@ -36,6 +36,95 @@ PMRIPREP_CODE_URL: Final[str] = "https://github.com/arulseh/pmriprep"
 # -----------------------------------------------------------------------
 
 
+def warn_unproduced_perfusion_outputs(
+    output_dir: str,
+    subject: str,
+    session: str,
+    source_file: str,
+    map_stems: list[str],
+    required_stem: str,
+    figure_dependencies: dict[str, str],
+    written_files: list,
+) -> list[str]:
+    """Warn about leftover maps after the current acquisition's sinks complete.
+
+    Parameters
+    ----------
+    output_dir : str
+        Derivatives parent directory containing ``pmriprep``.
+    subject, session : str
+        Output subject and optional session identifiers.
+    source_file : str
+        Source image whose entities scope the check to one acquisition.
+    map_stems : list of str
+        Exact owned map tails, starting with ``desc-`` and excluding extensions.
+    required_stem : str
+        Map tail that must have been written before checking for leftovers.
+        A completed fitting export establishes which fit outputs are current.
+    figure_dependencies : dict of str to str
+        Owned map tails and their dependent figure tails, including extension.
+    written_files : list
+        Joined sink results, possibly nested and containing empty outputs.
+
+    Returns
+    -------
+    list of str
+        Flattened current sink results for the downstream completion barrier.
+
+    Notes
+    -----
+    The warning lists session-relative paths of recognized files absent from
+    the current writer results.
+    """
+    import logging
+    from pathlib import Path
+
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    def flatten(items: list) -> list[str]:
+        files: list[str] = []
+        for item in items:
+            if isinstance(item, (list, tuple)):
+                files.extend(flatten(list(item)))
+            elif isinstance(item, str) and item:
+                files.append(item)
+        return files
+
+    files = flatten(written_files)
+    current = {Path(file).absolute() for file in files}
+    root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
+    if session:
+        root /= f"ses-{session}"
+    prefix = source_entity_prefix(source_file, subject, session)
+    required = root / "perf" / f"{prefix}_{required_stem}.nii.gz"
+    if required.absolute() not in current:
+        return files
+
+    for tail in [*map_stems, required_stem, *figure_dependencies.values()]:
+        if not tail.startswith("desc-") or Path(tail).name != tail:
+            raise ValueError(f"Invalid owned derivative tail: {tail}")
+    if not set(figure_dependencies).issubset(map_stems):
+        raise ValueError("Figure dependencies must name owned maps")
+    leftovers: list[str] = []
+    for stem in map_stems:
+        image = root / "perf" / f"{prefix}_{stem}.nii.gz"
+        if image.absolute() in current:
+            continue
+        candidates = [image, image.with_name(f"{prefix}_{stem}.json")]
+        if stem in figure_dependencies:
+            candidates.append(root / "figures" / f"{prefix}_{figure_dependencies[stem]}")
+        for path in candidates:
+            if path.is_file() or path.is_symlink():
+                leftovers.append(str(path.relative_to(root)))
+
+    warning_prefix = "These files were not produced by the current run and may contain earlier results: "
+    warning = warning_prefix + ", ".join(sorted(set(leftovers))) if leftovers else None
+    if warning:
+        logging.getLogger("nipype.workflow").warning("%s", warning)
+
+    return files
+
+
 def _dataset_description_locked(func: Any) -> Any:
     """Serialize dataset-description updates across pipeline writer processes."""
     @wraps(func)

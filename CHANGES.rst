@@ -1,3 +1,12 @@
+1.0.0rc6.dev49 (2026-11-10)
+===========================
+
+* FIX: Warn in logs when known unsmoothed DSC/DCE fit outputs
+  remain in the derivatives directory but were not produced by the current
+  run. Files and image sidecars are preserved. Reports use the latest figure
+  outputs for each pipeline, including cached or reused results, rather than
+  displaying leftover optional figures from earlier processing settings.
+
 1.0.0rc6.dev48 (2026-11-09)
 ===========================
 

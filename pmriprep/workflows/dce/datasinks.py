@@ -26,6 +26,7 @@ from pmriprep.interfaces.qc_writers import (
     PMRIPrepDataSink,
     write_dataset_description_node,
 )
+from pmriprep.utils.outputs import warn_unproduced_perfusion_outputs
 
 
 # ---------------------------------------------------------------------------
@@ -2343,6 +2344,37 @@ def init_dce_datasinks_wf(
         figures_writer, "aif_curve_txt", merge, f"in{len(sink_outputs) + 1}",
     )
 
+    output_check = pe.Node(
+        niu.Function(
+            input_names=[
+                "output_dir", "subject", "session", "source_file", "map_stems",
+                "required_stem", "figure_dependencies", "written_files",
+            ],
+            output_names=["written_files"], function=warn_unproduced_perfusion_outputs,
+        ),
+        name="check_outputs",
+    )
+    output_check.inputs.map_stems = [
+        f"desc-{spec.desc}{spec.suffix[:1].upper()}{spec.suffix[1:]}_{spec.bids_suffix}"
+        for spec in _PK_MAPS
+    ] + [
+        f"desc-{desc}{spec.suffix[:1].upper()}{spec.suffix[1:]}_{spec.bids_suffix}"
+        for desc in ("dceStandardError", "dcePosteriorSD")
+        for spec in _UNCERTAINTY_MAPS
+    ] + ["desc-dceModelSelection_dseg", "desc-dceDeltaBIC_stat"]
+    output_check.inputs.required_stem = "desc-dceKtrans_stat"
+    output_check.inputs.figure_dependencies = {
+        "desc-dceModelSelection_dseg": "desc-modelselection_dce.png",
+    }
+    output_check._interface._always_run = True
+    workflow.connect([
+        (inputnode, output_check, [
+            ("output_dir", "output_dir"), ("subject_id", "subject"),
+            ("session_id", "session"), ("source_dce", "source_file"),
+        ]),
+        (merge, output_check, [("out", "written_files")]),
+    ])
+
     dd_node = pe.Node(
         niu.Function(
             input_names=["output_dir", "bids_dir", "_trigger"],
@@ -2365,7 +2397,7 @@ def init_dce_datasinks_wf(
             ("output_dir", "output_dir"),
             ("bids_dir", "bids_dir"),
         ]),
-        (merge, dd_node, [("out", "_trigger")]),
+        (output_check, dd_node, [("written_files", "_trigger")]),
     ])
 
     outputnode = pe.Node(

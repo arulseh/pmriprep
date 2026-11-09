@@ -4,7 +4,8 @@
 the resume-sidecar writers) has finished. The four ``init_*_datasinks_wf``
 factories source ``done`` from ``dd_node.dd_path`` so that the barrier
 inherits the join semantics of ``dd_merge`` (which gathers every
-``sink_outputs`` entry plus ``figures_writer``).
+``sink_outputs`` entry plus ``figures_writer``). Perfusion workflows check for
+leftover outputs between that join and the dataset-description writer.
 
 If a future change re-routes ``done`` from a single ``figures_writer``
 output, ``unified_report`` can race ahead of the resume-sink and read
@@ -16,6 +17,7 @@ import json
 from pathlib import Path
 
 import networkx as nx
+import pytest
 
 
 def _write_bids(tmp_path: Path) -> Path:
@@ -32,6 +34,24 @@ def _ancestors_of(wf, target_name: str) -> set[str]:
     """Return the set of node names upstream of ``target_name`` in ``wf._graph``."""
     target = next(n for n in wf._graph.nodes if n.name == target_name)
     return {n.name for n in nx.ancestors(wf._graph, target)}
+
+
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+def test_perfusion_output_check_joins_all_writers_before_report(tmp_path: Path, modality: str) -> None:
+    """Output checks follow writers and precede report generation."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+    from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+    _write_bids(tmp_path)
+    kwargs = dict(output_dir=str(tmp_path / "out"), bids_dir=str(tmp_path / "bids"),
+                  subject_id="01", session_id="0001")
+    wf = (init_dce_datasinks_wf(**kwargs, pk_model="auto", inference="bls")
+          if modality == "dce" else init_dsc_datasinks_wf(**kwargs))
+    assert "check_outputs" in _ancestors_of(wf, "dataset_description")
+    before = _ancestors_of(wf, "check_outputs")
+    assert {"dd_merge", "figures_writer"} <= before
+    assert {n.name for n in wf._graph if n.name.endswith("_sink")} <= before
+    assert "check_outputs" in _ancestors_of(wf, "outputnode")
 
 
 def test_anat_done_barrier_routed_through_dd_node(tmp_path: Path) -> None:

@@ -49,6 +49,12 @@
       "base"
     ],
     [
+      "check_outputs",
+      "written_files",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
       "dataset_description",
       "dd_path",
       "outputnode",
@@ -63,8 +69,8 @@
     [
       "dd_merge",
       "out",
-      "dataset_description",
-      "_trigger"
+      "check_outputs",
+      "written_files"
     ],
     [
       "figures_writer",
@@ -232,6 +238,12 @@
       "inputnode",
       "output_dir",
       "aif_mask_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "check_outputs",
       "output_dir"
     ],
     [
@@ -441,6 +453,12 @@
     [
       "inputnode",
       "session_id",
+      "check_outputs",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
       "figures_writer",
       "session_id"
     ],
@@ -479,6 +497,12 @@
       "session_id",
       "tmax_map_sink",
       "session"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "check_outputs",
+      "source_file"
     ],
     [
       "inputnode",
@@ -538,6 +562,12 @@
       "inputnode",
       "subject_id",
       "base_perf_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "check_outputs",
       "subject"
     ],
     [
@@ -748,6 +778,21 @@
         "meta_dict"
       ]
     },
+    "check_outputs": {
+      "input_names": [
+        "figure_dependencies",
+        "map_stems",
+        "output_dir",
+        "required_stem",
+        "session",
+        "source_file",
+        "subject",
+        "written_files"
+      ],
+      "output_names": [
+        "written_files"
+      ]
+    },
     "dataset_description": {
       "input_names": [
         "_trigger",
@@ -934,6 +979,7 @@
     "aif_mask_sink": "535f2d84817f7b9f24868f532d9d89d4767f8febedacd08fa5da671bbf5fb23e",
     "base_minimal_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
+    "check_outputs": "8d8fc8b7353888144cefa6d967833da21db26cb25ccf8613cc869c5a50e150c1",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "mean_meta": "c3ac3b781c177b50dec5c9a48981d84936b55e91ec0d95b0f688b616fce3c91c",
     "mean_sink": "9e5269e02a7eed631efed58c32c22386342953340dd82a149bc88f3a7d9f7bee",
@@ -966,6 +1012,10 @@
       "n_procs": 1
     },
     "base_perf_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "check_outputs": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -1063,6 +1113,27 @@
     "base_perf_meta": {
       "function_str": "def _build_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar\n\n    return build_dsc_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n    )\n",
       "minimal": false
+    },
+    "check_outputs": {
+      "map_stems": [
+        "desc-dscMtt_stat",
+        "desc-dscTmax_stat",
+        "desc-dscPsr_stat",
+        "desc-dscRelCbf_stat",
+        "desc-dscRelCbv_stat",
+        "desc-dscRelAUCCbv_stat",
+        "desc-dscTtp_stat",
+        "desc-dscCnr_stat",
+        "desc-dscTsnr_stat",
+        "desc-dscK2_stat",
+        "desc-dscNawmNormCbv_stat",
+        "desc-dscNawmNormCbf_stat",
+        "desc-dscArrivalDelay_stat",
+        "desc-dscPosteriorSDCbf_stat",
+        "desc-dscParametricRsquared_stat",
+        "desc-dscFallback_mask"
+      ],
+      "required_stem": "desc-dscRelAUCCbv_stat"
     },
     "dd_merge": {
       "axis": "vstack",
@@ -1165,6 +1236,10 @@
     ],
     [
       "base_perf_meta",
+      "Function"
+    ],
+    [
+      "check_outputs",
       "Function"
     ],
     [

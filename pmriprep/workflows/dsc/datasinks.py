@@ -23,6 +23,7 @@ from pmriprep.interfaces.qc_writers import (
     PMRIPrepDataSink,
     write_dataset_description_node,
 )
+from pmriprep.utils.outputs import warn_unproduced_perfusion_outputs
 
 
 # ---------------------------------------------------------------------------
@@ -2016,6 +2017,35 @@ def init_dsc_datasinks_wf(
         figures_writer, "aif_curve_txt", merge, f"in{len(sink_outputs) + 1}",
     )
 
+    output_check = pe.Node(
+        niu.Function(
+            input_names=[
+                "output_dir", "subject", "session", "source_file", "map_stems",
+                "required_stem", "figure_dependencies", "written_files",
+            ],
+            output_names=["written_files"], function=warn_unproduced_perfusion_outputs,
+        ),
+        name="check_outputs",
+    )
+    output_check.inputs.map_stems = [
+        f"desc-{spec.desc}{spec.suffix[:1].upper()}{spec.suffix[1:]}_stat"
+        for spec in (*_CORE_MAPS, *_REL_MAPS, *_OPTIONAL_MAPS,
+                     *_NORMALIZED_MAPS, _ARRIVAL_DELAY_MAP)
+    ] + [
+        f"desc-dscPosteriorSD{spec.suffix[:1].upper()}{spec.suffix[1:]}_stat"
+        for spec in _UNCERTAINTY_MAPS
+    ] + ["desc-dscParametricRsquared_stat", "desc-dscFallback_mask"]
+    output_check.inputs.required_stem = "desc-dscRelAUCCbv_stat"
+    output_check.inputs.figure_dependencies = {}
+    output_check._interface._always_run = True
+    workflow.connect([
+        (inputnode, output_check, [
+            ("output_dir", "output_dir"), ("subject_id", "subject"),
+            ("session_id", "session"), ("source_dsc", "source_file"),
+        ]),
+        (merge, output_check, [("out", "written_files")]),
+    ])
+
     dd_node = pe.Node(
         niu.Function(
             input_names=["output_dir", "bids_dir", "_trigger"],
@@ -2038,7 +2068,7 @@ def init_dsc_datasinks_wf(
             ("output_dir", "output_dir"),
             ("bids_dir", "bids_dir"),
         ]),
-        (merge, dd_node, [("out", "_trigger")]),
+        (output_check, dd_node, [("written_files", "_trigger")]),
     ])
 
     outputnode = pe.Node(

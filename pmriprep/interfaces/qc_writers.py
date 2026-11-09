@@ -11,7 +11,8 @@ DataSink model:
   per-pipeline figure filmstrips into ``figures/`` and write the
   AIF-curve TSV companion sidecar (DSC/DCE). All QC summary JSONs live
   on the canonical per-image sidecars (the ``QC*`` flat keys on the
-  preproc / probseg / dseg sidecars).
+  preproc / probseg / dseg sidecars). A per-pipeline figure index under logs
+  records which report figures were produced.
 """
 from __future__ import annotations
 
@@ -86,9 +87,10 @@ class AnatFiguresWriter(SimpleInterface):
 
     input_spec = AnatFiguresWriterInputSpec
     output_spec = AnatFiguresWriterOutputSpec
+    _always_run = True
 
     def _run_interface(self, runtime: Any) -> Any:
-        from pmriprep.utils.report_utils import figure_filename
+        from pmriprep.utils.report_utils import figure_filename, write_report_figure_index
 
         output_dir = Path(self.inputs.output_dir)
         subject = self.inputs.subject_id
@@ -109,13 +111,16 @@ class AnatFiguresWriter(SimpleInterface):
             "coreg_flair": self.inputs.coreg_filmstrip_flair,
             "coreg_flair_postcon": self.inputs.coreg_filmstrip_flair_postcon,
         }
+        current_figures: dict[str, str] = {}
         for fig_key, src in fig_inputs.items():
             if not isdefined(src) or not src:
                 continue
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "anat")
             shutil.copy2(src, figures_dir / fname)
+            current_figures[fig_key] = f"figures/{fname}"
 
+        write_report_figure_index(ses_dir, "anat", current_figures)
         self._results["figures_dir"] = str(figures_dir)
         return runtime
 
@@ -247,9 +252,10 @@ class TumorSegFiguresWriter(SimpleInterface):
 
     input_spec = TumorSegFiguresWriterInputSpec
     output_spec = TumorSegFiguresWriterOutputSpec
+    _always_run = True
 
     def _run_interface(self, runtime: Any) -> Any:
-        from pmriprep.utils.report_utils import figure_filename
+        from pmriprep.utils.report_utils import figure_filename, write_report_figure_index
 
         output_dir = Path(self.inputs.output_dir)
         subject = self.inputs.subject_id
@@ -265,13 +271,16 @@ class TumorSegFiguresWriter(SimpleInterface):
             "seg_flair": self.inputs.seg_filmstrip_flair,
             "nawm_flair": self.inputs.nawm_filmstrip_flair,
         }
+        current_figures: dict[str, str] = {}
         for fig_key, src in fig_inputs.items():
             if not isdefined(src) or not src:
                 continue
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "tumor_seg")
             shutil.copy2(src, figures_dir / fname)
+            current_figures[fig_key] = f"figures/{fname}"
 
+        write_report_figure_index(ses_dir, "tumor_seg", current_figures)
         self._results["done"] = "done"
         return runtime
 
@@ -343,13 +352,14 @@ class DSCFiguresWriter(SimpleInterface):
 
     input_spec = DSCFiguresWriterInputSpec
     output_spec = DSCFiguresWriterOutputSpec
+    _always_run = True
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.outputs import (
             par_to_confounds_tsv,
             write_confounds_sidecar,
         )
-        from pmriprep.utils.report_utils import figure_filename
+        from pmriprep.utils.report_utils import figure_filename, write_report_figure_index
 
         output_dir = Path(self.inputs.output_dir)
         subject = self.inputs.subject_id
@@ -402,6 +412,7 @@ class DSCFiguresWriter(SimpleInterface):
             self._results["confounds_tsv"] = str(tsv_path)
 
         figures_dir = ses_dir / "figures"
+        current_figures: dict[str, str] = {}
         for fig_key, attr in _DSC_FIGURE_KEYS.items():
             src = getattr(self.inputs, attr)
             if not isdefined(src) or not src:
@@ -411,7 +422,11 @@ class DSCFiguresWriter(SimpleInterface):
             base_prefix = source_entity_prefix(None, subject, session)
             fname = prefix + fname[len(base_prefix):]
             shutil.copy2(src, figures_dir / fname)
+            current_figures[fig_key] = f"figures/{fname}"
 
+        write_report_figure_index(
+            ses_dir, "dsc", current_figures, f"perf/{prefix}_desc-dscPreproc_dsc.json",
+        )
         return runtime
 
 
@@ -491,13 +506,14 @@ class DCEFiguresWriter(SimpleInterface):
 
     input_spec = DCEFiguresWriterInputSpec
     output_spec = DCEFiguresWriterOutputSpec
+    _always_run = True
 
     def _run_interface(self, runtime: Any) -> Any:
         from pmriprep.utils.outputs import (
             par_to_confounds_tsv,
             write_confounds_sidecar,
         )
-        from pmriprep.utils.report_utils import figure_filename
+        from pmriprep.utils.report_utils import figure_filename, write_report_figure_index
 
         output_dir = Path(self.inputs.output_dir)
         subject = self.inputs.subject_id
@@ -550,24 +566,7 @@ class DCEFiguresWriter(SimpleInterface):
             )
             self._results["confounds_tsv"] = str(tsv_path)
 
-        # Stale AIF location figure cleanup (population/external AIF)
-        qc_metrics = self.inputs.qc_metrics
-        if isdefined(qc_metrics) and qc_metrics:
-            aif_detection = qc_metrics.get("aif_detection")
-            method = (
-                aif_detection.get("detection_method", "unknown")
-                if isinstance(aif_detection, dict)
-                else "unknown"
-            )
-            if method in ("population", "external"):
-                stale_name = figure_filename(
-                    subject, session, "aif_location", "dce",
-                )
-                base_prefix = source_entity_prefix(None, subject, session)
-                stale = figures_dir / (prefix + stale_name[len(base_prefix):])
-                if stale.exists():
-                    stale.unlink()
-
+        current_figures: dict[str, str] = {}
         for fig_key, attr in _DCE_FIGURE_KEYS.items():
             src = getattr(self.inputs, attr)
             if not isdefined(src) or not src:
@@ -577,7 +576,11 @@ class DCEFiguresWriter(SimpleInterface):
             base_prefix = source_entity_prefix(None, subject, session)
             fname = prefix + fname[len(base_prefix):]
             shutil.copy2(src, figures_dir / fname)
+            current_figures[fig_key] = f"figures/{fname}"
 
+        write_report_figure_index(
+            ses_dir, "dce", current_figures, f"perf/{prefix}_desc-dcePreproc_dce.json",
+        )
         return runtime
 
 

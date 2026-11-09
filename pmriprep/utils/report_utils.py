@@ -999,6 +999,39 @@ def figure_filename(
     return "_".join(parts)
 
 
+def write_report_figure_index(
+    ses_dir: Path,
+    pipeline: str,
+    figures: dict[str, str],
+    anchor: str | None = None,
+) -> None:
+    """Record the latest figure-writer outputs for report regeneration.
+
+    Parameters
+    ----------
+    ses_dir : Path
+        Derivative session directory.
+    pipeline : str
+        Pipeline name.
+    figures : dict of str to str
+        Report image keys and session-relative figure paths actually written.
+        An empty mapping explicitly records that no figures were produced.
+    anchor : str, optional
+        Session-relative perfusion sidecar for the acquisition just processed.
+
+    Notes
+    -----
+    Report bookkeeping lives under logs. Reusing a pipeline's outputs
+    preserves its index until its figure writer runs again.
+    """
+    logs = ses_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    record: dict[str, Any] = {"figures": figures}
+    if anchor is not None:
+        record["anchor"] = anchor
+    (logs / f"report_{pipeline}.json").write_text(json.dumps(record, indent=2) + "\n")
+
+
 def _collect_pipeline_images(
     subject_id: str,
     session_id: str,
@@ -1007,8 +1040,8 @@ def _collect_pipeline_images(
 ) -> dict[str, str]:
     """Collect figure relative paths for a single pipeline.
 
-    Scans *figures_dir* for matching files and returns relative paths
-    suitable for ``<img src="...">`` in the HTML report (NiPreps pattern).
+    Uses the latest figure-writer index when available and filename discovery
+    otherwise. Returns paths suitable for HTML images.
 
     Parameters
     ----------
@@ -1027,6 +1060,16 @@ def _collect_pipeline_images(
         Dict mapping image key to relative path string
         (e.g. ``figures/sub-01_ses-01_desc-brainmask_dsc.png``).
     """
+    index = figures_dir.parent / "logs" / f"report_{pipeline}.json"
+    if index.is_file():
+        recorded = _read_json_safe(index).get("figures", {})
+        return {
+            key: value for key, value in recorded.items()
+            if key in _PIPELINE_FIGURE_KEYS.get(pipeline, [])
+            and isinstance(value, str) and Path(value).parent == Path("figures")
+            and (figures_dir.parent / value).is_file()
+        }
+
     prefix_parts = [f"sub-{subject_id}"]
     if session_id:
         prefix_parts.append(f"ses-{session_id}")
@@ -1234,6 +1277,9 @@ def _load_pipeline_sidecars(
     anchor_path = _resolve_bids_anchor(
         ses_dir, anchor_pattern.format(prefix=prefix),
     )
+    recorded_anchor = _read_json_safe(ses_dir / "logs" / f"report_{pipeline}.json").get("anchor")
+    if isinstance(recorded_anchor, str) and Path(recorded_anchor).parent == Path("perf"):
+        anchor_path = ses_dir / recorded_anchor
     anchor = _read_json_safe(anchor_path)
 
     qc_metrics: dict[str, Any] = {}
@@ -1571,7 +1617,8 @@ def generate_unified_report(
     figures_dir : str
         Directory containing figure PNG files.
     ran_pipelines : dict
-        Dict mapping pipeline name to whether it ran.
+        Pipelines processed in this invocation. Saved pipeline results in the
+        session are also included, using their most recent report figures.
     command_string : str, optional
         CLI command used to run PMRIPrep (for reproducibility).
     sloppy : bool, optional
@@ -1605,6 +1652,12 @@ def generate_unified_report(
     if session_id:
         prefix += f"_ses-{session_id}"
 
+    ran_pipelines = {
+        name: ran_pipelines.get(name, False)
+        or any(ses_path.glob(pattern.format(prefix=prefix)))
+        for name, pattern in _PIPELINE_PRESENCE_PROBES.items()
+    }
+
     # Collect data for each pipeline that ran
     pipeline_data: dict[str, Optional[dict[str, Any]]] = {}
     for pipeline_name, did_run in ran_pipelines.items():
@@ -1625,6 +1678,8 @@ def generate_unified_report(
             preproc = qc_metrics.get("preprocessing", {})
             b1 = qc_metrics.get("b1_mapping", {})
             pk = qc_metrics.get("pk_modeling", {})
+            if pk.get("selection_mode") == "fixed":
+                images.pop("model_selection_qc", None)
             cbv_c = qc_metrics.get("cbv_constraint", {})
             display_status = {
                 # Signal quality
