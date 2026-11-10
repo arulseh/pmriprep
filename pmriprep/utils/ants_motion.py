@@ -114,6 +114,29 @@ def motion_parameters(pull_lps: Array, reference: Any) -> Array:
     return np.asarray(parameters)
 
 
+def same_spatial_grid(first: Any, second: Any) -> bool:
+    """Compare spatial grids within one micrometre at every volume corner.
+
+    Parameters
+    ----------
+    first, second : nibabel spatial image
+        Images whose spatial shape and voxel-to-world geometry are compared.
+
+    Returns
+    -------
+    bool
+        Whether the shapes agree and corner displacements are at most 0.001 mm.
+    """
+    if first.shape[:3] != second.shape[:3]:
+        return False
+    corners = np.array(np.meshgrid(*[
+        (0, size - 1) for size in first.shape[:3]
+    ], indexing="ij")).reshape(3, -1).T
+    displacement = (nib.affines.apply_affine(first.affine, corners)
+                    - nib.affines.apply_affine(second.affine, corners))
+    return bool(np.all(np.linalg.norm(displacement, axis=1) <= 1e-3))
+
+
 def rigid_field_transforms(path: Path, reference: Any, n_frames: int) -> Array:
     """Recover rigid transforms from ANTs fields without loading the full field.
 
@@ -144,7 +167,7 @@ def rigid_field_transforms(path: Path, reference: Any, n_frames: int) -> Array:
         field: Any = nib.load(unpacked, mmap=True)
         if field.shape != (*reference.shape, n_frames, 4):
             raise ValueError(f"Unexpected ANTs field shape: {field.shape}")
-        if not np.allclose(field.affine, reference.affine, rtol=0, atol=1e-5):
+        if not same_spatial_grid(field, reference):
             raise ValueError("ANTs field and reference grids differ")
         shape = reference.shape
         axes = [i for i in range(3) if shape[i] > 1]
@@ -163,7 +186,7 @@ def rigid_field_transforms(path: Path, reference: Any, n_frames: int) -> Array:
             raise ValueError("Nonfinite ANTs displacement field")
         if np.any(displacements[..., 3]) or np.any(heldout[..., 3]):
             raise ValueError("ANTs changed temporal coordinates")
-        affine = _LPS @ reference.affine
+        affine = _LPS @ field.affine
         coordinates = nib.affines.apply_affine(affine, train)
         check_coordinates = nib.affines.apply_affine(affine, check)
         design = np.c_[train[:, axes], np.ones(len(train))]
@@ -226,7 +249,7 @@ def run_motion_correction(
     reference: Any = nib.load(reference_file)
     if len(image.shape) != 4 or image.shape[3] < 1:
         raise ValueError("Motion input must be a nonempty 4D series")
-    if image.shape[:3] != reference.shape or not np.allclose(image.affine, reference.affine, atol=1e-5, rtol=0):
+    if len(reference.shape) != 3 or not same_spatial_grid(image, reference):
         raise ValueError("Motion input and reference grids must match")
     reference_center(reference)
     output = Path(out_file).absolute()
@@ -262,7 +285,7 @@ def run_motion_correction(
     if not apply:
         shutil.copyfile(in_file, output)
     result: Any = nib.load(output)
-    if result.shape != image.shape or not np.allclose(result.affine, image.affine, rtol=0, atol=1e-5):
+    if result.shape != image.shape or not same_spatial_grid(result, image):
         raise ValueError("ANTs output changed the acquisition grid or frame count")
     provenance = {
         "motion_tool": "ANTs", "motion_version": version,

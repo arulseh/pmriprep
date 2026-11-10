@@ -35,6 +35,8 @@
   descriptive AIF laterality. Distinguish AIF detection outcome, confidence
   and QC status in HTML reports.
 * FIX: Save derived DSC/DCE temporal means and concentration images as float32.
+  Accept sub-micrometre header rounding in ANTs motion outputs and recover
+  rigid transforms using the displacement field's physical grid.
   Restrict regional statistics and DSC NAWM normalization to the perfusion brain
   mask while preserving valid zeros and reporting excluded coverage. Include
   signed K2 in DSC regional statistics.

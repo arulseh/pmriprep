@@ -9,7 +9,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from pmriprep.utils.ants_motion import (
-    motion_parameters, rigid_field_transforms, run_motion_correction,
+    motion_parameters, rigid_field_transforms, run_motion_correction, same_spatial_grid,
 )
 from pmriprep.utils.motion import summarize_motion
 
@@ -80,11 +80,36 @@ def test_nonrigid_field_rejected(tmp_path: Path) -> None:
         rigid_field_transforms(path, image, 1)
 
 
+def test_field_header_rounding_preserves_physical_transform(tmp_path: Path) -> None:
+    """Near-identical grids retain rigid motion in the field's physical coordinates."""
+    image = reference((9, 10, 19), np.diag([1.875, 1.875, 3.999989986, 1.]))
+    field_grid = reference(image.shape, np.diag([1.875, 1.875, 4., 1.]))
+    matrices = np.eye(4)[None]
+    matrices[0, :3, :3] = Rotation.from_euler("xyz", [.02, -.03, .01]).as_matrix()
+    matrices[0, :3, 3] = [1., -2., .5]
+    path = tmp_path / "field.nii.gz"
+    write_field(path, field_grid, matrices)
+    np.testing.assert_allclose(rigid_field_transforms(path, image, 1), matrices,
+                               rtol=0, atol=3e-6)
+
+
+def test_spatial_grid_rejects_physical_displacement() -> None:
+    """Grid checks reject both origin shifts and accumulated spacing errors."""
+    image = reference((128, 2, 2), np.eye(4))
+    shifted = image.affine.copy()
+    shifted[0, 3] += .01
+    assert not same_spatial_grid(image, reference(image.shape, shifted))
+    stretched = image.affine.copy()
+    stretched[0, 0] += 9e-6
+    assert not same_spatial_grid(image, reference(image.shape, stretched))
+
+
 @pytest.mark.parametrize("apply", [False, True])
 @pytest.mark.parametrize("threads", [1, 4])
 def test_runner_contract(tmp_path: Path, monkeypatch: Any, apply: bool, threads: int) -> None:
     """The runner preserves settings, frame order, geometry and skipped input bytes."""
-    image = reference((8, 9, 10), np.diag([2., 2., 3., 1.]))
+    image = reference((8, 9, 10), np.diag([2., 2., 3.999989986, 1.]))
+    ants_grid = reference(image.shape, np.diag([2., 2., 4., 1.]))
     ref_file, in_file, out_file = [tmp_path / s for s in ("reference.nii.gz", "input.nii.gz", "output.nii.gz")]
     nib.save(image, ref_file)
     data = np.stack([image.get_fdata() + i * 100 for i in range(3)], axis=-1)
@@ -98,10 +123,10 @@ def test_runner_contract(tmp_path: Path, monkeypatch: Any, apply: bool, threads:
         matrices = np.repeat(np.eye(4)[None], 3, axis=0)
         matrices[:, 0, 3] = [0., 1., 2.]
         prefix = tmp_path / "ants_motion_"
-        write_field(Path(str(prefix) + "Warp.nii.gz"), image, matrices)
-        write_field(Path(str(prefix) + "InverseWarp.nii.gz"), image, np.linalg.inv(matrices))
+        write_field(Path(str(prefix) + "Warp.nii.gz"), ants_grid, matrices)
+        write_field(Path(str(prefix) + "InverseWarp.nii.gz"), ants_grid, np.linalg.inv(matrices))
         if apply:
-            nib.save(nib.Nifti1Image(data + 10, image.affine), out_file)
+            nib.save(nib.Nifti1Image(data + 10, ants_grid.affine), out_file)
 
     monkeypatch.setattr("pmriprep.utils.ants_motion.shutil.which", lambda name: "/bin/antsMotionCorr")
     monkeypatch.setattr("pmriprep.utils.ants_motion.subprocess.run", run)
