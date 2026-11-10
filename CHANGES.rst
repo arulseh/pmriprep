@@ -1,392 +1,72 @@
-1.0.0rc6.dev52 (2026-11-10)
-===========================
+1.0.0rc6 (2026-11-10)
+=====================
+
+* CHG: Use ANTs rigid motion correction for DSC and DCE with a baseline-mean
+  reference and linear resampling. Motion is still estimated for QC when
+  correction is disabled. Use unit temporal weights for DSC/CPI and DCE fitting.
+* ENH: Add local DCE delay correction using in-plane neighbourhood evidence,
+  bounded model fitting and a shared PCHIP arterial input. Emit the selected
+  delay map and run-level support and boundary summaries.
+* ENH: Integrate bounded Patlak, Tofts, Extended Tofts and native compiled 2CXM
+  fitting with reusable convolution calculations and slice-based worker pools.
+  Automatic selection retains the Patlak BIC guard and applies additional
+  2CXM admission checks within its maximum 2-s frame interval. Explicit model
+  selection remains available at coarser sampling.
+* CHG: DCE inference options are ``bls`` (bounded least squares) and ``vi``.
+  VI refines parameters at the selected model and delay, with fallback to the
+  same least-squares fit. MAP/MCMC are no longer pipeline inference options.
+* CHG: Replace ``dce.aif_bat_alignment`` with boolean ``dce.delay_correction``.
+  Use lowercase ``ssvd`` and ``osvd`` DSC configuration identifiers. Make
+  ``--sloppy`` a run-wide, CLI-only testing preset with an HTML warning.
+* CHG: Combine fit quality with primary-parameter identification at the
+  delay-conditional least-squares estimate in the binary DCE QC mask,
+  including VI runs. Preserve fitted maps and disclose the screening policy,
+  parameter-level failure counts and timing limitations of coarse-sampled 2CXM.
+* ENH: Add ``dce.t1_default_ms`` for uniform T1 fallback, with field-dependent
+  range validation. Usable measured or external T1 maps take precedence;
+  record the fallback value and source when it is applied.
+* CHG: Apply pooled AIF quality and amplitude checks to DCE single-voxel
+  selections, and report accepted singletons with reduced confidence. Apply
+  the shared curve-quality checks to DSC single-voxel selections and remove
+  the 3x3x3 neighbourhood retry. Failed DSC detection retains AIF-independent
+  maps; failed DCE detection uses the population AIF.
+* CHG: Require ten candidates across two slices for the DCE excessive-scaling
+  rescue. Remove its bilateral-support exception and use brain symmetry for
+  descriptive AIF laterality. Distinguish AIF detection outcome, confidence
+  and QC status in HTML reports.
+* FIX: Save derived DSC/DCE temporal means and concentration images as float32.
+  Restrict regional statistics and DSC NAWM normalization to the perfusion brain
+  mask while preserving valid zeros and reporting excluded coverage. Include
+  signed K2 in DSC regional statistics.
+* FIX: Keep DCE posterior uncertainty unavailable where VI falls back to least
+  squares, and restrict prior-departure summaries to retained prior-informed
+  fits. Allow DCE fitting to proceed independently of DSC when its prior is
+  disabled or unsupported by the selected model or inference.
+* FIX: Omit SER and IAUC maps and statistics when their acquisition windows
+  are incomplete. Allow smoothed Patlak outputs when native Kep is unavailable.
+* CHG: Scope map sidecars to the processing used by each estimator. Separate
+  AUC-CBV integration from deconvolution metadata, consolidate run-level QC,
+  preserve unavailable measurements as null and use consistent descriptive
+  field names. Correct hematocrit, contrast-agent, dose, baseline, registration,
+  uncertainty and parameter-boundary provenance.
+* CHG: Retain descriptive NAWM statistics and coverage without median-range
+  PASS/WARNING labels. Show motion-correction status beside HTML QC metrics.
+* FIX: Preserve existing derivative files on reruns and warn in the log about
+  known unsmoothed outputs left by different settings. Reports use the latest
+  figure set for each pipeline, including reused anatomy, and omit stale
+  optional panels.
+* CHG: Default to an automatic CPU budget capped at eight and bounded by CPU
+  affinity, Slurm allocation and container quotas. Respect explicit budgets,
+  bound preprocessing threads and workers, and require explicit CPU budgets
+  for remote scheduler plugins. Match GPU HD-BET/HD-GLIO reservations to
+  Nipype's shared CPU/GPU-slot accounting.
+* FIX: Pin SciPy to the verified 1.17.0 release and check the native DCE
+  interfaces at startup and image build time. Include the adapted solver's
+  BSD licence in package and image metadata.
+* DOC: Simplify generated methods while describing recorded processing choices,
+  update ANTs citations and version formatting, and clarify quick-start
+  configuration, inference terminology, GPU examples and brain-MRI requirements.
 
-* FIX: Allow DCE smoothing to finish when native Kep is unavailable, including
-  Patlak-only runs. Optional inputs to the derived-Kep node default to None.
-
-1.0.0rc6.dev51 (2026-11-10)
-===========================
-
-* DOC: Describe the selected DSC deconvolution method directly in generated
-  methods text.
-
-1.0.0rc6.dev50 (2026-11-10)
-===========================
-
-* CHG: Use lowercase ``ssvd`` and ``osvd`` DSC method identifiers in the CLI,
-  configuration and provenance. Scientific prose and report labels retain
-  sSVD/oSVD spelling. Algorithms and numerical outputs are unchanged.
-
-1.0.0rc6.dev49 (2026-11-10)
-===========================
-
-* FIX: Warn in logs when known unsmoothed DSC/DCE fit outputs
-  remain in the derivatives directory but were not produced by the current
-  run. Files and image sidecars are preserved. Reports use the latest figure
-  outputs for each pipeline, including cached or reused results, rather than
-  displaying leftover optional figures from earlier processing settings.
-
-1.0.0rc6.dev48 (2026-11-09)
-===========================
-
-* CHG: Rename the DCE least-squares engine from ``nlls`` to ``bls`` (bounded
-  least squares), including configuration and provenance identifiers. Fitting
-  and numerical outputs are unchanged; T1 fitting retains its ``nlls`` name.
-  Old DCE engine values are no longer accepted. Methods regenerated from older
-  outputs omit the QC-mask and VI-fallback clauses tied to the renamed keys.
-
-1.0.0rc6.dev47 (2026-11-09)
-===========================
-
-* FIX: Keep Bayesian DCE posterior-SD maps unavailable (NaN) where fitting
-  falls back to least squares, and describe this in their sidecars. Restrict
-  prior-departure summaries to retained fits that actually used the DSC prior.
-
-1.0.0rc6.dev46 (2026-11-08)
-===========================
-
-* CHG: Simplify generated methods into self-contained anatomy, DSC and DCE
-  paragraphs, preserving scientific method choices while reducing implementation
-  detail. Describe automatic AIF search generically and name the applied DCE
-  alignment method. Omit unrecorded method choices and tool versions instead
-  of substituting defaults or querying the report-generation environment.
-
-1.0.0rc6.dev45 (2026-11-08)
-===========================
-
-* CHG: Apply pooled curve and amplitude gates to the selected DCE singleton
-  before acceptance. Failed singleton checks use the population AIF and retain
-  the rejected curve and gate provenance; accepted singletons keep reduced
-  confidence and are calibrated only once. Report singleton fidelity scores
-  from the emitted calibrated curve, consistently with pooled AIFs.
-
-1.0.0rc6.dev44 (2026-11-08)
-===========================
-
-* CHG: Require DSC single-voxel AIFs to pass the same curve-quality checks as
-  pooled AIFs, retaining the shared allowance for unavailable BRR. Remove the
-  3x3x3 neighbourhood retry; failed detection yields AIF-independent maps only.
-
-1.0.0rc6.dev43 (2026-11-07)
-===========================
-
-* CHG: Separate AIF status from detection outcome in HTML reports, identify
-  measured search routes and unassessed external AIFs, and highlight limited
-  support or scaling without metric notes. Report empty AIF search masks in
-  the QC recommendation. Place AIF and motion status first in their sections.
-
-1.0.0rc6.dev42 (2026-11-07)
-===========================
-
-* CHG: Require at least ten candidates across two slices for the DCE AIF G6
-  scaling rescue, removing the relaxed bilateral-support exception. Candidate
-  laterality remains descriptive QC and does not determine G6 acceptance.
-
-1.0.0rc6.dev41 (2026-11-07)
-===========================
-
-* FIX: Distinguish configured hematocrit and looked-up relaxivity/standard dose
-  from measured BIDS metadata in derivative provenance.
-* FIX: Describe retained DCE volume-fraction endpoints separately from QC
-  screening, and identify parameter uncertainty as conditional on applied delay.
-* FIX: Disclose retained Patlak Ktrans zeros, use brain symmetry for descriptive
-  AIF laterality, and clarify QC timing and normalized-concordance labels.
-* CHG: Keep unavailable JSON measurements as null and make QC field names
-  independent of numerical equality. Retain both tissue-AUC and AUC-CBV
-  summaries; use fd_threshold, acquisition_frame_interval_seconds,
-  n_baseline_frames and peak_scaling_* as canonical QC fields.
-* MNT: Remove duplicate QC summaries at their producers and update report
-  consumers to the descriptive metric names.
-
-1.0.0rc6.dev40 (2026-11-07)
-===========================
-
-* FIX: Reserve one process for GPU HD-BET and HD-GLIO to match Nipype's shared
-  CPU/GPU-slot accounting, preventing startup failure with one GPU slot.
-  GPU HD-BET uses one CPU thread; CPU-mode thread budgets are unchanged.
-
-1.0.0rc6.dev39 (2026-11-07)
-===========================
-
-* CHG: Default to an automatic CPU budget capped at eight and bounded by
-  detected affinity, Slurm per-task allocation and container CPU quotas.
-  Derive default per-process threads from the resolved budget; preserve
-  explicit CLI and local plugin budgets and log the resolved source.
-* FIX: Match CPU reservations to threaded preprocessing limits and bound
-  per-process threads by the run budget. Require an explicit CPU budget for
-  remote scheduler plugins rather than detecting submission-host resources.
-* FIX: Bound HD-BET CPU threads and preprocessing/export workers while retaining
-  its predictor, inference settings and brain masking. GPU HD-BET and HD-GLIO
-  reserve at most two CPUs; CPU inference uses the configured thread budget.
-
-1.0.0rc6.dev38 (2026-11-06)
-===========================
-
-* MNT: Consolidate run-level perfusion QC in PipelineQC, remove redundant
-  flat fields and diagnostic arrays, and omit inactive branch settings.
-
-1.0.0rc6.dev37 (2026-11-06)
-===========================
-
-* FIX: Clarify correlation, mask-volume units and model-distribution metadata;
-  retain K2 precision and report sampled DCE AIF peak/baseline-reference times.
-* MNT: Omit the descriptive resolution tier and normalize ANTs version text.
-
-1.0.0rc6.dev36 (2026-11-06)
-===========================
-
-* FIX: Include signed K2 in DSC regional statistics and report DSC brain-mask
-  volume, DCE standard-dose source and DCE registration method.
-
-1.0.0rc6.dev35 (2026-11-06)
-===========================
-
-* FIX: Label DSC motion-reference frames separately from the final baseline;
-  label DCE model-free input baseline counts without implying configured values.
-
-1.0.0rc6.dev34 (2026-11-06)
-===========================
-
-* CHG: Retire NAWM median range PASS/WARNING labels. Preserve descriptive
-  statistics and coverage; fitting bounds and binary QC are unchanged.
-
-1.0.0rc6.dev33 (2026-11-06)
-===========================
-
-* FIX: Restrict DSC NAWM normalization to the perfusion brain mask, preserving
-  measured zeros and omitting normalized maps when that reference is unusable.
-
-1.0.0rc6.dev32 (2026-11-06)
-===========================
-
-* FIX: Exclude outside-brain image background from DSC/DCE regional statistics
-  while preserving legitimate zero values, original region sizes and excluded
-  coverage counts.
-
-1.0.0rc6.dev31 (2026-11-06)
-===========================
-
-* FIX: Scope DCE map provenance to its estimator, omit representative-voxel
-  R-squared from map summaries, and remove perfusion-processing claims from
-  registered anatomical images and masks.
-
-1.0.0rc6.dev30 (2026-11-06)
-===========================
-
-* FIX: Limit DSC map sidecars to processing used by each estimator. Preserve
-  AUC-CBV integration windows separately from deconvolution, retain method-specific
-  MTT provenance, and omit unrelated AIF and leakage metadata.
-
-1.0.0rc6.dev29 (2026-11-06)
-===========================
-
-* FIX: Report the executed DCE hematocrit consistently in shared and AIF
-  provenance, including zero, and omit it when no value was recorded. Describe
-  external AIFs as supplied plasma curves without hematocrit conversion.
-
-1.0.0rc6.dev28 (2026-11-06)
-===========================
-
-* MNT: Repeat the 3-D mask check inside native mask validation for workflows
-  built outside the master pipeline.
-
-1.0.0rc6.dev27 (2026-11-06)
-===========================
-
-* FIX: Let DCE fitting run without waiting for DSC when the vp prior is
-  disabled or unsupported by the selected model/inference. Keep DSC inputs
-  connected to downstream vascular concordance.
-
-1.0.0rc6.dev26 (2026-11-06)
-===========================
-
-* CHG: Centralize DCE run diagnostics in preprocessed-series QC, keep the QC
-  definition with its mask and delay limits with the delay map, and use compact
-  AIF provenance on DSC/DCE maps.
-
-1.0.0rc6.dev25 (2026-11-06)
-===========================
-
-* FIX: Correct the Patlak-relative BIC guard description and record the actual
-  candidate pool in model-selection sidecars.
-
-1.0.0rc6.dev24 (2026-11-06)
-===========================
-
-* FIX: Normalize recorded ANTs motion versions in generated methods using the
-  same formatter as other tool versions.
-
-1.0.0rc6.dev23 (2026-11-06)
-===========================
-
-* CHG: Show motion-correction status beside the HTML motion-QC metrics instead
-  of annotating DSC and DCE motion figures.
-
-1.0.0rc6.dev22 (2026-11-06)
-===========================
-
-* FIX: Omit SER and IAUC derivatives when their acquisition windows are
-  incomplete, including smoothed copies and regional statistics. Retain timing
-  coverage in QC rather than exporting undefined maps with zero-background
-  statistics.
-
-1.0.0rc6.dev21 (2026-11-05)
-===========================
-
-* FIX: Describe executed RC6 motion, DCE fitting, T1 fallback, AIF support and
-  identification QC in generated methods. Preserve testing-mode disclosure in
-  copied methods and clarify the quick-start configuration tables.
-
-1.0.0rc6.dev20 (2026-11-05)
-===========================
-
-* CHG: Make sloppy mode a run-wide, CLI-only testing preset with one HTML
-  summary warning. Record approximate DCE QC in its sidecar policy.
-
-1.0.0rc6.dev19 (2026-11-05)
-===========================
-
-* ENH: Emit the native selected DCE delay map and timing summary provenance
-  without additional sensitivity refits or changes to parameter maps and binary
-  QC. Distinguish selected/reference boundary counts and explain limit-selected
-  offsets. Flag coarse-sampled 2CXM Fp/PS as timing limited in their sidecars.
-
-1.0.0rc6.dev18 (2026-11-04)
-===========================
-
-* CHG: Combine reported-fit quality with selected-NLLS primary-parameter
-  identification in the DCE binary QC mask, including VI runs. Preserve fitted
-  maps and retention; record the screening policy and parameter-level failure
-  counts in derivative provenance.
-
-1.0.0rc6.dev17 (2026-11-04)
-===========================
-
-* ENH: Package signed one-frame DCE timing refits with per-parameter
-  availability, raw fit evidence and endpoint-extension counts.
-  Diagnostic output integration remains pending.
-
-1.0.0rc6.dev16 (2026-11-04)
-===========================
-
-* ENH: Support signed fixed-delay inputs in native DCE fitting using the shared
-  PCHIP geometry, for timing diagnostics outside the delay-selection grid.
-  Diagnostic output integration remains pending.
-
-1.0.0rc6.dev15 (2026-11-04)
-===========================
-
-* ENH: Package primary-parameter DCE identification from conditional NLLS
-  covariance and delay profiles, with per-parameter failure reasons.
-  Binary-mask and report integration remain pending.
-
-1.0.0rc6.dev14 (2026-11-04)
-===========================
-
-* PERF: Reuse cached PCHIP convolution in Tofts and Extended Tofts delay
-  profiles, sharing the input evaluator used by native 2CXM fitting.
-
-1.0.0rc6.dev13 (2026-11-04)
-===========================
-
-* ENH: Route DCE NLLS and VI through local delay fitting with bounded slice
-  execution and conditional uncertainty. Replace AIF pre-alignment with the
-  delay_correction option and retire MAP/MCMC pipeline routing. Identification
-  QC and timing-derivative integration remain pending.
-
-1.0.0rc6.dev12 (2026-11-04)
-===========================
-
-* ENH: Bind VI refinement to the selected DCE family, delay and shared PCHIP
-  input, with guarded NLLS initialization and same-delay fallback. Share the
-  existing parameter-retention rules. Pipeline routing remains pending.
-
-1.0.0rc6.dev11 (2026-11-04)
-===========================
-
-* ENH: Assemble complete-slice DCE profiles and local selections through one
-  reusable worker pool with bounded fitting blocks. Preserve full neighborhood
-  support, original frame identity and retry provenance across blocks. Abort
-  unexpected worker failures explicitly. Record classified numerical failures
-  as unavailable voxel/family profiles without discarding their neighbors.
-  Workflow routing remains pending.
-
-1.0.0rc6.dev10 (2026-11-04)
-===========================
-
-* ENH: Package in-plane local delay references, nested delay selection and
-  capped G1/G2 automatic 2CXM admission. Preserve the Patlak model-selection
-  guard and explicit-model choices. Record report-only delay-boundary flags
-  and upper-edge truncation evidence. Workflow integration remains pending.
-
-1.0.0rc6.dev9 (2026-11-04)
-==========================
-
-* ENH: Build conditional DCE delay profiles with common original observation
-  indices and recorded continuation. Finalize failed native 2CXM points with
-  bounded full-start retries after the sweep, preserving later seeds and fit
-  status. Local selection and workflow routing remain pending.
-
-1.0.0rc6.dev8 (2026-11-04)
-==========================
-
-* ENH: Package the native bounded 2CXM fitter and compiled PCHIP evaluator,
-  preserving full starts and continuation inputs. Build through the package
-  extension machinery with strict floating-point settings. Workflow integration
-  and signed diagnostic fitting remain pending.
-* FIX: Pin SciPy to the verified 1.17.0 release and check its compiled interfaces
-  at DCE startup and image build time. Include BSD-3-Clause in image licence labels.
-
-1.0.0rc6.dev7 (2026-11-04)
-==========================
-
-* ENH: Package bounded Patlak and rate-profile Extended Tofts fitting with
-  the shared delayed input. Preserve the joint ET volume constraint and
-  recompute residual sums directly. Workflow integration remains pending.
-
-1.0.0rc6.dev6 (2026-11-04)
-==========================
-
-* ENH: Package the shared signed-delay PCHIP input operator and direct
-  Standard Tofts rate-profile fitter. Workflow integration remains pending.
-
-1.0.0rc6.dev5 (2026-11-04)
-==========================
-
-* ENH: Add dce.t1_default_ms for uniform T1 fallback in milliseconds. Null
-  retains field-strength defaults; usable measured/external maps take precedence.
-  Record the applied fallback value and source in conversion QC and sidecars.
-  Reject fallback values outside the existing field-dependent T1 safety limits.
-
-1.0.0rc6.dev4 (2026-11-04)
-==========================
-
-* FIX: Report reduced confidence and its reason for single-voxel DCE AIFs,
-  preserving the emitted curve, calibration and numerical uncertainty factors.
-
-1.0.0rc6.dev3 (2026-11-04)
-==========================
-
-* CHG: Use unit temporal weights for DSC/CPI and DCE fitting and model
-  comparison, including inference. Motion estimates remain available for QC.
-
-1.0.0rc6.dev2 (2026-11-04)
-==========================
-
-* CHG: Use ANTs rigid motion correction for DSC and DCE with a fixed
-  baseline-mean reference and linear resampling. Disabling correction retains
-  the input frames while still estimating motion for QC.
-* FIX: Use common physical-transform conversion and FD summaries across
-  preprocessing and motion plots, including the configured QC threshold and
-  exclusion of the initial FD placeholder from the mean.
-* ENH: Bound ANTs motion threads by the pipeline CPU budget and per-process
-  thread limit, with matching Nipype processor reservations.
-
-1.0.0rc6.dev1 (2026-11-04)
-==========================
-
-* FIX: Save derived DSC/DCE temporal means and concentration images as
-  float32, preventing integer input headers from quantizing derived values.
 
 1.0.0rc5 (2026-10-20)
 =====================
