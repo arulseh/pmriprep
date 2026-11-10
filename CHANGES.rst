@@ -1,3 +1,9 @@
+1.0.0rc6.dev52 (2026-11-10)
+===========================
+
+* FIX: Allow DCE smoothing to finish when native Kep is unavailable, including
+  Patlak-only runs. Optional inputs to the derived-Kep node default to None.
+
 1.0.0rc6.dev51 (2026-11-10)
 ===========================
 

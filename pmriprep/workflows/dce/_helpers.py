@@ -2548,9 +2548,9 @@ def _build_pk_map_dict(
 
 
 def _derive_smoothed_kep(
-    smoothed_pk: dict[str, str] | None,
-    native_kep_file: str | None,
-    brain_mask_file: str | None,
+    smoothed_pk: dict[str, str] | None = None,
+    native_kep_file: str | None = None,
+    brain_mask_file: str | None = None,
 ) -> dict[str, str]:
     """Add Kep derived from the spatially smoothed Ktrans and ve maps.
 

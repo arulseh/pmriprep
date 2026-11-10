@@ -67,6 +67,25 @@ def test_dce_smoothing_workflow_excludes_uncertainty_and_native_kep() -> None:
     assert "smooth_uncertainty_maps" not in workflow.list_node_names()
 
 
+def test_smoothed_kep_node_accepts_undefined_native_kep(tmp_path: Path) -> None:
+    """Patlak-only maps pass through the node with Kep left undefined."""
+    maps = {
+        key: _save_map(tmp_path / f"{key}.nii.gz", np.ones((2, 2, 2)))
+        for key in ("ktrans", "vp")
+    }
+    workflow = init_dce_smoothing_wf(fwhm=3.0)
+    node = workflow.get_node("derive_smoothed_kep")
+    node.base_dir = str(tmp_path)
+    node.inputs.smoothed_pk = maps
+    node.inputs.brain_mask_file = _save_map(
+        tmp_path / "mask.nii.gz", np.ones((2, 2, 2)),
+    )
+
+    result = node.run()
+
+    assert result.outputs.smoothed_pk_with_kep == maps
+
+
 def test_smoothed_kep_rejects_overflow_and_preserves_native_support(
     tmp_path: Path, monkeypatch,
 ) -> None:
