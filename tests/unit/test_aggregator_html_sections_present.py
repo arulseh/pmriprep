@@ -354,7 +354,7 @@ def test_boilerplate_omits_unrecorded_method_choices() -> None:
         assert "motion correction was omitted" not in text
         assert "atlas-guided search" not in text
         assert "was fitted" not in text and "were fitted" not in text
-    assert "CBF was estimated" not in dsc
+    assert "DSC deconvolution used" not in dsc
     assert "AUC-based CBV was computed" not in dsc
     assert "DESPOT1" not in dce and "uniform T1" not in dce
     assert "hematocrit" not in dce and "Models were compared" not in dce

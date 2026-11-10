@@ -523,7 +523,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         elif method in _DSC_DECONV_TEXT:
             method_text = _DSC_DECONV_TEXT[method]
             sentences.append(
-                f"CBF was estimated by {method_text}."
+                f"DSC deconvolution used {method_text}."
             )
             if method in ("ssvd", "tikhonov"):
                 sentences.append(

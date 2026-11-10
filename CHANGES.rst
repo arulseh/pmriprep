@@ -1,3 +1,9 @@
+1.0.0rc6.dev51 (2026-11-10)
+===========================
+
+* DOC: Describe the selected DSC deconvolution method directly in generated
+  methods text.
+
 1.0.0rc6.dev50 (2026-11-10)
 ===========================
 
