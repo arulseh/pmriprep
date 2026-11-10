@@ -85,7 +85,7 @@ def test_report_figures_follow_latest_writer_outputs(
         old_anchor = perf / f"sub-01_ses-01_acq-fast_run-1_desc-{pipeline}Preproc_{pipeline}.json"
         old_anchor.write_text(json.dumps({"PipelineQC": {"old_result": True}}))
         qc = {"pk_modeling": {"model": "2cxm", "selection_mode": "fixed"}} if pipeline == "dce" else {
-            "deconvolution": {"method": "oSVD"},
+            "deconvolution": {"method": "osvd"},
         }
         current_anchor.write_text(json.dumps({"PipelineQC": qc}))
         assert _load_pipeline_sidecars(ses, "sub-01_ses-01", pipeline) == qc

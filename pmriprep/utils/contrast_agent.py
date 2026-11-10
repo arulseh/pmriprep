@@ -893,7 +893,7 @@ def build_dsc_provenance(
     agent_standard_dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     gd_multiplicity: int = 1,
     preload_source: str = "unknown",
-    deconv_method: str = "oSVD",
+    deconv_method: str = "osvd",
     inference: Optional[str] = None,
     leakage_method: str = "bsw",
     scanner_metadata: Optional[dict[str, Any]] = None,

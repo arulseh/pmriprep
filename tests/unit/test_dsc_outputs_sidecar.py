@@ -116,7 +116,7 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         bids_dir=inputs["bids_dir"],
         subject_id=inputs["subject_id"],
         session_id=inputs["session_id"],
-        deconvolution_method=deconvolution.get("method", "oSVD"),
+        deconvolution_method=deconvolution.get("method", "osvd"),
         present_inputs=present,
         has_smoothing=has_smoothing,
     )
@@ -178,7 +178,7 @@ def test_partial_dsc_writer_publishes_independent_maps_and_geometry(
     )
     derivatives = _run_writer(minimal_inputs, {
         "aif_detection": aif_qc,
-        "deconvolution": {"method": "oSVD", "processing_status": "partial"},
+        "deconvolution": {"method": "osvd", "processing_status": "partial"},
     }, tmp_path)
     for desc, value in independent.values():
         image = next(derivatives.rglob(f"*desc-{desc}_stat.nii.gz"))
@@ -274,8 +274,8 @@ def test_dsc_sidecars_report_statistics_from_their_own_images(
 
 
 @pytest.mark.parametrize("method,detection,source", [
-    ("sSVD", "atlas_strict", "measured"),
-    ("oSVD", "external", "external"),
+    ("ssvd", "atlas_strict", "measured"),
+    ("osvd", "external", "external"),
     ("tikhonov", "atlas_strict", "measured"),
 ])
 def test_svd_mtt_label_and_aif_source(method: str, detection: str, source: str) -> None:
@@ -291,7 +291,7 @@ def test_svd_mtt_label_and_aif_source(method: str, detection: str, source: str) 
     assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == source
 
 
-@pytest.mark.parametrize("method", ["oSVD", "cpi"])
+@pytest.mark.parametrize("method", ["osvd", "cpi"])
 def test_dsc_processing_scoped_without_mutating_shared_base(method: str) -> None:
     """Sibling maps retain their own dependencies and the run record is unchanged."""
     from pmriprep.utils.provenance import enrich_provenance_from_qc
@@ -322,7 +322,7 @@ def test_dsc_processing_scoped_without_mutating_shared_base(method: str) -> None
             "arrival_delay", "parametric_r2", "fallback",
         })
         uses_auc = key in {"cbv_auc", "ncbv", "rel_cbv"} or (
-            key == "mtt" and method == "oSVD"
+            key == "mtt" and method == "osvd"
         )
         assert ("CBVIntegration" in perfusion) == uses_auc
         if uses_auc:
@@ -764,7 +764,7 @@ class TestWriterMapProcessing:
             "normalization_factor": 0.023,
             "cbf_normalization_factor": 42.0,
             "deconvolution": {
-                "method": "oSVD",
+                "method": "osvd",
                 "tissue_auc_finite_voxels": 100,
                 "tissue_auc_negative_voxels": 7,
                 "tissue_auc_negative_fraction": 0.07,

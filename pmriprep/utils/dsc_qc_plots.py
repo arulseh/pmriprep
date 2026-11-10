@@ -608,8 +608,9 @@ def generate_dsc_fit_qc_plot(
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     from pmriprep.utils.qc_utils import qc_figure_title
+    method_label = {"ssvd": "sSVD", "osvd": "oSVD"}.get(method, method)
     fig.suptitle(
-        qc_figure_title(subject_id, session_id, f"DSC Fit QC ({method})"),
+        qc_figure_title(subject_id, session_id, f"DSC Fit QC ({method_label})"),
         fontsize=13, fontweight="bold", y=0.98,
     )
 

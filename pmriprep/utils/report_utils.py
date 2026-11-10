@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Boilerplate text mappings for DSC deconvolution methods
 _DSC_DECONV_TEXT: dict[str, str] = {
-    "sSVD": "standard singular value decomposition [@ostergaard_1996]",
-    "oSVD": "oscillation-index regularized singular value decomposition [@wu_2003]",
+    "ssvd": "standard singular value decomposition [@ostergaard_1996]",
+    "osvd": "oscillation-index regularized singular value decomposition [@wu_2003]",
     "tikhonov": (
         "Tikhonov regularization with a modified first-difference penalty "
         "and two leading magnitude-penalized samples [@calamante_2003]. "
@@ -525,7 +525,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             sentences.append(
                 f"CBF was estimated by {method_text}."
             )
-            if method in ("sSVD", "tikhonov"):
+            if method in ("ssvd", "tikhonov"):
                 sentences.append(
                     "The full N-sample causal system used Volterra product "
                     "integration [@sourbron_2007]."

@@ -883,8 +883,8 @@ def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
 @pytest.mark.parametrize(
     ("method", "field", "label"),
     [
-        ("oSVD", "oi_mean", "OI Mean (oSVD)"),
-        ("oSVD", "threshold_mean", "Threshold Mean (oSVD)"),
+        ("osvd", "oi_mean", "OI Mean (oSVD)"),
+        ("osvd", "threshold_mean", "Threshold Mean (oSVD)"),
         ("tikhonov", "lambda_mean", "Lambda Mean (Tikhonov)"),
     ],
 )
@@ -934,11 +934,13 @@ def test_deconv_panel_omits_unestimated_cpi_arrival_delay(env):
     assert ">0.0%<" in rendered
 
 
-def test_deconv_panel_shows_tmax_for_osvd(env):
-    """oSVD reports the residue-peak Tmax value and omits parametric fallback QC."""
+@pytest.mark.parametrize("method,label", [("ssvd", "sSVD"), ("osvd", "oSVD")])
+def test_deconv_panel_shows_tmax_for_svd(env, method: str, label: str) -> None:
+    """SVD panels display conventional method labels and residue-peak Tmax."""
     template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_deconv("oSVD", fallback_rate=0.0)
+    dsc_ctx = _dsc_ctx_with_deconv(method, fallback_rate=0.0)
     rendered = template.render(dsc=dsc_ctx)
+    assert f">{label}<" in rendered
     assert ">Median Tmax<" in rendered
     assert ">1.50 s<" in rendered
     assert ">oSVD Fallback<" not in rendered

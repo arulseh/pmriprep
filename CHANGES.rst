@@ -1,3 +1,10 @@
+1.0.0rc6.dev50 (2026-11-10)
+===========================
+
+* CHG: Use lowercase ``ssvd`` and ``osvd`` DSC method identifiers in the CLI,
+  configuration and provenance. Scientific prose and report labels retain
+  sSVD/oSVD spelling. Algorithms and numerical outputs are unchanged.
+
 1.0.0rc6.dev49 (2026-11-10)
 ===========================
 

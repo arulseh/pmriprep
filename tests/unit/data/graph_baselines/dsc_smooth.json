@@ -2017,7 +2017,7 @@
       "cpi_infer_delay": true,
       "inference": "vi",
       "leakage_method": "bsw",
-      "method": "oSVD",
+      "method": "osvd",
       "n_procs": 1,
       "oi_threshold": 0.095,
       "sloppy": false,

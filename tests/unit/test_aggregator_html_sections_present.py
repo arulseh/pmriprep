@@ -27,7 +27,7 @@ def _write(path: Path, payload: dict) -> None:
 @pytest.mark.parametrize(
     "deconvolution_qc",
     [
-        {"method": "oSVD", "n_voxels": 0, "oi_mean": None, "threshold_mean": None},
+        {"method": "osvd", "n_voxels": 0, "oi_mean": None, "threshold_mean": None},
         {
             "method": "tikhonov", "n_voxels": 0, "lambda_mean": None,
             "lcurve_corner_fraction": None, "lcurve_upper_endpoint_fraction": None,
@@ -71,7 +71,7 @@ def test_unified_report_renders_recommendation_and_warnings(
     figures_dir = ses / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
     # Report-only regeneration uses the saved run setting, including DSC-only runs.
-    sloppy = deconvolution_qc["method"] == "oSVD"
+    sloppy = deconvolution_qc["method"] == "osvd"
     snapshot = ses.parent / "log" / "run-01" / "ses-0001" / "pmriprep.toml"
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text(f"[execution]\nsloppy = {str(sloppy).lower()}\n")
@@ -372,7 +372,7 @@ def test_boilerplate_omits_unrecorded_method_choices() -> None:
 
 
 def test_dsc_boilerplate_follows_processing_dependency_order() -> None:
-    text = ru._build_dsc_boilerplate({"deconvolution": {"method": "oSVD"}})
+    text = ru._build_dsc_boilerplate({"deconvolution": {"method": "osvd"}})
     assert text.index("rigid-body transform") < text.index("ΔR2* estimation")
 
 

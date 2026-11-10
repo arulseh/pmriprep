@@ -409,7 +409,7 @@
             {% if dsc.qc_metrics.deconvolution.method is defined %}
             <div class="metric">
                 <div class="metric-label">Method</div>
-                <div class="metric-value">{{ dsc.qc_metrics.deconvolution.method }}</div>
+                <div class="metric-value">{{ {'ssvd': 'sSVD', 'osvd': 'oSVD'}.get(dsc.qc_metrics.deconvolution.method, dsc.qc_metrics.deconvolution.method) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.deconvolution.method is defined and dsc.qc_metrics.deconvolution.method == "cpi" %}

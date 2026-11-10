@@ -23,7 +23,7 @@ def _write_image(path: Path, data: np.ndarray) -> str:
     return str(path)
 
 
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+@pytest.mark.parametrize("method", ["ssvd", "osvd", "tikhonov"])
 def test_compute_maps_keeps_nonfinite_tissue_local(tmp_path: Path, method: str) -> None:
     """A bad in-brain curve yields missing maps without stopping valid neighbours."""
     from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
@@ -369,7 +369,7 @@ def test_compute_quality_maps_rejects_no_drop_and_short_baseline() -> None:
     assert np.isnan(short.tsnr).all()
 
 
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+@pytest.mark.parametrize("method", ["ssvd", "osvd", "tikhonov"])
 def test_finalize_mtt_uses_auc_cbv_for_svd_family(method: str) -> None:
     """SVD-family MTT uses measured-AIF CBV divided by unscaled CBF."""
     fitted = np.full((4,), 99.0)
@@ -851,7 +851,7 @@ def test_save_fit_qc_data_dispatches_parametric_methods(
     assert calls[0][0][4:] == (1.5, signal, selected_fit)
 
 
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+@pytest.mark.parametrize("method", ["ssvd", "osvd", "tikhonov"])
 def test_save_fit_qc_data_dispatches_svd_methods(
     method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -887,7 +887,7 @@ def test_save_fit_qc_data_dispatches_svd_methods(
     assert calls[0][1]["signal_data"] is None
 
 
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+@pytest.mark.parametrize("method", ["ssvd", "osvd", "tikhonov"])
 def test_run_deconvolution_normalizes_svd_state(
     method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1013,7 +1013,7 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
         baseline_info={"arrival_index": 2},
         dt=1.5,
         tail_frames=4,
-        method="oSVD",
+        method="osvd",
         aif_level="atlas",
     )
 
@@ -1138,7 +1138,7 @@ def test_partial_maps_keep_same_window_ncbv_and_optional_sinks(tmp_path, monkeyp
         outputs = ComputeDSCMaps(
             concentration_file=image, raw_concentration_file=image,
             signal_file=raw, brain_mask_file=mask, baseline_frames=6,
-            method="oSVD", tr=1.5, te=0.04, leakage_method="none", **kwargs,
+            method="osvd", tr=1.5, te=0.04, leakage_method="none", **kwargs,
         ).run(cwd=str(cwd)).outputs
         ncbv_path, factor = _normalize_cbv(outputs.out_tissue_auc, "", "01", "", nawm)
         ncbv_maps.append(nib.load(ncbv_path).get_fdata())

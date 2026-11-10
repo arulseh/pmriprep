@@ -12,7 +12,7 @@ from traits.trait_base import Undefined
 
 
 @pytest.mark.parametrize("modality,mode", [
-    ("dce", "2cxm"), ("dce", "auto"), ("dsc", "cpi"), ("dsc", "oSVD"),
+    ("dce", "2cxm"), ("dce", "auto"), ("dsc", "cpi"), ("dsc", "osvd"),
 ])
 def test_reused_perfusion_outputs_warn_without_altering_leftovers(
     tmp_path: Path, modality: str, mode: str, caplog: pytest.LogCaptureFixture,

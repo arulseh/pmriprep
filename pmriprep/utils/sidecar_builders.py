@@ -164,7 +164,7 @@ def build_provenance_block(
         k: v for k, v in config_dict.items()
         if k not in _CONFIG_STRIP_KEYS and v is not None
     }
-    if config.get("method") in {"sSVD", "oSVD", "tikhonov"}:
+    if config.get("method") in {"ssvd", "osvd", "tikhonov"}:
         config = {k: v for k, v in config.items()
                   if not k.startswith("cpi_") and k != "inference"}
     t1 = (qc_metrics or {}).get("t1_mapping") or {}
@@ -1235,7 +1235,7 @@ def build_dsc_map_sidecar(
             deconvolution if isinstance(deconvolution, dict) else qc_metrics
         )
         method = method_metrics.get("method", qc_metrics.get("method"))
-        if method in {"sSVD", "oSVD", "tikhonov"}:
+        if method in {"ssvd", "osvd", "tikhonov"}:
             sidecar["MTTMethod"] = (
                 "full_bolus_auc_cbv_over_deconvolution_cbf"
             )

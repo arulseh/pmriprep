@@ -36,7 +36,7 @@ class DSCConfig:
         Agent's recommended dose in mmol Gd/kg. Default 0.1 (standard).
         Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.
     method : str
-        Deconvolution method: sSVD, oSVD, tikhonov, or cpi.
+        Deconvolution method: ssvd, osvd, tikhonov, or cpi.
     inference : str
         Inference method for parametric deconvolution:
         ``vi`` (default — linearized variational inference), ``svb`` (spatial
@@ -95,7 +95,7 @@ class DSCConfig:
     agent_standard_dose: float = 0.1  # mmol Gd/kg (0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)
 
     # Deconvolution settings
-    method: str = "oSVD"
+    method: str = "osvd"
     inference: Literal["vi", "svb"] = "vi"
     cpi_control_points: int = 0  # 0 = auto-select
     cpi_infer_delay: bool = True
@@ -138,7 +138,7 @@ class DSCConfig:
         YAML/JSON config files or CLI arguments.
         """
         categorical_options = {
-            "method": ({"sSVD", "oSVD", "tikhonov", "cpi"}, self.method),
+            "method": ({"ssvd", "osvd", "tikhonov", "cpi"}, self.method),
             "inference": ({"vi", "svb"}, self.inference),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
         }

@@ -508,9 +508,9 @@ class TestBuildDscProvenance:
 
     def test_inference_ignored_for_osvd(self) -> None:
         """Inference engine not recorded for non-parametric methods."""
-        prov = build_dsc_provenance(deconv_method="oSVD", inference="vi")
+        prov = build_dsc_provenance(deconv_method="osvd", inference="vi")
         deconv = prov["PerfusionProcessing"]["Deconvolution"]
-        assert deconv["method"] == "oSVD"
+        assert deconv["method"] == "osvd"
         assert "inference" not in deconv
 
 

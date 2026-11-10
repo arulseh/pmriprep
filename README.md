@@ -104,7 +104,7 @@ Key DSC options:
 
 | Option | Description |
 |---|---|
-| `--dsc-deconv-method {sSVD,oSVD,tikhonov,cpi}` | Select deconvolution (default: oSVD) |
+| `--dsc-deconv-method {ssvd,osvd,tikhonov,cpi}` | Select deconvolution (default: osvd) |
 | `--dsc-inference {vi,svb}` | Select inference for CPI models (default: vi) |
 | `--dsc-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
@@ -174,7 +174,7 @@ DSC fields:
 
 | Field | Default | Description |
 |---|---:|---|
-| `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `cpi` |
+| `method` | `osvd` | `ssvd`, `osvd`, `tikhonov`, `cpi` |
 | `inference` | `vi` | `vi` or `svb` for CPI |
 | `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |

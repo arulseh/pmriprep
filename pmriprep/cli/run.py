@@ -473,9 +473,9 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-deconv-method",
-        choices=["sSVD", "oSVD", "tikhonov", "cpi"],
+        choices=["ssvd", "osvd", "tikhonov", "cpi"],
         default=None,
-        help="Deconvolution method for DSC (default: oSVD).",
+        help="Deconvolution method for DSC (default: osvd).",
     )
     dsc_group.add_argument(
         "--dsc-inference",

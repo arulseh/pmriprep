@@ -21,7 +21,7 @@ def _make_dsc_sidecar() -> dict:
     return {
         "PerfusionProcessing": {
             "ContrastDose": {"standard_dose_mmol_kg": 0.1, "dose_multiplier": 1.0},
-            "Deconvolution": {"method": "oSVD"},
+            "Deconvolution": {"method": "osvd"},
             "LeakageCorrection": {"method": "bsw"},
             "PreloadDetection": {"source": "unknown"},
         }

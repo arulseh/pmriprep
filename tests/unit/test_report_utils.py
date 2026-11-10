@@ -284,7 +284,7 @@ class TestDscLoader:
                 "preprocessing": {"motion_status": "GOOD"},
                 "preload": {"percent_leaky_voxels": 5},
                 "aif_detection": {"detection_method": "atlas_relaxed"},
-                "deconvolution": {"method": "oSVD", "qc_voxel": "[1,2,3]"},
+                "deconvolution": {"method": "osvd", "qc_voxel": "[1,2,3]"},
                 "registration": {"registration_method": "flirt"},
                 "normalization_factor": 1.234,
                 "config": {"aif_source": "auto"},
@@ -294,7 +294,7 @@ class TestDscLoader:
         assert out.get("preprocessing", {}).get("motion_status") == "GOOD"
         assert out.get("preload", {}).get("percent_leaky_voxels") == 5
         assert out.get("aif_detection", {}).get("detection_method") == "atlas_relaxed"
-        assert out.get("deconvolution", {}).get("method") == "oSVD"
+        assert out.get("deconvolution", {}).get("method") == "osvd"
         assert out.get("normalization_factor") == 1.234
 
     def test_perfusion_loaders_read_entity_preserving_anchors(self, tmp_path) -> None:

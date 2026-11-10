@@ -180,12 +180,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     )
     # Deconvolution method
     method = traits.Enum(
-        "sSVD",
-        "oSVD",
+        "ssvd",
+        "osvd",
         "tikhonov",
         "cpi",
         usedefault=True,
-        desc="Deconvolution method: sSVD, oSVD, tikhonov, or cpi",
+        desc="Deconvolution method: ssvd, osvd, tikhonov, or cpi",
     )
 
     # Method-specific parameters
@@ -377,7 +377,7 @@ class ComputeDSCMaps(BaseInterface):
     signal_file : str, optional
         4D raw signal for PSR.
     method : str
-        Deconvolution method. Default: 'sSVD'.
+        Deconvolution method. Default: 'ssvd'.
     svd_threshold : float
         SVD truncation threshold. Default: 0.2.
     oi_threshold : float
@@ -413,7 +413,7 @@ class ComputeDSCMaps(BaseInterface):
     >>> compute.inputs.concentration_file = 'concentration_4d.nii.gz'
     >>> compute.inputs.aif_file = 'aif_curve.txt'
     >>> compute.inputs.brain_mask_file = 'brain_mask.nii.gz'
-    >>> compute.inputs.method = 'oSVD'
+    >>> compute.inputs.method = 'osvd'
     >>> result = compute.run()  # doctest: +SKIP
 
     Notes
@@ -875,7 +875,7 @@ class ComputeDSCMaps(BaseInterface):
             AUC-CBV/CBF MTT for SVD methods, otherwise the fitted map unchanged.
 
         """
-        if method not in ("sSVD", "oSVD", "tikhonov"):
+        if method not in ("ssvd", "osvd", "tikhonov"):
             return fitted_mtt
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(
@@ -896,7 +896,7 @@ class ComputeDSCMaps(BaseInterface):
         baseline_info: dict[str, Any],
         baseline_reference_seconds: float,
         cbv_auc_qc_source: Optional[npt.NDArray[Any]] = None,
-        method: str = "oSVD",
+        method: str = "osvd",
     ) -> dict[str, Any]:
         """Reduce finalized DSC maps and acquisition provenance to QC values."""
         def _finite_stat(
@@ -1244,7 +1244,7 @@ class ComputeDSCMaps(BaseInterface):
         oi_threshold: float,
     ) -> _DSCDeconvolutionMaps:
         """Dispatch DSC deconvolution and normalize its typed return state."""
-        if method in ("sSVD", "oSVD", "tikhonov"):
+        if method in ("ssvd", "osvd", "tikhonov"):
             cbf, cbv, mtt, tmax, qc = self._deconvolve_svd(
                 concentration, aif, mask, method, dt, threshold, oi_threshold
             )
@@ -1510,7 +1510,7 @@ class ComputeDSCMaps(BaseInterface):
         # Initialize output arrays
         mask_bool = mask.astype(bool)
 
-        if method == "sSVD":
+        if method == "ssvd":
             res, cbf, cbv, mtt = svd_deconvolve_standard_batch(  # type: ignore[assignment]
                 concentration_data,
                 aif,
@@ -1522,7 +1522,7 @@ class ComputeDSCMaps(BaseInterface):
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
             tmax[~np.all(np.isfinite(res), axis=-1)] = np.nan
 
-        elif method == "oSVD":
+        elif method == "osvd":
             res, cbf, cbv, mtt, oi_values, thresholds_used, delay = svd_deconvolve_oscillation_batch(  # type: ignore[assignment]
                 concentration_data,
                 aif,
@@ -1591,14 +1591,14 @@ class ComputeDSCMaps(BaseInterface):
 
         qc_metrics["residue_post_fit_clipping"] = False
         qc_metrics["residue_cbv_integration"] = (
-            "full_period_signed_sum" if method == "oSVD"
+            "full_period_signed_sum" if method == "osvd"
             else "full_length_signed_trapezoid"
         )
         residue_values = res[mask_bool]
         signed_area = cbv[mask_bool]
         negative = np.minimum(residue_values, 0.0)
         negative_area = (
-            -dt * np.sum(negative, axis=-1) if method == "oSVD"
+            -dt * np.sum(negative, axis=-1) if method == "osvd"
             else -np.trapezoid(negative, dx=dt, axis=-1)
         )
         absolute_area = signed_area + 2 * negative_area
@@ -1652,7 +1652,7 @@ class ComputeDSCMaps(BaseInterface):
         dt : float
             Temporal resolution in seconds.
         method : str
-            Deconvolution method ('sSVD', 'oSVD', 'tikhonov').
+            Deconvolution method ('ssvd', 'osvd', 'tikhonov').
         threshold : float
             SVD truncation threshold (for sSVD).
         oi_threshold : float
@@ -1714,12 +1714,12 @@ class ComputeDSCMaps(BaseInterface):
 
             # Deconvolve the single QC voxel and reconstruct concentration
             c_recon: npt.NDArray[Any]
-            if method == "sSVD":
+            if method == "ssvd":
                 residue = svd_deconvolve_standard(
                     tissue_curve, aif, dt=dt, threshold=threshold,
                 ).residue
                 c_recon = build_volterra_matrix(aif, dt) @ residue
-            elif method == "oSVD":
+            elif method == "osvd":
                 full_residue = svd_deconvolve_oscillation(
                     tissue_curve, aif, dt=dt, oi_target=oi_threshold,
                 ).residue
@@ -1783,7 +1783,7 @@ class ComputeDSCMaps(BaseInterface):
 
         # SVD methods are direct matrix decompositions — Bayesian
         # inference only applies to parametric fitting (cpi).
-        if method in ("sSVD", "oSVD", "tikhonov") and inference != "vi":
+        if method in ("ssvd", "osvd", "tikhonov") and inference != "vi":
             logger.debug(
                 "inference='%s' ignored for SVD method '%s'.",
                 inference, method,

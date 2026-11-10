@@ -1043,7 +1043,7 @@ def init_dsc_lesion_stats_wf(
     *,
     subject_id: str,
     session_id: Optional[str],
-    deconvolution_method: str = "oSVD",
+    deconvolution_method: str = "osvd",
     name: str = "dsc_lesion_stats_wf",
 ) -> pe.Workflow:
     """Build the DSC lesion / ROI / user-mask statistics sub-workflow.
@@ -1203,7 +1203,7 @@ def init_dsc_qc_wf(
     session_id: Optional[str],
     aif_source: str,
     baseline_frames: int,
-    deconvolution_method: str = "oSVD",
+    deconvolution_method: str = "osvd",
     name: str = "dsc_qc_wf",
 ) -> pe.Workflow:
     """Build the DSC quality-control / reports sub-workflow.
@@ -1821,7 +1821,7 @@ def init_dsc_preproc_wf(
     2. Signal-to-concentration conversion (ΔR2*)
     3. AIF detection (atlas-based → automatic → partial outputs)
     4. Leakage correction and preload-provenance recording
-    5. Deconvolution (method from config: sSVD, oSVD, tikhonov, cpi)
+    5. Deconvolution (method from config: ssvd, osvd, tikhonov, cpi)
     6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR)
     7. Registration to T1w space
     8. CBV normalization (if NAWM mask available)

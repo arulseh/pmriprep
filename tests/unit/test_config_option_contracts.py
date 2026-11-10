@@ -105,7 +105,7 @@ def test_direct_builders_reject_unknown_options(builder, section: str, option: s
         (lambda: DCEConfig(inference="svb"), "Invalid inference"),
         (lambda: DCEConfig(aif_method="synthetic"), "Invalid aif_method"),
         (lambda: DCEConfig(t1_method="unsupported"), "Invalid t1_method"),
-        (lambda: DSCConfig(method="osvd"), "Invalid method"),
+        (lambda: DSCConfig(method="oSVD"), "Invalid method"),
         (lambda: DSCConfig(inference="mcmc"), "Invalid inference"),
         (lambda: DSCConfig(leakage_method="bidirectional"), "Invalid leakage_method"),
         (lambda: AnatConfig(tool="bet"), "Invalid tool"),
@@ -378,7 +378,7 @@ def test_invalid_dsc_choice_fails_before_processing(
         assert not output.exists()
 
 
-@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov", "cpi"])
+@pytest.mark.parametrize("method", ["ssvd", "osvd", "tikhonov", "cpi"])
 def test_supported_dsc_override_reaches_effective_config(method: str) -> None:
     """Explicit supported CLI choices supersede file values without coercion."""
     parsed = _build_parser().parse_args(

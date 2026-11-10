@@ -1274,7 +1274,7 @@ def init_dsc_datasinks_wf(
     bids_dir: str,
     subject_id: str,
     session_id: Optional[str],
-    deconvolution_method: str = "oSVD",
+    deconvolution_method: str = "osvd",
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
@@ -1330,7 +1330,7 @@ def init_dsc_datasinks_wf(
     """
     if present_inputs is None:
         present_inputs = set()
-    if deconvolution_method not in {"sSVD", "oSVD", "tikhonov", "cpi"}:
+    if deconvolution_method not in {"ssvd", "osvd", "tikhonov", "cpi"}:
         raise ValueError("unknown DSC deconvolution method")
     present = set(_ALWAYS_PRESENT_INPUTS) | set(present_inputs)
 

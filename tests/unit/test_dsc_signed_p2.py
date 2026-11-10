@@ -248,8 +248,8 @@ def test_osvd_periodic_area_shift_and_sampling(dt: float) -> None:
 
 
 @pytest.mark.parametrize("method,scalar,batch", [
-    ("sSVD", svd_deconvolve_standard, svd_deconvolve_standard_batch),
-    ("oSVD", svd_deconvolve_oscillation, svd_deconvolve_oscillation_batch),
+    ("ssvd", svd_deconvolve_standard, svd_deconvolve_standard_batch),
+    ("osvd", svd_deconvolve_oscillation, svd_deconvolve_oscillation_batch),
     ("tikhonov", tikhonov_deconvolve, tikhonov_deconvolve_batch),
 ])
 def test_production_dispatch_preserves_signed_area(
@@ -282,9 +282,9 @@ def test_production_dispatch_preserves_signed_area(
     assert diagnostics["invalid_residue_mtt_voxels"] == 2
     residue = direct[0][mask]
     negative = -np.minimum(residue, 0)
-    neg_area = (dt * negative.sum(axis=-1) if method == "oSVD"
+    neg_area = (dt * negative.sum(axis=-1) if method == "osvd"
                 else np.trapezoid(negative, dx=dt, axis=-1))
-    absolute_area = (dt * np.abs(residue).sum(axis=-1) if method == "oSVD"
+    absolute_area = (dt * np.abs(residue).sum(axis=-1) if method == "osvd"
                      else np.trapezoid(np.abs(residue), dx=dt, axis=-1))
     valid = absolute_area > 0
     assert diagnostics["negative_area_fraction_mean"] == pytest.approx(
@@ -355,7 +355,7 @@ def test_osvd_target_status_reaches_qc_and_sidecar(case: str) -> None:
     curves = np.stack([clean, noisy, np.full_like(clean, np.nan), np.full_like(clean, np.nan)])
     mask = np.array([case == "mixed", case == "mixed", case != "empty", False])
     cbf, cbv, mtt, _, qc = ComputeDSCMaps()._deconvolve_svd(
-        curves, aif, mask, "oSVD", 1, 0.2, 0.095,
+        curves, aif, mask, "osvd", 1, 0.2, 0.095,
     )
     status = qc["oscillation_target"]
     assert status == {
@@ -375,7 +375,7 @@ def test_osvd_target_status_reaches_qc_and_sidecar(case: str) -> None:
     else:
         assert qc["oi_mean"] is qc["threshold_mean"] is None
     sidecar = enrich_provenance_from_qc(
-        {"PerfusionProcessing": {"Deconvolution": {"method": "oSVD"}}},
+        {"PerfusionProcessing": {"Deconvolution": {"method": "osvd"}}},
         {"deconvolution": qc}, "DSC",
     )
     assert sidecar["PerfusionProcessing"]["Deconvolution"]["oscillation_target"] == status

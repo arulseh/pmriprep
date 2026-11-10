@@ -103,7 +103,7 @@ class TestBoilerplateVersionRendering:
             "anat": {"qc_metrics": {"brain_extraction": {"tool": "hdbet"},
                                     "tissue_segmentation": True}},
             "dsc": {"qc_metrics": {"preprocessing": {"motion_applied": True, "motion_tool": "ANTs"},
-                                   "deconvolution": {"method": "oSVD"}}},
+                                   "deconvolution": {"method": "osvd"}}},
             "dce": {"qc_metrics": {"preprocessing": {"motion_applied": True, "motion_tool": "ANTs"},
                                    "t1_mapping": {"method": "nlls", "b1_correction": "afi"}}},
         }

@@ -86,7 +86,7 @@ def test_leakage_policy_executes_through_correction_and_deconvolution(
     )
     deconvolution = init_dsc_deconvolution_wf(
         dsc_map_kwargs={
-            "method": "sSVD",
+            "method": "ssvd",
             "leakage_method": leakage_method,
             "n_procs": 1,
         },
