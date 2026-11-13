@@ -333,8 +333,9 @@ Examples:
   pmriprep /data/bids /data/out participant --participant-label 01 02
   pmriprep /data/bids /data/out participant -w /tmp/work --nprocs 8
 
-  # Use a config file for advanced options:
   pmriprep /data/bids /data/out participant --config-file my_config.yaml
+
+Configuration options: https://github.com/arulseh/pmriprep#configuration
 """,
     )
 
@@ -390,8 +391,7 @@ Examples:
         "--bids_validation",
         action="store_true",
         default=False,
-        help="Run the BIDS Validator preflight check. Disabled by default "
-        "because supported DSC/DCE inputs may extend the validator schema.",
+        help="Run the BIDS Validator before processing (disabled by default).",
     )
 
     # Resource arguments
@@ -483,7 +483,7 @@ Examples:
         metavar="{vi,svb}",
         default=None,
         help="Inference engine for parametric DSC methods (cpi): "
-        "vi (default, linearized variational inference), "
+        "vi (default, variational Bayesian inference), "
         "or svb (spatial variational Bayes with a boundary-corrected M-prior). "
         "SVD methods ignore this option.",
     )
@@ -545,7 +545,7 @@ Examples:
         default=None,
         help="Inference engine for DCE: bls (default, bounded least "
         "squares; linear for Patlak, nonlinear for other models), "
-        "vi (variational Bayes).",
+        "vi (variational Bayesian inference).",
     )
     dce_group.add_argument(
         "--dce-aif-method",

@@ -13,15 +13,15 @@ Docker (recommended)
 
    docker pull ghcr.io/arulseh/pmriprep:latest
 
-   docker run --rm \
+   docker run --rm --init --gpus 1 \
        -v /path/to/bids:/data:ro \
        -v /path/to/output:/out \
        -v /path/to/work:/work \
        ghcr.io/arulseh/pmriprep:latest \
        /data /out participant --participant-label 01 -w /work
 
-Add ``--gpus 1`` for GPU support (required for HD-GLIO tumor segmentation). When no GPU
-is detected, tumor segmentation is skipped automatically and the remaining pipelines run.
+Remove ``--gpus 1`` when running without an NVIDIA GPU. HD-BET falls back to CPU;
+HD-GLIO tumor segmentation is skipped when GPU is unavailable.
 
 Apptainer
 ---------
@@ -37,6 +37,9 @@ Apptainer
        pmriprep.sif \
        /data /out participant --participant-label 01 -w /work
 
+Remove ``--nv`` when running without an NVIDIA GPU. HD-BET falls back to CPU;
+HD-GLIO tumor segmentation is skipped when GPU is unavailable.
+
 TemplateFlow templates are pre-populated at ``/opt/templateflow`` inside the image, so no
 extra bind mounts are needed.
 
@@ -49,23 +52,15 @@ Source installation (development)
    cd pmriprep
    python -m pip install .
 
-Source installations are tested on Python 3.11 and 3.12 and require FSL_
-and ANTs_ on ``$PATH``. Other Python versions are not part of the release test
-matrix. The container currently uses Python 3.11; see the ``Dockerfile`` for the
-full system dependency list. The default anatomical configuration also requires
-HD-BET; select ANTs brain extraction when HD-BET is not installed. HD-GLIO is an
-optional external dependency for source installations.
+Building from source requires a C compiler and Python development headers.
+Source installations require Python 3.11–3.12, FSL_, and ANTs_ on ``$PATH``.
+HD-BET and HD-GLIO are optional: missing HD-BET falls back to ANTs for anatomical
+images and to FSL BET for DSC/DCE images, while missing HD-GLIO skips tumor
+segmentation. The container uses Python 3.11; see the ``Dockerfile`` for the
+full system dependency list.
 
 System requirements
 -------------------
 
-Resource use depends on image dimensions, time points, enabled pipelines, inference method,
-and segmentation tools; no universal RAM, disk, or runtime minimum has been validated. Run
-one representative subject first and size batch jobs from its measured peak memory and work
-directory use. The work directory can be substantially larger than the final derivatives,
-so local scratch storage is recommended. Keep it until processing and report generation have
-completed successfully.
-
-A GPU is optional and used only for brain extraction (HD-BET) and tumor segmentation
-(HD-GLIO). Runtime and memory concurrency scale with ``--nprocs`` and
-``--omp-nthreads``.
+Runtime depends on image dimensions, time points, enabled pipelines, inference
+method, and available hardware.
