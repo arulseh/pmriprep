@@ -27,3 +27,4 @@ Features
    outputs
    api
    changes
+   citation

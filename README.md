@@ -377,16 +377,20 @@ documented in [`pmriprep/data/atlases`](pmriprep/data/atlases/README.md). See
 
 ## Citation
 
-Use [`CITATION.cff`](CITATION.cff) or cite:
+If you use PMRIPrep, please cite:
 
 ```bibtex
-@software{rulseh2026pmriprep,
+@article{rulseh2026pmriprep,
   title = {PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI},
   author = {Rulseh, Aaron M. and Rajan, Archith and Curl, Brandon and Mohan, Suyash and Vymazal, Josef and Chawla, Sanjeev},
+  journal = {bioRxiv},
   year = {2026},
-  url = {https://github.com/arulseh/pmriprep}
+  doi = {10.64898/2026.11.17.767132},
+  url = {https://doi.org/10.64898/2026.11.17.767132}
 }
 ```
+
+Citation metadata: [`CITATION.cff`](CITATION.cff).
 
 ## Support
 
