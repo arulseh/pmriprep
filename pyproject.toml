@@ -62,6 +62,8 @@ dependencies = [
 ]
 
 [project.urls]
+Documentation = "https://pmriprep.readthedocs.io/en/latest/"
+Publication = "https://doi.org/10.64898/2026.11.17.767132"
 Homepage = "https://github.com/arulseh/pmriprep"
 Issues = "https://github.com/arulseh/pmriprep/issues"
 Repository = "https://github.com/arulseh/pmriprep"

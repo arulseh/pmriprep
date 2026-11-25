@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use PMRIPrep, please cite this software using this metadata."
+message: "If you use PMRIPrep, please cite the paper in preferred-citation and the software version used."
 title: "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
 type: software
 version: 1.0.0rc6
@@ -29,3 +29,25 @@ keywords:
   - quantitative MRI
   - BIDS
   - reproducible workflows
+preferred-citation:
+  type: article
+  title: "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
+  authors:
+    - family-names: Rulseh
+      given-names: Aaron M.
+    - family-names: Rajan
+      given-names: Archith
+    - family-names: Curl
+      given-names: Brandon
+    - family-names: Mohan
+      given-names: Suyash
+    - family-names: Vymazal
+      given-names: Josef
+    - family-names: Chawla
+      given-names: Sanjeev
+  journal: bioRxiv
+  year: 2026
+  month: 11
+  doi: 10.64898/2026.11.17.767132
+  url: "https://doi.org/10.64898/2026.11.17.767132"
+  notes: Preprint
